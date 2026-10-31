@@ -40,6 +40,9 @@ jobs:
           TELEGRAM_CHANNEL: ${{ secrets.TELEGRAM_CHANNEL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      - name: Temporary probe (tracklist sources)
+        run: python probe_tracks.py
+        continue-on-error: true
       - run: |
           mkdir -p /tmp/data && echo '{"seeded": true}' > /tmp/data/state.json
           python -m lmn.check
