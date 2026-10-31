@@ -12,6 +12,9 @@ def check(name, fn):
         return True
     except Exception as ex:
         msg = getattr(ex, "body", "") or str(ex)
+        if getattr(ex, "status", None) == 429:
+            from .gemini import _reason
+            msg = _reason(msg)
         for k in ("TELEGRAM_BOT_TOKEN", "GEMINI_API_KEY", "YOUTUBE_API_KEY"):
             if os.environ.get(k):
                 msg = msg.replace(os.environ[k], "***")
@@ -53,6 +56,13 @@ def gemini():
     return f"{MODEL} answered: {d['candidates'][0]['content']['parts'][0]['text'].strip()[:40]}"
 
 
+def gemini_models():
+    d = http.get_json("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
+                      headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"].strip()})
+    names = [m["name"].split("/", 1)[1] for m in d.get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
+    return ", ".join(n for n in names if "flash" in n)
+
+
 def youtube():
     d = http.get_json("https://www.googleapis.com/youtube/v3/channels?part=statistics&forHandle=@theneedledrop&key=" + os.environ["YOUTUBE_API_KEY"].strip())
     return f"TND channel videos: {d['items'][0]['statistics']['videoCount']}"
@@ -60,5 +70,5 @@ def youtube():
 
 if __name__ == "__main__":
     results = [check(n, f) for n, f in [("telegram bot", telegram), ("telegram channel", channel), ("owner /start", private_chat),
-                                        ("gemini", gemini), ("youtube", youtube)]]
+                                        ("gemini", gemini), ("gemini models", gemini_models), ("youtube", youtube)]]
     print(json.dumps({"ok": sum(results), "total": len(results)}))

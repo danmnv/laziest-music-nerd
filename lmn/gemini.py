@@ -42,7 +42,7 @@ def summarize(title, text, api_key=None):
             out["moods"] = [m for m in out.get("moods", []) if m in MOODS][:2]
             return out
         except http.HttpError as e:
-            print(f"gemini: HTTP {e.status}")
+            print(f"gemini: HTTP {e.status} {_reason(e.body)}")
             if e.status not in (0, 429, 500, 503):  # timeout, overloaded or rate-limited: try again a bit later
                 return None
             time.sleep(20 * (attempt + 1))
@@ -50,3 +50,13 @@ def summarize(title, text, api_key=None):
             print(f"gemini: bad response {e!r}")
             return None
     return None
+
+
+def _reason(body):
+    """Google's error message (says e.g. which quota ran out). Contains no key."""
+    try:
+        err = json.loads(body)["error"]
+        quota = [v.get("quotaId") for d in err.get("details", []) for v in d.get("violations", []) if v.get("quotaId")]
+        return (err.get("message") or "")[:200] + (f" quota={quota}" if quota else "")
+    except Exception:
+        return (body or "")[:200]
