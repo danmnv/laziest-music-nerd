@@ -105,12 +105,12 @@ def _caption(r, ai, limit, drop=()):
     second = f"{EMOJI[color(r.get('score'), r.get('not_good'), r.get('classic'))]} {score_text(r)}"
     if kind:
         second += f" · {kind}"
-    size = [plural_tracks(len(r["tracks"])) if r.get("tracks") else None,
-            f"{r['duration_min']} мин" if r.get("duration_min") else None]
-    if any(size):  # before the genres: after a long genre list it got lost
-        second += " · " + ", ".join(x for x in size if x)
     if genres:
         second += f" · {e(genres)}"
+    size = [plural_tracks(len(r["tracks"])) if r.get("tracks") else None,
+            f"{r['duration_min']} мин" if r.get("duration_min") else None]
+    if any(size):
+        second += " · " + ", ".join(x for x in size if x)
     if r.get("guest"):
         second += " · гостевой обзор"
     lines.append(second)

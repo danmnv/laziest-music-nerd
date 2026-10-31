@@ -11,6 +11,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from . import tnd
+from .musicbrainz import norm
 
 CARD_WINDOW = timedelta(days=4)   # a review found later than this goes into the list and the site, but gets no card
 LIST_WINDOW = timedelta(days=60)
@@ -124,6 +125,28 @@ def _ts(iso):
     return datetime.fromisoformat(iso.replace("Z", "+00:00"))
 
 
+def _key(r):
+    return (norm(r["artist_name"]), norm(r["album"])) if r.get("artist_name") and r.get("album") else None
+
+
+def _same_review(yt_rev, site_rev):
+    """A site post with no video link found in it, matched to a review taken from YouTube by artist and album.
+    The guest flag must agree, so a TND staff text review of the same album is not taken for Fantano's transcript."""
+    return (bool(yt_rev.get("guest")) == bool(site_rev.get("guest"))
+            and abs(_ts(site_rev["published"]) - _ts(yt_rev["published"])) <= LIST_WINDOW)
+
+
+def _merge(u, site_rev):
+    """A review known from both its video and its site post: the site's record and transcript, the video's date,
+    and what only the description has (Fantano's favourite tracks, label, Bandcamp)."""
+    v = review_from_video(u)
+    r = dict(site_rev, published=u["published"], video_id=u["video_id"])
+    for k in ("fav_tracks", "least_fav_track", "year", "label", "listen_bandcamp", "genres", "thumb"):
+        if v.get(k) and not r.get(k):
+            r[k] = v[k]
+    return r
+
+
 def plan(posts, uploads, reviews, seeding, now=None):
     """What this run adds. Returns (new, upgrades).
 
@@ -133,11 +156,14 @@ def plan(posts, uploads, reviews, seeding, now=None):
     """
     now = now or datetime.now(timezone.utc)
     fresh = lambda iso: now - _ts(iso) <= CARD_WINDOW
-    known_ids = {r["id"] for r in reviews}
+    known_ids = {r["id"] for r in reviews} | {r["tnd_id"] for r in reviews if r.get("tnd_id")}
     by_video = {r["video_id"]: r for r in reviews if r.get("video_id")}
+    waiting = {_key(r): r for r in reviews if r.get("source") == "youtube" and not r.get("tnd_url") and _key(r)}
+    no_video = {_key(r): r for r in reviews if not r.get("video_id") and _key(r)}  # site posts with no video link found
     site = [(tnd.parse_post(p), p.get("plaintext")) for p in posts]
     site_by_video = {rev["video_id"]: (rev, text) for rev, text in site if rev.get("video_id")}
     new, upgrades, taken = [], [], set()
+    from_video = {}  # this run's reviews taken from a video alone, by artist and album: (item, upload)
 
     reviews_on_yt = {}
     if uploads is not None:
@@ -149,11 +175,17 @@ def plan(posts, uploads, reviews, seeding, now=None):
             if match and match[0]["id"] in known_ids:
                 continue
             if match:  # the site already has it: keep its transcript, but the review's date is the video's
-                rev, text = dict(match[0], published=u["published"]), match[1]
+                rev, text = _merge(u, match[0]), match[1]
                 taken.add(rev["id"])
             else:
                 rev, text = review_from_video(u), None
-            new.append({"rev": rev, "text": text, "card": not seeding and fresh(u["published"])})
+                old = no_video.get(_key(rev))
+                if old and _same_review(rev, old):  # its site post came first (YouTube was unavailable then)
+                    continue
+            item = {"rev": rev, "text": text, "card": not seeding and fresh(u["published"])}
+            new.append(item)
+            if not match and _key(rev):
+                from_video[_key(rev)] = (item, u)
 
     for rev, text in site:
         vid = rev.get("video_id")
@@ -164,6 +196,15 @@ def plan(posts, uploads, reviews, seeding, now=None):
             if old.get("source") == "youtube" and not old.get("tnd_url"):
                 upgrades.append((old, rev))
             continue
+        if not vid:  # no video link found in the post; it may still be the transcript of a review taken from YouTube
+            old = waiting.get(_key(rev))
+            if old and _same_review(old, rev):
+                upgrades.append((old, rev))
+                continue
+            item, u = from_video.get(_key(rev)) or (None, None)
+            if item and _same_review(item["rev"], rev):
+                item["rev"], item["text"] = _merge(u, rev), text
+                continue
         if uploads is None:
             new.append({"rev": rev, "text": text, "card": not seeding})
         elif vid and vid in reviews_on_yt:

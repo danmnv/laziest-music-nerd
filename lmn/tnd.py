@@ -138,7 +138,7 @@ def parse_post(p):
         genres.append(t)
     video = None
     for src in (p.get("canonical_url") or "", p.get("html") or ""):
-        m = re.search(r"(?:watch\?v=|youtu\.be/|/embed/)([\w-]{11})", htmlmod.unescape(src))
+        m = re.search(r"(?:watch\?v=|youtu\.be/|/embed/|/live/|/shorts/)([\w-]{11})", htmlmod.unescape(src))
         if m:
             video = m.group(1)
             break

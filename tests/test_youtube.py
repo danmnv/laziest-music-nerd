@@ -139,6 +139,36 @@ class PlanTest(unittest.TestCase):
         cards = {i["rev"]["id"]: i["card"] for i in new}
         self.assertEqual(cards, {"hmltd000001": True, "staff1": True, "staff2": False, "ghost9": False, "ghost8": True})
 
+    def test_site_post_without_a_video_link_is_matched_by_artist_and_album(self):
+        u = video("hmltd000001", "HMLTD - FANGS ALBUM REVIEW", HMLTD, 46)
+        r = youtube.review_from_video(u)
+        post = site_post("ghost1", "HMLTD - FANGS", None, days_ago=0.2)  # canonical_url ""
+        for uploads in ([u], None):  # also in an hour when YouTube is unavailable
+            new, upgrades = self.plan([post], uploads, [r])
+            self.assertEqual(new, [])
+            self.assertEqual([(old["id"], s["id"]) for old, s in upgrades], [("hmltd000001", "ghost1")])
+        youtube.apply_upgrade(r, upgrades[0][1])
+        self.assertEqual(self.plan([post], [u], [r]), ([], []))  # the next hour: already linked, nothing to do
+
+    def test_video_and_site_post_without_a_link_in_the_same_hour(self):
+        u = video("hmltd000001", "HMLTD - FANGS ALBUM REVIEW", HMLTD, 46)
+        new, upgrades = self.plan([site_post("ghost1", "HMLTD - FANGS", None, days_ago=0.2)], [u])
+        self.assertEqual(upgrades, [])
+        self.assertEqual([(i["rev"]["id"], i["rev"]["video_id"], i["text"], i["card"]) for i in new],
+                         [("ghost1", "hmltd000001", "transcript", True)])
+        self.assertEqual(new[0]["rev"]["fav_tracks"], ["UMAMI", "CLOSE TO YOU", "SHUDDER"])  # kept from the description
+
+    def test_staff_text_review_of_the_same_album_is_its_own_review(self):
+        r = youtube.review_from_video(video("hmltd000001", "HMLTD - FANGS ALBUM REVIEW", HMLTD, 46))
+        staff = site_post("staff1", "TND Staff Album Review: ‘FANGS’ by HMLTD", None, days_ago=0.2)
+        new, upgrades = self.plan([staff], None, [r])
+        self.assertEqual(([i["rev"]["id"] for i in new], upgrades), (["staff1"], []))
+
+    def test_site_post_seen_before_its_video(self):
+        site_rev = tnd.parse_post(site_post("ghost1", "HMLTD - FANGS", None, days_ago=0.2))
+        new, upgrades = self.plan([], [video("hmltd000001", "HMLTD - FANGS ALBUM REVIEW", HMLTD, 46)], [site_rev])
+        self.assertEqual((new, upgrades), ([], []))
+
     def test_youtube_down_falls_back_to_the_site(self):
         new, _ = self.plan([site_post("g1", "A - B")], None)
         self.assertEqual([(i["rev"]["id"], i["card"]) for i in new], [("g1", True)])
