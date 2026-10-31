@@ -1,6 +1,7 @@
 """Channel card (photo caption + buttons) and the pinned 60-day list."""
 import html
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 from .colors import EMOJI, color, label
@@ -14,6 +15,15 @@ TYPE_RU = {"ep": "EP", "live": "live", "mixtape": "mixtape", "compilation": "с�
 
 def e(s):
     return html.escape(s or "", quote=False)
+
+
+_TAG = re.compile(r"<[^>]+>")
+
+
+def tg_len(s):
+    """Length as Telegram counts it for the 1024/4096 limits: the visible text after HTML parsing (tags and link
+    URLs don't count), in UTF-16 units (an emoji counts 2)."""
+    return len(html.unescape(_TAG.sub("", s)).encode("utf-16-le")) // 2
 
 
 def score_text(r):
@@ -60,7 +70,33 @@ def who_line(r):
     return e(", ".join(bits)) or None
 
 
-def caption(r):
+def plural_tracks(n):
+    if n % 10 == 1 and n % 100 != 11:
+        return f"{n} трек"
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return f"{n} трека"
+    return f"{n} треков"
+
+
+def _norm(t):
+    return "".join(ch for ch in (t or "").lower() if ch.isalnum())
+
+
+def tracklist(r, limit=None):
+    tracks = r.get("tracks") or []
+    best = [_norm(b) for b in (r.get("ai") or {}).get("best_tracks", []) if _norm(b)]
+    out = []
+    for i, t in enumerate(tracks[:limit] if limit is not None else tracks, 1):
+        n = _norm(t.get("title"))
+        star = " ★" if n and any(b == n or (len(b) > 3 and b in n) for b in best) else ""
+        dur = f" {t['sec'] // 60}:{t['sec'] % 60:02d}" if t.get("sec") else ""
+        out.append(f"{i}. {e(t.get('title'))}{dur}{star}")
+    if limit is not None and len(tracks) > limit:
+        out.append(f"… ещё {len(tracks) - limit}")
+    return out
+
+
+def _caption(r, ai, limit, drop=()):
     lines = [f"<b>{e(r['artist_name'])} — {e(r['album'])}</b>"]
     genres = ", ".join(r.get("genres", [])[:4])
     kind = TYPE_RU.get(r.get("type"))
@@ -69,28 +105,57 @@ def caption(r):
         second += f" · {kind}"
     if genres:
         second += f" · {e(genres)}"
+    size = [plural_tracks(len(r["tracks"])) if r.get("tracks") else None,
+            f"{r['duration_min']} мин" if r.get("duration_min") else None]
+    if any(size):
+        second += " · " + ", ".join(x for x in size if x)
     if r.get("guest"):
         second += " · гостевой обзор"
     lines.append(second)
     lines.append("")
-    who = who_line(r)
+    who = who_line(r) if "who" not in drop else None
     if who:
         lines.append(f"<b>Кто:</b> {who}")
-    before = fantano_before(r)
+    before = fantano_before(r) if "before" not in drop else None
     if before:
         lines.append(f"<b>Фантано раньше:</b> {before}")
-    ai = r.get("ai") or {}
     if ai.get("brief"):
         lines.append(f"<b>Бриф:</b> {e(ai['brief'])}")
-    if ai.get("moods"):
+    if ai.get("moods") and "moods" not in drop:
         lines.append(f"<b>Похоже на:</b> {e(' / '.join(ai['moods']))}?")
-    if r.get("video_id"):
-        lines.append(f'\n<a href="https://youtu.be/{r["video_id"]}">Видеообзор на YouTube</a>')
-    text = "\n".join(lines)
-    while len(text) > CAPTION_LIMIT and ai.get("brief"):
-        ai = dict(ai, brief=ai["brief"][: max(0, len(ai["brief"]) - (len(text) - CAPTION_LIMIT) - 1)] + "…")
-        text = caption(dict(r, ai=ai))
-    return text[:CAPTION_LIMIT]
+    tl = tracklist(r, limit) if limit != 0 else []
+    if tl:
+        legend = " (★ — выделил Фантано)" if any(x.endswith("★") for x in tl) else ""
+        lines.append(f"<blockquote expandable><b>Треклист</b>{legend}\n" + "\n".join(tl) + "</blockquote>")
+    return "\n".join(lines)
+
+
+def caption(r):
+    """Photo caption that always fits Telegram's 1024 limit. Never cuts through HTML: when the text is too long,
+    whole parts go first (tracklist lines, then the brief's tail, then the less important lines)."""
+    ai = r.get("ai") or {}
+    n = len(r.get("tracks") or [])
+    for limit in [*range(n, 0, -3), 0]:  # all tracks, then 3 fewer each time ("… ещё N"), then none
+        text = _caption(r, ai, limit)
+        if tg_len(text) <= CAPTION_LIMIT:
+            return text
+    brief = ai.get("brief") or ""
+    if brief:
+        keep = len(brief) - (tg_len(text) - CAPTION_LIMIT) - 1
+        ai = dict(ai, brief=brief[:keep].rstrip() + "…" if keep >= 40 else None)
+        text = _caption(r, ai, 0)
+        if tg_len(text) > CAPTION_LIMIT:
+            ai = dict(ai, brief=None)
+    drop = []
+    for part in (None, "moods", "before", "who"):
+        if part:
+            drop.append(part)
+        text = _caption(r, ai, 0, drop)
+        if tg_len(text) <= CAPTION_LIMIT:
+            return text
+    # Only an absurdly long artist/album name gets here: shorten the plain name, then escape it.
+    short = dict(r, artist_name=(r["artist_name"] or "")[:200], album=(r["album"] or "")[:300])
+    return _caption(short, {}, 0, drop)
 
 
 def buttons(r, with_callbacks=False):
@@ -99,9 +164,12 @@ def buttons(r, with_callbacks=False):
         {"text": "Bandcamp", "url": links["bandcamp"]} if links.get("bandcamp") else None,
         {"text": "YouTube Music", "url": links["ytmusic"]} if links.get("ytmusic") else None,
     ] if b]
+    # The review itself is the YouTube video; the TND page (transcript) is linked from the site's release page.
+    review = ({"text": "▶ Видеообзор", "url": f"https://youtu.be/{r['video_id']}"} if r.get("video_id")
+              else {"text": "Обзор", "url": r["url"]})
     row2 = [b for b in [
         {"text": "Все платформы", "url": links["songlink"]} if links.get("songlink") else None,
-        {"text": "Обзор", "url": r["url"]},
+        review,
     ] if b]
     rows = [row for row in (row1, row2) if row]
     if with_callbacks:
@@ -164,7 +232,7 @@ def render_list(items, statuses=None):
     statuses = statuses or {}
     lines = [i["line"] + STATUS.get(statuses.get(i["id"]), "") for i in items]
     tail = list_tail()
-    while lines and len(LIST_HEAD + "\n".join(lines) + tail) > MESSAGE_LIMIT:
+    while lines and tg_len(LIST_HEAD + "\n".join(lines) + tail) > MESSAGE_LIMIT:
         lines.pop()
     return LIST_HEAD + ("\n".join(lines) if lines else "Пока пусто.") + tail
 

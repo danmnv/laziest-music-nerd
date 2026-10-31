@@ -55,7 +55,7 @@ class ParseTest(unittest.TestCase):
         self.assertIn("<b>Fontaines D.C. — Dopamine Chamber</b>", c)
         self.assertIn("🟡 7/10 · darkwave, dream pop", c)
         self.assertIn("Romance — 7; Skinty Fia — 6", c)
-        self.assertLessEqual(len(c), 1024)
+        self.assertLessEqual(card.tg_len(c), 1024)
         line = card.list_line(r)
         self.assertTrue(line.startswith("🟡 7 · <a href="))
         self.assertTrue(line.endswith("Fontaines D.C. — Dopamine Chamber</a> · darkwave · 44 мин"))
@@ -71,6 +71,38 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(card.fantano_before(r), "X — ?")
         r["artist"] = {"type": "Group", "begin": "1996"}
         self.assertEqual(card.fantano_before(r), "X — ?; активны с 1996")
+
+    def test_smartlink_hosts(self):
+        from lmn.musicbrainz import is_smartlink
+        self.assertTrue(is_smartlink("https://underscores.lnk.to/u"))
+        self.assertTrue(is_smartlink("https://www.ffm.to/x"))
+        self.assertTrue(is_smartlink("https://distrokid.com/hyperfollow/a/b"))
+        self.assertFalse(is_smartlink("https://distrokid.com/x"))
+        self.assertFalse(is_smartlink("https://open.spotify.com/album/1"))
+        self.assertFalse(is_smartlink("https://example.com/lnk.to"))
+
+    def test_tracklist_and_limits(self):
+        r = tnd.parse_post(post("Fontaines D.C. - Dopamine Chamber", ["Album Reviews", "7/10", "darkwave"]))
+        r.update(previous=[], previous_unsure=0, artist={}, links={}, duration_min=44, video_id="UzvthnAU6nc",
+                 tracks=[{"title": "Big Fire", "sec": 201}, {"title": "Favourite", "sec": 62}],
+                 ai={"brief": "Бриф.", "best_tracks": ["big fire"]})
+        c = card.caption(r)
+        self.assertIn("· 2 трека, 44 мин", c)
+        self.assertIn("1. Big Fire 3:21 ★", c)
+        self.assertIn("2. Favourite 1:02</blockquote>", c)
+        self.assertIn("<blockquote expandable>", c)
+        self.assertEqual(card.plural_tracks(11), "11 треков")
+        self.assertEqual(card.plural_tracks(21), "21 трек")
+        self.assertEqual(card.plural_tracks(23), "23 трека")
+        # a huge tracklist and brief must still fit, tracklist shrinks first
+        r["tracks"] = [{"title": f"Track number {i} with a long name", "sec": 200} for i in range(40)]
+        r["ai"] = {"brief": "Очень длинный бриф. " * 40}
+        c = card.caption(r)
+        self.assertLessEqual(card.tg_len(c), 1024)
+        self.assertIn("<b>Бриф:</b>", c)
+        kb = card.buttons(r)
+        self.assertEqual(kb[-1][-1], {"text": "▶ Видеообзор", "url": "https://youtu.be/UzvthnAU6nc"})
+        self.assertNotIn("Видеообзор на YouTube", c)
 
     def test_first_review(self):
         r = {"previous": [], "previous_unsure": 0, "artist": {}}

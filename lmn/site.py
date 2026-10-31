@@ -67,12 +67,15 @@ def release_page(r):
         dossier.append("также: " + ", ".join(a["aliases"]))
     if dossier:
         rows.append(("Досье", e(" · ".join(dossier))))
+    if r.get("tracks"):
+        rows.append(("Треклист", "<ol>" + "".join(f"<li>{line.split('. ', 1)[1]}</li>" for line in card.tracklist(r)) + "</ol>"
+                     + ('<span class="muted">★ — выделил Фантано</span>' if (r.get("ai") or {}).get("best_tracks") else "")))
     if r.get("previous"):
         hist = "".join(f'<li><a href="{e(p["url"])}">{e(p["album"])}</a> — {label(p.get("score"), p.get("not_good"), p.get("classic"), "?")} <span class="muted">{e(p["published"][:4])}</span></li>' for p in r["previous"])
         rows.append(("История оценок", f"<ul>{hist}</ul>"))
     btns = "".join(f'<a class="btn" href="{e(u)}">{n}</a>' for n, u in [
         ("Bandcamp", links.get("bandcamp")), ("YouTube Music", links.get("ytmusic")),
-        ("Все платформы", links.get("songlink")), ("Оригинальный обзор", r["url"]),
+        ("Все платформы", links.get("songlink")), ("Текст обзора на TND", r["url"]),
         ("Видео", f"https://youtu.be/{r['video_id']}" if r.get("video_id") else None)] if u)
     meta = " · ".join(x for x in [", ".join(r.get("genres", [])[:5]), card.TYPE_RU.get(r.get("type")),
                                     f"{r['duration_min']} мин" if r.get("duration_min") else None, r["published"][:10],
