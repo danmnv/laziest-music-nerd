@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import card, http, refresh, tnd, youtube
+from .colors import EMOJI, color
 from .enrich import archive_entry, enrich
 from .telegram import Telegram
 
@@ -157,6 +158,35 @@ def owner_statuses():
         return {}
 
 
+FOLLOW_WINDOW = timedelta(days=3)  # a review older than this is no longer news to its artist's followers
+
+
+def tell_followers(reviews):
+    """Hand the Worker each newly posted card, so it messages the people who follow that artist. Unsent ones (the
+    Worker was down) are retried next hour; the Worker never messages a person twice about one review."""
+    url, secret = worker()
+    now = datetime.now(timezone.utc)
+    todo = [r for r in reviews if r.get("tg_channel_msg") and not r.get("followers_told")
+            and now - refresh._ts(r["published"]) <= FOLLOW_WINDOW]
+    if not (url and todo):
+        return False
+    payload = [{"id": r["id"], "artist_name": r["artist_name"], "mbid": (r.get("artist") or {}).get("mbid"), "album": r["album"],
+                "score": f"{EMOJI[color(r.get('score'), r.get('not_good'), r.get('classic'))]} {card.score_text(r)}",
+                "msg": r["tg_channel_msg"]} for r in todo]
+    try:
+        d = json.loads(http.request(url + "/api/new-reviews", method="POST", json_body={"reviews": payload},
+                                    headers={"Authorization": f"Bearer {secret}"}))
+        if not d.get("ok"):
+            raise ValueError("no ok")
+    except Exception as ex:  # a Worker deployed before this feature answers any path with plain text
+        print(f"worker: telling followers failed ({type(ex).__name__}); retrying next hour")
+        return False
+    for r in todo:
+        r["followers_told"] = True
+    print(f"followers: {len(todo)} new card(s), {d.get('sent', 0)} message(s) sent")
+    return True
+
+
 def bare(rev):
     """A card with only what TND itself gave us, for when enrichment crashed (empty field beats broken pipeline)."""
     r = dict(rev, ai={}, artist={}, links={}, previous=[], previous_unsure=0, covers=[c for c in [rev.get("thumb")] if c])
@@ -277,6 +307,8 @@ def main():
                 state["channel_pinned_id"] = msg["message_id"]
         else:
             print("---- pinned ----\n" + text)
+    if tg and not seeding:
+        tell_followers(reviews)
     if (new or seeding or list_changed) and tg:
         url, secret = worker()
         if url:

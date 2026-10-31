@@ -64,6 +64,7 @@ class ParseTest(unittest.TestCase):
         kb = card.buttons(r, with_callbacks=True)
         self.assertEqual([b["text"] for b in kb[0]], ["Bandcamp", "🔎 YouTube Music"])
         self.assertEqual(kb[1][0], {"text": "Все платформы", "url": "https://album.link/x"})
+        self.assertIn([{"text": "🔔 Следить за артистом", "callback_data": f"f:{r['id']}"}], kb)
         bare = dict(r, links={"bandcamp": "https://bandcamp.com/search?q=x", "ytmusic": "https://y"})
         kb = card.buttons(bare)
         self.assertEqual([b["text"] for b in kb[0]], ["🔎 Bandcamp", "🔎 YouTube Music"])
