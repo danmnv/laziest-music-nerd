@@ -12,6 +12,17 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m unittest discover -s tests -v
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Worker code parses
+        run: node --check worker/src/index.js
+      - name: Worker logic tests
+        run: node --test worker/test/*.test.mjs
   live-dry-run:
     # Runs the real pipeline against live TND/MusicBrainz/Deezer without sending anything to Telegram.
     if: github.event_name == 'push'

@@ -2,6 +2,8 @@
 // Handles Telegram button presses and /start, site login (Telegram Login Widget), personal marks,
 // and a daily cron for "later" reminders. Personal marks are visible only to their owner.
 
+import { isDigestSunday } from "./digest.mjs";
+
 const STATUS_LABEL = { later: "• отложено", done: "✓ прослушано", nope: "✗ не понравилось" };
 const STATUS_ICON = { later: " •", done: " ✓", nope: " ✗" };
 const LIST_HEAD = "<b>Свежие обзоры Фантано за 60 дней</b>\n\n";
@@ -293,16 +295,10 @@ async function askMood(env, uid, rid) {
   });
 }
 
-// ---------- digest (Sunday cron, even ISO weeks only) ----------
-
-function isoWeek(d) {
-  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay() || 7));
-  return Math.ceil(((t - new Date(Date.UTC(t.getUTCFullYear(), 0, 1))) / 864e5 + 1) / 7);
-}
+// ---------- digest (Sunday cron, every second Sunday, see digest.mjs) ----------
 
 async function sendDigest(env) {
-  if (isoWeek(new Date()) % 2 !== 0) return;
+  if (!isDigestSunday(new Date())) return;
   const since = new Date(Date.now() - 14 * 864e5).toISOString();
   const top = (await reviews(env)).filter((r) => r.published >= since && !r.guest && (r.classic || (r.score != null && r.score >= 8)))
     .sort((a, b) => (b.score || 10) - (a.score || 10));
