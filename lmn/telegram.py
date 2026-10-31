@@ -1,6 +1,7 @@
 """Minimal Telegram Bot API client."""
 import json
 import os
+import urllib.error
 
 from . import http
 
@@ -23,6 +24,28 @@ class Telegram:
     def send_photo(self, chat_id, photo, caption, buttons=None):
         return self.call("sendPhoto", chat_id=chat_id, photo=photo, caption=caption,
                          parse_mode="HTML", reply_markup=_markup(buttons))
+
+    def send_photo_file(self, chat_id, data, caption, buttons=None):
+        """Upload image bytes (multipart), so Telegram never has to fetch a slow third-party URL itself."""
+        import uuid
+        import urllib.request
+        boundary = uuid.uuid4().hex
+        fields = {"chat_id": str(chat_id), "caption": caption, "parse_mode": "HTML"}
+        if buttons:
+            fields["reply_markup"] = json.dumps(_markup(buttons))
+        body = b""
+        for k, v in fields.items():
+            body += f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode()
+        body += f'--{boundary}\r\nContent-Disposition: form-data; name="photo"; filename="cover.jpg"\r\nContent-Type: image/jpeg\r\n\r\n'.encode()
+        body += data + f"\r\n--{boundary}--\r\n".encode()
+        req = urllib.request.Request(f"https://api.telegram.org/bot{self.token}/sendPhoto", data=body,
+                                     headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                res = json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"Telegram sendPhoto failed: {e.read()[:300]!r}") from None
+        return res["result"]
 
     def send_message(self, chat_id, text, buttons=None, silent=False):
         return self.call("sendMessage", chat_id=chat_id, text=text, parse_mode="HTML",

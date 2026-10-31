@@ -44,3 +44,12 @@ def request(url, *, method="GET", data=None, json_body=None, headers=None, timeo
 
 def get_json(url, **kw):
     return json.loads(request(url, **kw))
+
+
+def get_bytes(url, timeout=30, max_bytes=10_000_000):
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = r.read(max_bytes + 1)
+        if len(data) > max_bytes or not r.headers.get("Content-Type", "").startswith("image/"):
+            raise HttpError(0, "not an image or too big", url)
+        return data
