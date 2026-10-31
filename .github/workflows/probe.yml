@@ -1,0 +1,17 @@
+name: probe (temporary)
+on:
+  push:
+    branches: [claude/project-thread-du24xe]
+    paths: [lmn/probe_yt.py, .github/workflows/probe.yml]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m lmn.probe_yt
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
