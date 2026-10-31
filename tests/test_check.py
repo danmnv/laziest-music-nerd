@@ -38,7 +38,7 @@ class FakeTelegram:
         self.pinned.append(message_id)
 
 
-def fake_enrich(rev, plaintext, archive):
+def fake_enrich(rev, plaintext, archive, **kw):  # **kw: use_ai etc.
     return dict(rev, ai={}, artist={}, links={}, previous=[], previous_unsure=0, covers=[])
 
 
