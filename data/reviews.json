@@ -4065,7 +4065,11 @@
     "published": "2023-09-08T23:35:00.000-04:00"
    }
   ],
-  "previous_unsure": 0
+  "previous_unsure": 0,
+  "refreshed": [
+   "1d",
+   "3d"
+  ]
  },
  {
   "id": "6adbf00e60a520b7b082807c",
@@ -4265,7 +4269,11 @@
     "published": "2022-04-11T23:03:00.000-04:00"
    }
   ],
-  "previous_unsure": 0
+  "previous_unsure": 0,
+  "refreshed": [
+   "1d",
+   "3d"
+  ]
  },
  {
   "id": "6ae16e7060a520b7b082e3e1",
@@ -4616,7 +4624,7 @@
   "not_good": false,
   "classic": false,
   "not_bad": false,
-  "score_note": null,
+  "score_note": "strong",
   "type": null,
   "genres": [
    "art rock",
@@ -4642,6 +4650,11 @@
     "UMAMI",
     "CLOSE TO YOU",
     "SHUDDER"
+   ],
+   "brief": "Третий проект британцев HMLTD изобилует хаотичными экспериментами. Фантано хвалит группу за смелость и отдельные удачные треки, но считает альбом слишком неровным.",
+   "who": "Британский коллектив, играющий на стыке арт-рока, гот-рока, постпанка и электроники.",
+   "moods": [
+    "для настроения"
    ]
   },
   "artist": {
@@ -4658,8 +4671,53 @@
    "ytmusic": "https://music.youtube.com/search?q=HMLTD+FANGS"
   },
   "mb_release_group": "45787b5c-0844-4d18-8130-fc1aaa8b7828",
-  "duration_min": null,
-  "tracks": null,
+  "duration_min": 44,
+  "tracks": [
+   {
+    "title": "What The Hell",
+    "sec": 203
+   },
+   {
+    "title": "I Used To Ride In Limousines",
+    "sec": 209
+   },
+   {
+    "title": "Umami",
+    "sec": 264
+   },
+   {
+    "title": "Dancing On Your Grave",
+    "sec": 258
+   },
+   {
+    "title": "One Thousand White Horses",
+    "sec": 261
+   },
+   {
+    "title": "Close To You",
+    "sec": 257
+   },
+   {
+    "title": "Chateau Vamp Freestyle",
+    "sec": 268
+   },
+   {
+    "title": "Grab The Crucifix",
+    "sec": 197
+   },
+   {
+    "title": "Shudder",
+    "sec": 206
+   },
+   {
+    "title": "Blitzkrieg",
+    "sec": 276
+   },
+   {
+    "title": "Sorry For Laughing (feat. Corpus Delicti)",
+    "sec": 231
+   }
+  ],
   "covers": [
    "https://coverartarchive.org/release-group/45787b5c-0844-4d18-8130-fc1aaa8b7828/front-500",
    "https://i.ytimg.com/vi/YGFqOLufncA/maxresdefault.jpg"
@@ -4683,6 +4741,11 @@
    }
   ],
   "previous_unsure": 1,
-  "tg_channel_msg": 4
+  "tg_channel_msg": 4,
+  "tg_kind": "photo",
+  "tg_shown": "a065a90620b754bb",
+  "refreshed": [
+   "1d"
+  ]
  }
 ]
