@@ -1,10 +1,18 @@
-"""Turn a parsed TND post into a full card record. Each source is optional."""
+"""Turn a parsed TND post into a full card record. Each source is optional: one failing source only empties its own fields."""
 from . import gemini, links, musicbrainz as mb
 
 
-def enrich(rev, plaintext, archive):
+def _try(name, fn, default=None):
+    try:
+        return fn()
+    except Exception as ex:  # bad JSON, timeout, an API change: log it and keep the other sources' fields
+        print(f"{name} failed: {type(ex).__name__}: {str(ex)[:200]}")
+        return default
+
+
+def enrich(rev, plaintext, archive, use_ai=True):
     r = dict(rev)
-    ai = gemini.summarize(r["title"], plaintext) or {}
+    ai = (_try("gemini", lambda: gemini.summarize(r["title"], plaintext)) if use_ai else None) or {}
     r["ai"] = {k: ai.get(k) for k in ("brief", "who", "moods", "best_tracks") if ai.get(k)}
     if not r.get("artist_name") and ai.get("artist"):
         r["artist_name"], r["album"] = ai["artist"], ai.get("album")
@@ -12,28 +20,28 @@ def enrich(rev, plaintext, archive):
         r["artist_name"], r["album"] = r["title"], ""
     artist, album = r["artist_name"], r["album"] or ""
 
-    rg = mb.find_release_group(artist, album) if album else None
+    rg = _try("musicbrainz search", lambda: mb.find_release_group(artist, album)) if album else None
     r["artist"] = {}
     r["links"] = {}
     if rg:
         r["mb_release_group"] = rg["rg_id"]
-        det = mb.release_details(rg["releases"])
-        r["duration_min"] = det["duration_min"]
+        det = _try("musicbrainz release", lambda: mb.release_details(rg["releases"]), {})
+        r["duration_min"] = det.get("duration_min")
         r["tracks"] = det.get("tracks")
-        if det["bandcamp"]:
+        if det.get("bandcamp"):
             r["links"]["bandcamp"] = det["bandcamp"]
         if det.get("smartlink"):
             r["links"]["songlink"] = det["smartlink"]  # the artist's own all-platforms page, if MusicBrainz knows it
-        info = mb.artist_info(rg["artist_id"]) or {}
+        info = _try("musicbrainz artist", lambda: mb.artist_info(rg["artist_id"])) or {}
         r["artist"] = {"mbid": rg["artist_id"], **{k: info.get(k) for k in ("type", "country", "area", "begin", "end", "aliases")}}
         if not r.get("type"):
             sec = [s.lower() for s in rg.get("secondary") or []]
             r["type"] = {"EP": "ep"}.get(rg.get("type")) or ("live" if "live" in sec else "mixtape" if "mixtape/street" in sec else None)
 
-    dz = links.deezer_album(artist, album) if album else None
+    dz = _try("deezer", lambda: links.deezer_album(artist, album)) if album else None
     if dz:
         r["links"].setdefault("songlink", links.songlink(dz["url"]))
-        r["duration_min"] = r.get("duration_min") or dz["duration_min"]
+        r["duration_min"] = r.get("duration_min") or dz.get("duration_min")
         r["tracks"] = r.get("tracks") or dz.get("tracks")
     r["links"].setdefault("bandcamp", links.bandcamp_search(artist, album))
     r["links"]["ytmusic"] = links.ytmusic_search(artist, album)
@@ -43,8 +51,7 @@ def enrich(rev, plaintext, archive):
         rg and mb.cover_url(rg["rg_id"]),
         r.get("thumb"),
     ] if c]
-    prev, unsure = previous_reviews(r, archive)
-    r["previous"], r["previous_unsure"] = prev, unsure
+    r["previous"], r["previous_unsure"] = _try("previous reviews", lambda: previous_reviews(r, archive), ([], 0))
     return r
 
 
@@ -63,8 +70,12 @@ def previous_reviews(r, archive, max_checks=10):
     for a in cands:
         if "artist_mbid" not in a and checks < max_checks and a.get("album"):
             checks += 1
-            found = mb.find_release_group(a["artist_name"], a["album"])
-            a["artist_mbid"] = found["artist_id"] if found else None
+            try:
+                found = mb.find_release_group(a["artist_name"], a["album"])
+            except Exception as ex:  # unknown this time, try again with the next review of this artist
+                print(f"musicbrainz check of an earlier review failed: {type(ex).__name__}")
+            else:
+                a["artist_mbid"] = found["artist_id"] if found else None
         if a.get("artist_mbid") == mbid:
             verified.append({k: a.get(k) for k in ("album", "score", "not_good", "classic", "url", "published")})
         else:

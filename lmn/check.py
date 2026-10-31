@@ -43,6 +43,10 @@ def send_card(tg, chat_id, r):
 def owner_chat(tg):
     if os.environ.get("TELEGRAM_OWNER_ID"):
         return int(os.environ["TELEGRAM_OWNER_ID"])
+    known = worker_owner_id()
+    if known:
+        return known
+    # Works only until the Worker is deployed: with a webhook set, Telegram answers getUpdates with 409.
     ups = tg.call("getUpdates", limit=100)
     chats = {u["message"]["chat"]["id"] for u in ups if u.get("message", {}).get("chat", {}).get("type") == "private"}
     if len(chats) != 1:
@@ -58,6 +62,18 @@ def worker():
         return None, None
     # same derivation as the deploy workflow, so no extra secret is needed
     return url.rstrip("/"), hashlib.sha256(f"{token}:actions".encode()).hexdigest()[:48]
+
+
+def worker_owner_id():
+    """The owner's Telegram id as the Worker knows it (it found it on the first deploy). None if there's no Worker yet."""
+    url, secret = worker()
+    if not url:
+        return None
+    try:
+        return http.get_json(url + "/api/owner/id", headers={"Authorization": f"Bearer {secret}"}).get("owner_id")
+    except Exception as ex:
+        print(f"worker owner id unavailable: {type(ex).__name__}")
+        return None
 
 
 def owner_statuses():
@@ -106,7 +122,8 @@ def main():
     print(f"{len(new)} new review(s){' (seeding, no cards)' if seeding else ''}")
     for p in new:
         rev = tnd.parse_post(p)
-        r = enrich(rev, p.get("plaintext"), archive)
+        # Seeding fills the list and the site with ~50 older reviews: no Gemini there, its free daily limit is for new cards.
+        r = enrich(rev, p.get("plaintext"), archive, use_ai=not seeding)
         if not seeding:
             if tg:
                 msg = send_card(tg, channel, r)

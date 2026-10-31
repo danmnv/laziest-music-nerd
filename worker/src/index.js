@@ -44,6 +44,11 @@ export default {
         ctx.waitUntil((async () => { for (const u of results) await refreshDmList(env, u.user_id, false); })());
         return json({ ok: true, users: results.length });
       }
+      if (url.pathname === "/api/owner/id") {
+        // For GitHub Actions' test mode and key check: once the webhook is set, Telegram's getUpdates is closed to them.
+        if (req.headers.get("Authorization") !== `Bearer ${env.ACTIONS_SECRET}`) return new Response("forbidden", { status: 403 });
+        return json({ owner_id: env.OWNER_ID ? Number(env.OWNER_ID) : null });
+      }
       if (url.pathname === "/api/owner/channel-marks") {
         if (req.headers.get("Authorization") !== `Bearer ${env.ACTIONS_SECRET}`) return new Response("forbidden", { status: 403 });
         const show = (await getSetting(env, "show_in_channel")) !== "0";
@@ -197,10 +202,16 @@ async function reviews(env) {
   return r.ok ? r.json() : [];
 }
 
+// Length as Telegram counts it for the 4096 limit: visible text after HTML parsing (tags and link URLs don't count),
+// in UTF-16 units, which is what a JS string's length already is.
+function tgLen(html) {
+  return html.replace(/<[^>]+>/g, "").replace(/&(?:[a-z]+|#\d+);/gi, "x").length;
+}
+
 function renderList(env, items, statuses) {
   const tail = env.SITE_LIVE === "1" ? `\n\n<a href="${env.SITE_URL}/">Полный список на сайте</a>` : "";
   let lines = items.map((i) => i.line + (STATUS_ICON[statuses[i.id]] || ""));
-  while (lines.length && (LIST_HEAD + lines.join("\n") + tail).length > MESSAGE_LIMIT) lines.pop();
+  while (lines.length && tgLen(LIST_HEAD + lines.join("\n") + tail) > MESSAGE_LIMIT) lines.pop();
   return LIST_HEAD + (lines.length ? lines.join("\n") : "Пока пусто.") + tail;
 }
 

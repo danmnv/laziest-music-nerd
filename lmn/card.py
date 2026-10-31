@@ -1,6 +1,7 @@
 """Channel card (photo caption + buttons) and the pinned 60-day list."""
 import html
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 from .colors import EMOJI, color, label
@@ -14,6 +15,15 @@ TYPE_RU = {"ep": "EP", "live": "live", "mixtape": "mixtape", "compilation": "с�
 
 def e(s):
     return html.escape(s or "", quote=False)
+
+
+_TAG = re.compile(r"<[^>]+>")
+
+
+def tg_len(s):
+    """Length as Telegram counts it for the 1024/4096 limits: the visible text after HTML parsing (tags and link
+    URLs don't count), in UTF-16 units (an emoji counts 2)."""
+    return len(html.unescape(_TAG.sub("", s)).encode("utf-16-le")) // 2
 
 
 def score_text(r):
@@ -86,8 +96,7 @@ def tracklist(r, limit=None):
     return out
 
 
-def caption(r, _ai=None, _limit=None):
-    ai = _ai if _ai is not None else (r.get("ai") or {})
+def _caption(r, ai, limit, drop=()):
     lines = [f"<b>{e(r['artist_name'])} — {e(r['album'])}</b>"]
     genres = ", ".join(r.get("genres", [])[:4])
     kind = TYPE_RU.get(r.get("type"))
@@ -104,33 +113,49 @@ def caption(r, _ai=None, _limit=None):
         second += " · гостевой обзор"
     lines.append(second)
     lines.append("")
-    who = who_line(r)
+    who = who_line(r) if "who" not in drop else None
     if who:
         lines.append(f"<b>Кто:</b> {who}")
-    before = fantano_before(r)
+    before = fantano_before(r) if "before" not in drop else None
     if before:
         lines.append(f"<b>Фантано раньше:</b> {before}")
     if ai.get("brief"):
         lines.append(f"<b>Бриф:</b> {e(ai['brief'])}")
-    if ai.get("moods"):
+    if ai.get("moods") and "moods" not in drop:
         lines.append(f"<b>Похоже на:</b> {e(' / '.join(ai['moods']))}?")
-    tl = tracklist(r, _limit) if _limit != 0 else []
+    tl = tracklist(r, limit) if limit != 0 else []
     if tl:
         legend = " (★ — выделил Фантано)" if any(x.endswith("★") for x in tl) else ""
         lines.append(f"<blockquote expandable><b>Треклист</b>{legend}\n" + "\n".join(tl) + "</blockquote>")
-    text = "\n".join(lines)
-    if len(text) <= CAPTION_LIMIT:
-        return text
-    # Too long for a photo caption: first shorten the tracklist, then the brief.
+    return "\n".join(lines)
+
+
+def caption(r):
+    """Photo caption that always fits Telegram's 1024 limit. Never cuts through HTML: when the text is too long,
+    whole parts go first (tracklist lines, then the brief's tail, then the less important lines)."""
+    ai = r.get("ai") or {}
     n = len(r.get("tracks") or [])
-    limit = n if _limit is None else _limit
-    if limit > 0:
-        return caption(r, ai, max(0, limit - 3) if limit > 3 else 0)
-    if ai.get("brief"):
-        cut = len(ai["brief"]) - (len(text) - CAPTION_LIMIT) - 1
-        brief = ai["brief"][:cut].rstrip() + "…" if cut >= 40 else None
-        return caption(r, {k: v for k, v in dict(ai, brief=brief).items() if v}, 0)
-    return text[:CAPTION_LIMIT]
+    for limit in [*range(n, 0, -3), 0]:  # all tracks, then 3 fewer each time ("… ещё N"), then none
+        text = _caption(r, ai, limit)
+        if tg_len(text) <= CAPTION_LIMIT:
+            return text
+    brief = ai.get("brief") or ""
+    if brief:
+        keep = len(brief) - (tg_len(text) - CAPTION_LIMIT) - 1
+        ai = dict(ai, brief=brief[:keep].rstrip() + "…" if keep >= 40 else None)
+        text = _caption(r, ai, 0)
+        if tg_len(text) > CAPTION_LIMIT:
+            ai = dict(ai, brief=None)
+    drop = []
+    for part in (None, "moods", "before", "who"):
+        if part:
+            drop.append(part)
+        text = _caption(r, ai, 0, drop)
+        if tg_len(text) <= CAPTION_LIMIT:
+            return text
+    # Only an absurdly long artist/album name gets here: shorten the plain name, then escape it.
+    short = dict(r, artist_name=(r["artist_name"] or "")[:200], album=(r["album"] or "")[:300])
+    return _caption(short, {}, 0, drop)
 
 
 def buttons(r, with_callbacks=False):
@@ -207,7 +232,7 @@ def render_list(items, statuses=None):
     statuses = statuses or {}
     lines = [i["line"] + STATUS.get(statuses.get(i["id"]), "") for i in items]
     tail = list_tail()
-    while lines and len(LIST_HEAD + "\n".join(lines) + tail) > MESSAGE_LIMIT:
+    while lines and tg_len(LIST_HEAD + "\n".join(lines) + tail) > MESSAGE_LIMIT:
         lines.pop()
     return LIST_HEAD + ("\n".join(lines) if lines else "Пока пусто.") + tail
 

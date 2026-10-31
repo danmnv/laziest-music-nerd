@@ -55,7 +55,7 @@ class ParseTest(unittest.TestCase):
         self.assertIn("<b>Fontaines D.C. — Dopamine Chamber</b>", c)
         self.assertIn("🟡 7/10 · darkwave, dream pop", c)
         self.assertIn("Romance — 7; Skinty Fia — 6", c)
-        self.assertLessEqual(len(c), 1024)
+        self.assertLessEqual(card.tg_len(c), 1024)
         line = card.list_line(r)
         self.assertTrue(line.startswith("🟡 7 · <a href="))
         self.assertTrue(line.endswith("Fontaines D.C. — Dopamine Chamber</a> · darkwave · 44 мин"))
@@ -98,7 +98,7 @@ class ParseTest(unittest.TestCase):
         r["tracks"] = [{"title": f"Track number {i} with a long name", "sec": 200} for i in range(40)]
         r["ai"] = {"brief": "Очень длинный бриф. " * 40}
         c = card.caption(r)
-        self.assertLessEqual(len(c), 1024)
+        self.assertLessEqual(card.tg_len(c), 1024)
         self.assertIn("<b>Бриф:</b>", c)
         kb = card.buttons(r)
         self.assertEqual(kb[-1][-1], {"text": "▶ Видеообзор", "url": "https://youtu.be/UzvthnAU6nc"})
