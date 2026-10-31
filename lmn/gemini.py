@@ -34,7 +34,7 @@ def summarize(title, text, api_key=None):
         "generationConfig": {"responseMimeType": "application/json", "temperature": 0.4},
     }
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
-    for attempt in range(3):
+    for attempt in range(4):
         try:
             raw = http.get_json(url, json_body=body, method="POST", headers={"x-goog-api-key": api_key}, timeout=90, retries=0)
             out = json.loads(raw["candidates"][0]["content"]["parts"][0]["text"])
@@ -42,9 +42,9 @@ def summarize(title, text, api_key=None):
             return out
         except http.HttpError as e:
             print(f"gemini: HTTP {e.status}")
-            if e.status != 429:
+            if e.status not in (429, 500, 503):  # overloaded or rate-limited: try again a bit later
                 return None
-            time.sleep(30 * (attempt + 1))
+            time.sleep(20 * (attempt + 1))
         except (KeyError, IndexError, ValueError) as e:
             print(f"gemini: bad response {e!r}")
             return None
