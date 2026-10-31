@@ -25,6 +25,7 @@ def deezer_album(artist, album):
                 "cover": full.get("cover_xl") or a.get("cover_xl"),
                 "duration_min": round(full["duration"] / 60) if full.get("duration") else None,
                 "record_type": full.get("record_type") or a.get("record_type"),
+                "tracks": [{"title": t.get("title"), "sec": t.get("duration")} for t in (full.get("tracks") or {}).get("data", [])] or None,
             }
     return None
 
