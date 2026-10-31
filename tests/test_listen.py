@@ -50,6 +50,27 @@ class ListenTest(unittest.TestCase):
             out = listen.resolve("https://www.youtube.com/playlist?list=PLx", "Umami Deluxe")
         self.assertEqual(out, {})
 
+    def test_names_album(self):
+        self.assertTrue(listen.names_album("Quavo 'QRÖMELIFE' Album", "QRÖMELIFE"))
+        self.assertTrue(listen.names_album("c", "C"))
+        self.assertTrue(listen.names_album("Remi Wolf - Mud", "Mud"))
+        self.assertFalse(listen.names_album("Cool songs", "C"))
+        self.assertFalse(listen.names_album("Muddy waters", "Mud"))
+
+    def test_album_playlist_on_the_channel_of_a_track_video(self):
+        def yt(path, **kw):
+            if path == "videos":
+                return {"items": [{"snippet": {"description": "Backwards: https://Quavo.lnk.to/Backwards", "channelId": "UCq"}}]}
+            if path == "playlists":
+                self.assertEqual(kw["channelId"], "UCq")
+                return {"items": [{"id": "PLvids", "snippet": {"title": "Music videos"}},
+                                  {"id": "PLalbum", "snippet": {"title": "Quavo 'QRÖMELIFE' Album"}}]}
+            raise AssertionError(path)
+        with mock.patch.object(yt_archive, "yt", yt), \
+                mock.patch.object(http, "request", return_value="<title>Quavo - Backwards</title>"):
+            out = listen.resolve("https://youtu.be/abcdefghijk", "QRÖMELIFE")
+        self.assertEqual(out, {"youtube_album": "https://www.youtube.com/playlist?list=PLalbum"})
+
     def test_without_a_key_nothing_is_looked_up(self):
         with mock.patch.dict("os.environ", {"YOUTUBE_API_KEY": ""}), mock.patch.object(yt_archive, "yt", side_effect=AssertionError):
             self.assertEqual(listen.resolve("https://youtu.be/abcdefghijk", "FANGS"), {})
