@@ -55,7 +55,7 @@ def release_page(r):
     if ai.get("brief"):
         rows.append(("Бриф", e(ai["brief"])))
     if ai.get("moods"):
-        rows.append(("Похоже на", e(" / ".join(ai["moods"])) + ' <span class="muted">(предположение ИИ)</span>'))
+        rows.append(("Похоже на", '<span class="moods">' + e(" / ".join(ai["moods"])) + ' <span class="muted">(предположение ИИ)</span></span>'))
     dossier = []
     if a.get("type"):
         dossier.append({"Group": "группа", "Person": "сольный артист"}.get(a["type"], a["type"]))

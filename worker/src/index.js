@@ -6,6 +6,9 @@ const STATUS_LABEL = { later: "• отложено", done: "✓ прослуш�
 const STATUS_ICON = { later: " •", done: " ✓", nope: " ✗" };
 const LIST_HEAD = "<b>Свежие обзоры Фантано за 60 дней</b>\n\n";
 const MESSAGE_LIMIT = 4096;
+const MOODS = ["для тренировки", "для настроения", "для работы за столом", "для тусовки"];
+const RANDOM_BUTTON = "🎲 Случайный из архива";
+const MENU = { keyboard: [[{ text: RANDOM_BUTTON }]], resize_keyboard: true, is_persistent: true };
 
 export default {
   async fetch(req, env, ctx) {
@@ -54,7 +57,8 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(sendReminders(env));
+    if (event.cron === "0 7 * * SUN") ctx.waitUntil(sendDigest(env));
+    else ctx.waitUntil(sendReminders(env));
   },
 };
 
@@ -77,6 +81,11 @@ async function onUpdate(u, env) {
   if (!m || m.chat.type !== "private") return;
   const uid = m.from.id;
   const text = (m.text || "").trim();
+  if (text.startsWith("/start mood_")) {
+    await env.DB.prepare("INSERT OR IGNORE INTO users (user_id, started_at) VALUES (?, ?)").bind(uid, now()).run();
+    return askMood(env, uid, text.slice("/start mood_".length));
+  }
+  if (text === "/random" || text === RANDOM_BUTTON) return sendRandom(env, uid);
   if (text.startsWith("/start")) {
     await env.DB.prepare("INSERT OR IGNORE INTO users (user_id, started_at) VALUES (?, ?)").bind(uid, now()).run();
     await tg(env, "sendMessage", {
@@ -86,7 +95,9 @@ async function onUpdate(u, env) {
         "Привет! Я присылаю карточки новых обзоров Anthony Fantano в канал @laziestmusicnerd.\n\n" +
         "Кнопки «Отложить», «Прослушано», «Не понравилось» под карточками видишь только ты. " +
         "Ниже — закреплённый список свежих обзоров с твоими отметками.\n\n" +
+        "Кнопка «" + RANDOM_BUTTON + "» внизу выдаёт альбом с оценкой от 8, который ты ещё не отмечал(а).\n\n" +
         "Неофициальный фан-проект. Не связан с Anthony Fantano и The Needle Drop.",
+      reply_markup: MENU,
     });
     await refreshDmList(env, uid, true);
     return;
@@ -110,6 +121,17 @@ async function onCallback(q, env) {
     answer = next ? `Отмечено: ${STATUS_LABEL[next]}` : "Отметка снята";
     if (isOwner(env, uid)) await refreshOwnerLists(env);
     else await refreshDmList(env, uid, false);
+    if (next === "done") await maybeSuggestSimilar(env, uid, rid);
+  } else if (parts[0] === "v" && parts[2] === "o") {
+    // "другое": continue in the private chat, where the bot can show all four options
+    return tg(env, "answerCallbackQuery", { callback_query_id: q.id, url: `https://t.me/${env.BOT_USERNAME}?start=mood_${parts[1]}` });
+  } else if (parts[0] === "vo") {
+    const [, rid, mi] = parts;
+    const mood = MOODS[Number(mi)];
+    if (mood) {
+      await env.DB.prepare("INSERT INTO mood_votes (user_id, review_id, mood, vote) VALUES (?,?,?, 'y') ON CONFLICT(user_id, review_id, mood) DO UPDATE SET vote='y'").bind(uid, rid, mood).run();
+      answer = `Записал: ${mood}`;
+    }
   } else if (parts[0] === "v") {
     const [, rid, idx, vote] = parts;
     const r = (await reviews(env)).find((x) => x.id === rid);
@@ -206,6 +228,90 @@ async function refreshOwnerLists(env) {
   if (!pinned) return;
   const text = renderList(env, await listItems(env), statusMap(await userMarks(env, uid)));
   await tg(env, "editMessageText", { chat_id: env.CHANNEL, message_id: pinned, text, parse_mode: "HTML", link_preview_options: { is_disabled: true } });
+}
+
+// ---------- archive: random pick, similar albums, mood "другое" ----------
+
+async function archive(env) {
+  const r = await fetch(env.DATA_URL.replace("reviews.json", "archive.json"), { cf: { cacheTtl: 3600 } });
+  return r.ok ? r.json() : [];
+}
+
+const good = (a) => !a.guest && (a.classic || (a.score != null && a.score >= 8)) && a.artist_name && a.album;
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+function albumMessage(a, intro) {
+  const sc = a.classic ? "CLASSIC" : `${a.score}/10`;
+  const q = encodeURIComponent(`${a.artist_name} ${a.album}`);
+  return {
+    parse_mode: "HTML",
+    text: `${intro}\n\n🟢 ${sc} · <b>${esc(a.artist_name)} — ${esc(a.album)}</b> (${a.published.slice(0, 4)})` +
+      (a.genres && a.genres.length ? `\n${esc(a.genres.slice(0, 3).join(", "))}` : ""),
+    reply_markup: { inline_keyboard: [
+      [{ text: "Обзор", url: a.url }, { text: "YouTube Music", url: `https://music.youtube.com/search?q=${q}` }],
+      [{ text: "• Отложить", callback_data: `m:${a.id}:later` }, { text: "✓ Прослушано", callback_data: `m:${a.id}:done` }, { text: "✗ Не понравилось", callback_data: `m:${a.id}:nope` }],
+    ] },
+  };
+}
+
+async function sendRandom(env, uid) {
+  const marked = await userMarks(env, uid);
+  const pool = (await archive(env)).filter((a) => good(a) && !marked[a.id]);
+  if (!pool.length) return tg(env, "sendMessage", { chat_id: uid, text: "Ты отметил(а) всё, что было с оценкой от 8. Впечатляет." });
+  return tg(env, "sendMessage", { chat_id: uid, ...albumMessage(pick(pool), "Случайный из архива:") });
+}
+
+async function maybeSuggestSimilar(env, uid, rid) {
+  const user = await env.DB.prepare("SELECT 1 FROM users WHERE user_id=?").bind(uid).first();
+  if (!user) return; // can't write first to someone who never started the bot
+  const m = await env.DB.prepare("SELECT score FROM marks WHERE user_id=? AND review_id=?").bind(uid, rid).first();
+  if (m && m.score != null && m.score < 7) return;
+  const arch = await archive(env);
+  const base = arch.find((a) => a.id === rid);
+  if (!base || !base.genres || !base.genres.length) return;
+  const marked = await userMarks(env, uid);
+  const g = new Set(base.genres.map((x) => x.toLowerCase()));
+  const scored = arch.filter((a) => good(a) && a.id !== rid && !marked[a.id])
+    .map((a) => ({ a, n: (a.genres || []).filter((x) => g.has(x.toLowerCase())).length }))
+    .filter((x) => x.n > 0);
+  if (!scored.length) return;
+  const best = Math.max(...scored.map((x) => x.n));
+  const top = scored.filter((x) => x.n === best).map((x) => x.a);
+  const chosen = [];
+  while (chosen.length < 3 && top.length) chosen.push(top.splice(Math.floor(Math.random() * top.length), 1)[0]);
+  await tg(env, "sendMessage", { chat_id: uid, parse_mode: "HTML", text: `Понравилось <b>${esc(base.artist_name)} — ${esc(base.album)}</b>? Вот три похожих по жанрам:` });
+  for (const a of chosen) await tg(env, "sendMessage", { chat_id: uid, ...albumMessage(a, "") });
+}
+
+async function askMood(env, uid, rid) {
+  const r = (await reviews(env)).find((x) => x.id === rid);
+  if (!r) return;
+  await tg(env, "sendMessage", {
+    chat_id: uid, parse_mode: "HTML",
+    text: `Когда лучше слушать <b>${esc(r.artist_name)} — ${esc(r.album)}</b>?`,
+    reply_markup: { inline_keyboard: MOODS.map((m, i) => [{ text: m, callback_data: `vo:${rid}:${i}` }]) },
+  });
+}
+
+// ---------- digest (Sunday cron, even ISO weeks only) ----------
+
+function isoWeek(d) {
+  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay() || 7));
+  return Math.ceil(((t - new Date(Date.UTC(t.getUTCFullYear(), 0, 1))) / 864e5 + 1) / 7);
+}
+
+async function sendDigest(env) {
+  if (isoWeek(new Date()) % 2 !== 0) return;
+  const since = new Date(Date.now() - 14 * 864e5).toISOString();
+  const top = (await reviews(env)).filter((r) => r.published >= since && !r.guest && (r.classic || (r.score != null && r.score >= 8)))
+    .sort((a, b) => (b.score || 10) - (a.score || 10));
+  if (!top.length) return; // nothing worth sending
+  const site = env.SITE_LIVE === "1";
+  const lines = top.map((r) => `🟢 ${r.classic ? "CLASSIC" : r.score} · <a href="${site ? `${env.SITE_URL}/r/${r.id}.html` : r.url}">${esc(r.artist_name)} — ${esc(r.album)}</a>`);
+  const text = "<b>Лучшее за две недели</b>\n\n" + lines.join("\n");
+  const { results } = await env.DB.prepare("SELECT user_id FROM users").all();
+  for (const u of results) await tg(env, "sendMessage", { chat_id: u.user_id, text, parse_mode: "HTML", link_preview_options: { is_disabled: true } });
 }
 
 // ---------- reminders (daily cron) ----------

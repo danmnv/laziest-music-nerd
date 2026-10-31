@@ -40,7 +40,14 @@
   const rel = document.querySelector(".release");
   if (rel) {
     const id = rel.dataset.id, box = rel.querySelector(".mine");
-    api("/api/public").then((d) => { const a = d.avg && d.avg[id]; if (a) rel.querySelector(".avg").textContent = `Средняя оценка посетителей: ${a.avg} (${a.n})`; }).catch(() => {});
+    api("/api/public").then((d) => {
+      const a = d.avg && d.avg[id];
+      if (a) rel.querySelector(".avg").textContent = `Средняя оценка посетителей: ${a.avg} (${a.n})`;
+      const mv = (d.moods && d.moods[id]) || {};
+      const ok = Object.entries(mv).filter(([, v]) => v.y > v.n).map(([m]) => m);
+      const el = rel.querySelector(".moods");
+      if (el && ok.length) el.innerHTML = ok.join(" / ") + ' <span class="muted">(подтверждено голосованием)</span>';
+    }).catch(() => {});
     if (token) loadMarks().then(() => {
       const m = marks[id] || {};
       box.hidden = false;
