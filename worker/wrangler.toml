@@ -1,0 +1,20 @@
+name = "laziest-music-nerd"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+DATA_URL = "https://raw.githubusercontent.com/danmnv/laziest-music-nerd/main/data/reviews.json"
+SITE_URL = "https://danmnv.github.io/laziest-music-nerd"
+CHANNEL = "@laziestmusicnerd"
+BOT_USERNAME = "laziest_music_nerd_bot"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "laziest-music-nerd"
+database_id = "REPLACED_BY_DEPLOY_WORKFLOW"
+
+# Secrets (set by the deploy workflow, never in this file):
+# TELEGRAM_BOT_TOKEN, WEBHOOK_SECRET, ACTIONS_SECRET, SESSION_SECRET, OWNER_ID
+
+[triggers]
+crons = ["0 9 * * *", "0 7 * * SUN"]   # напоминания — каждый день в 12:00 МСК; дайджест — воскресенье 10:00 МСК, по чётным неделям
