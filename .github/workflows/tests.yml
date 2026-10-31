@@ -1,0 +1,32 @@
+name: tests
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m unittest discover -s tests -v
+  live-dry-run:
+    # Runs the real pipeline against live TND/MusicBrainz/Deezer without sending anything to Telegram.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: |
+          mkdir -p /tmp/data && echo '{"seeded": true}' > /tmp/data/state.json
+          python -m lmn.check
+        env:
+          MODE: dry
+          DATA_DIR: /tmp/data
+          DRY_LIMIT: "4"
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

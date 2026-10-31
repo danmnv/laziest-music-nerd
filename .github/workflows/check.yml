@@ -1,0 +1,46 @@
+name: Проверка новых обзоров
+on:
+  schedule:
+    - cron: "17 * * * *"   # каждый час в :17
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "run — как обычно; test — карточка свежего обзора только тебе в личку; dry — ничего не отправлять"
+        default: run
+        type: choice
+        options: [run, test, dry]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: check-reviews
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Проверить TND и отправить карточки
+        run: python -m lmn.check
+        env:
+          MODE: ${{ inputs.mode || 'run' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL: ${{ secrets.TELEGRAM_CHANNEL }}
+          TELEGRAM_OWNER_ID: ${{ secrets.TELEGRAM_OWNER_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ODESLI_API_KEY: ${{ secrets.ODESLI_API_KEY }}
+          SITE_LIVE: ${{ vars.SITE_LIVE }}
+          WORKER_LIVE: ${{ vars.WORKER_LIVE }}
+      - name: Сохранить базу
+        if: ${{ (inputs.mode || 'run') == 'run' }}
+        run: |
+          git config user.name "laziest-music-nerd-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git diff --cached --quiet || (git commit -m "data: новые обзоры" && git push)
