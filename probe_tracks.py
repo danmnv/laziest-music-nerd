@@ -1,32 +1,25 @@
-"""Temporary probe: why Deezer missed two albums, and whether Apple Music (iTunes Search API) has them."""
-import time
-import urllib.parse
+"""Temporary probe: can a Bandcamp album page (the "Listen:" link in the video description) give the tracklist?"""
+import html
+import json
+import re
+import urllib.request
 
 from lmn import http
-from lmn.musicbrainz import norm
 
-
-def show(label, url, pick):
+for url in ["https://hmltd.bandcamp.com/album/fangs", "https://shabazzpalaces.bandcamp.com/album/its-a-style-sport-1"]:
     try:
-        d = http.get_json(url)
+        req = urllib.request.Request(url, headers={"User-Agent": http.USER_AGENT})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            status, page = r.status, r.read().decode("utf-8", "replace")
     except Exception as ex:
-        print(label, "ERROR", type(ex).__name__, str(ex)[:200])
-        return []
-    rows = d.get("data") if "data" in d else d.get("results", [])
-    print(label, [pick(a) for a in rows])
-    return rows
-
-
-for artist, album in [("HMLTD", "FANGS"), ("Pain of Truth", "Self-Titled"), ("Pain of Truth", "Pain of Truth")]:
-    for q in [f'artist:"{artist}" album:"{album}"', f"{artist} {album}"]:
-        show(f"deezer [{q}]", "https://api.deezer.com/search/album?limit=10&q=" + urllib.parse.quote(q),
-             lambda a: (a.get("title"), (a.get("artist") or {}).get("name"), a.get("record_type"), a.get("id")))
-    rows = show(f"itunes [{artist} {album}]", "https://itunes.apple.com/search?" + urllib.parse.urlencode(
-        {"term": f"{artist} {album}", "entity": "album", "limit": 10}),
-        lambda a: (a.get("collectionName"), a.get("artistName"), a.get("trackCount"), (a.get("releaseDate") or "")[:10], a.get("collectionId")))
-    hit = next((a for a in rows if norm(a.get("artistName")) == norm(artist)), None)
-    if hit:
-        time.sleep(3)
-        show(f"itunes tracks [{hit['collectionName']}]", f"https://itunes.apple.com/lookup?entity=song&id={hit['collectionId']}",
-             lambda t: (t.get("trackNumber"), t.get("trackName"), round((t.get("trackTimeMillis") or 0) / 1000)) if t.get("wrapperType") == "track" else "album")
-    time.sleep(3)
+        print(url, "ERROR", type(ex).__name__, str(ex)[:300])
+        continue
+    m = re.search(r'data-tralbum="([^"]+)"', page)
+    print(url, "status", status, "bytes", len(page), "tralbum", bool(m), "challenge" if "challenge" in page.lower() else "")
+    if m:
+        d = json.loads(html.unescape(m.group(1)))
+        cur = d.get("current") or {}
+        print("  title:", cur.get("title"), "release:", cur.get("release_date"), "tracks:",
+              [(t.get("title"), round(t.get("duration") or 0)) for t in d.get("trackinfo", [])])
+    else:
+        print("  head:", re.sub(r"\s+", " ", page[:400]))
