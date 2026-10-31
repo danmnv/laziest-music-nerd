@@ -20,13 +20,14 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Проверить TND и отправить карточки
+        timeout-minutes: 25   # leaves time for the save step below even if this one hangs
         run: python -m lmn.check
         env:
           MODE: ${{ inputs.mode || 'run' }}
@@ -38,9 +39,18 @@ jobs:
           SITE_LIVE: ${{ vars.SITE_LIVE }}
           WORKER_LIVE: ${{ vars.WORKER_LIVE }}
       - name: Сохранить базу
-        if: ${{ (inputs.mode || 'run') == 'run' }}
+        # always(): cards already posted must be saved even if the check failed or hit its timeout later,
+        # otherwise the next hour would post them again.
+        if: ${{ always() && (inputs.mode || 'run') == 'run' }}
         run: |
           git config user.name "laziest-music-nerd-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/
-          git diff --cached --quiet || (git commit -m "data: новые обзоры" && git push)
+          git diff --cached --quiet && exit 0
+          git commit -q -m "data: новые обзоры"
+          for i in 1 2 3 4; do  # main may have moved meanwhile (a merged PR): rebase our data commit on top
+            git pull --rebase -q origin main && git push -q origin HEAD:main && exit 0
+            git rebase --abort 2>/dev/null || true
+            sleep $((i * 5))
+          done
+          echo "::error::Не смог сохранить базу в main"; exit 1

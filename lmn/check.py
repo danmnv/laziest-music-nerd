@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -17,6 +18,11 @@ from .telegram import Telegram
 
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 MODE = os.environ.get("MODE", "run")
+# One slow Gemini call can take ~10 minutes with its retries, and the job is killed at 30.
+# So each run handles at most a few new reviews and stops starting new ones after a time budget;
+# the rest are picked up an hour later. Nothing is lost: a review counts as done only once it is saved.
+MAX_NEW_PER_RUN = int(os.environ.get("MAX_NEW_PER_RUN") or 5)
+TIME_BUDGET_SEC = int(os.environ.get("TIME_BUDGET_SEC") or 12 * 60)
 
 
 def load(name, default):
@@ -34,9 +40,16 @@ def send_card(tg, chat_id, r):
     kb = card.buttons(r, with_callbacks=os.environ.get("WORKER_LIVE") == "1")
     for url in r.get("covers", []):
         try:
-            return tg.send_photo_file(chat_id, http.get_bytes(url), text, kb)
-        except Exception as ex:  # try the next cover
-            print(f"cover failed ({type(ex).__name__}), trying next")
+            data = http.get_bytes(url)
+        except Exception as ex:  # cover host is down or slow: try the next cover
+            print(f"cover download failed ({type(ex).__name__}), trying next")
+            continue
+        try:
+            return tg.send_photo_file(chat_id, data, text, kb)
+        except RuntimeError as ex:
+            # Telegram answered with an error, so nothing was posted and another cover is safe to try.
+            # A timeout is different (the post may be out already) and is raised, not retried.
+            print(f"Telegram rejected the cover ({str(ex)[:200]}), trying next")
     return tg.send_message(chat_id, text, kb)
 
 
@@ -89,7 +102,16 @@ def owner_statuses():
         return {}
 
 
+def bare(rev):
+    """A card with only what TND itself gave us, for when enrichment crashed (empty field beats broken pipeline)."""
+    r = dict(rev, ai={}, artist={}, links={}, previous=[], previous_unsure=0, covers=[c for c in [rev.get("thumb")] if c])
+    if not r.get("artist_name"):
+        r["artist_name"], r["album"] = r["title"], ""
+    return r
+
+
 def main():
+    started = time.monotonic()
     reviews = load("reviews.json", [])
     state = load("state.json", {})
     archive = load("archive.json", [])
@@ -120,32 +142,59 @@ def main():
     if MODE == "dry" and os.environ.get("DRY_LIMIT"):
         new = new[-int(os.environ["DRY_LIMIT"]):]
     print(f"{len(new)} new review(s){' (seeding, no cards)' if seeding else ''}")
+    done, failed = 0, None
     for p in new:
+        if not seeding and done >= MAX_NEW_PER_RUN:
+            print(f"limit of {MAX_NEW_PER_RUN} per run reached; the rest go next hour")
+            break
+        if done and time.monotonic() - started > TIME_BUDGET_SEC:
+            print("time budget used up; the rest go next hour")
+            break
         rev = tnd.parse_post(p)
         # Seeding fills the list and the site with ~50 older reviews: no Gemini there, its free daily limit is for new cards.
-        r = enrich(rev, p.get("plaintext"), archive, use_ai=not seeding)
+        try:
+            r = enrich(rev, p.get("plaintext"), archive, use_ai=not seeding)
+        except Exception as ex:  # a broken source must not stop the card
+            print(f"enrich failed for {rev['id']} ({type(ex).__name__}: {str(ex)[:200]}), posting a bare card")
+            r = bare(rev)
         if not seeding:
             if tg:
-                msg = send_card(tg, channel, r)
+                try:
+                    msg = send_card(tg, channel, r)
+                except Exception as ex:
+                    # Not saved, so it is retried next hour. Stop here to keep the channel in publishing order.
+                    failed = f"{type(ex).__name__}: {str(ex)[:300]}"
+                    print(f"posting {rev['id']} failed: {failed}")
+                    break
                 r["tg_channel_msg"] = msg["message_id"]
             else:
                 print("----\n" + card.caption(r) + "\n" + json.dumps(card.buttons(r), ensure_ascii=False))
         reviews.append(r)
+        done += 1
         if r["id"] not in arch_ids:
             archive.append(archive_entry(r))
             arch_ids.add(r["id"])
         # save after every review so a crash later never re-posts this one
         save("reviews.json", reviews)
         save("archive.json", archive)
+    complete = done == len(new)
+    new = new[:done]
 
     items = card.list_items(reviews)
-    save("list.json", {"updated": datetime.now(timezone.utc).isoformat(timespec="seconds"), "items": items})
+    if load("list.json", {}).get("items") != items:  # otherwise every hourly run would commit a new timestamp
+        save("list.json", {"updated": datetime.now(timezone.utc).isoformat(timespec="seconds"), "items": items})
     if new or seeding or not state.get("channel_pinned_id"):
         text = card.render_list(items, owner_statuses())
         if tg:
             if state.get("channel_pinned_id"):
-                tg.edit_message(channel, state["channel_pinned_id"], text)
-            else:
+                try:
+                    tg.edit_message(channel, state["channel_pinned_id"], text)
+                except RuntimeError as ex:
+                    if "message to edit not found" not in str(ex):
+                        raise
+                    print("pinned list was deleted in the channel; posting a new one")
+                    state.pop("channel_pinned_id")
+            if not state.get("channel_pinned_id"):
                 msg = tg.send_message(channel, text, silent=True)
                 tg.pin(channel, msg["message_id"])
                 state["channel_pinned_id"] = msg["message_id"]
@@ -158,11 +207,14 @@ def main():
                 http.request(url + "/api/refresh-lists", method="POST", json_body={"items": items}, headers={"Authorization": f"Bearer {secret}"})
             except Exception as ex:
                 print(f"worker refresh failed: {type(ex).__name__}")
-    state["seeded"] = True
+    if complete:  # an unfinished seeding run must not turn the remaining old reviews into channel cards
+        state["seeded"] = True
     save("reviews.json", reviews)
     save("archive.json", archive)
     if MODE == "run":
         save("state.json", state)
+    if failed:
+        sys.exit(f"stopped: a card could not be posted ({failed}); it will be retried next hour")
 
 
 if __name__ == "__main__":

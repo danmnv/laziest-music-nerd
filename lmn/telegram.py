@@ -12,8 +12,11 @@ class Telegram:
 
     def call(self, method, **params):
         payload = {k: v for k, v in params.items() if v is not None}
+        # Never resend a new post after a timeout: Telegram may have published it already, and a retry
+        # would duplicate it in the channel. A failed send is retried by the next hourly run instead.
+        retries = 0 if method.startswith("send") else 2
         try:
-            raw = http.request(f"https://api.telegram.org/bot{self.token}/{method}", json_body=payload)
+            raw = http.request(f"https://api.telegram.org/bot{self.token}/{method}", json_body=payload, retries=retries)
         except http.HttpError as e:
             raise RuntimeError(f"Telegram {method} failed: {e.body[:300]}") from None
         res = json.loads(raw)
