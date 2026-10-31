@@ -72,6 +72,15 @@ class ParseTest(unittest.TestCase):
         r["artist"] = {"type": "Group", "begin": "1996"}
         self.assertEqual(card.fantano_before(r), "X — ?; активны с 1996")
 
+    def test_smartlink_hosts(self):
+        from lmn.musicbrainz import is_smartlink
+        self.assertTrue(is_smartlink("https://underscores.lnk.to/u"))
+        self.assertTrue(is_smartlink("https://www.ffm.to/x"))
+        self.assertTrue(is_smartlink("https://distrokid.com/hyperfollow/a/b"))
+        self.assertFalse(is_smartlink("https://distrokid.com/x"))
+        self.assertFalse(is_smartlink("https://open.spotify.com/album/1"))
+        self.assertFalse(is_smartlink("https://example.com/lnk.to"))
+
     def test_first_review(self):
         r = {"previous": [], "previous_unsure": 0, "artist": {}}
         self.assertEqual(card.fantano_before(r), "обозревает впервые")

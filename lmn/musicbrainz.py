@@ -85,7 +85,7 @@ def cover_url(rg_id):
 
 def release_details(release_ids):
     """Duration (minutes) and Bandcamp URL from the first release with full track lengths."""
-    out = {"duration_min": None, "bandcamp": None}
+    out = {"duration_min": None, "bandcamp": None, "smartlink": None}
     for rid in release_ids[:3]:
         try:
             d = _get(f"release/{rid}", inc="recordings+url-rels")
@@ -95,9 +95,29 @@ def release_details(release_ids):
             u = (rel.get("url") or {}).get("resource", "")
             if "bandcamp.com" in u and not out["bandcamp"]:
                 out["bandcamp"] = u
+            if not out["smartlink"] and is_smartlink(u):
+                out["smartlink"] = u
         tracks = [t for m in d.get("media", []) for t in m.get("tracks", [])]
         if not out["duration_min"] and tracks and all(t.get("length") for t in tracks):
             out["duration_min"] = round(sum(t["length"] for t in tracks) / 60000)
         if out["duration_min"] and out["bandcamp"]:
             break
     return out
+
+
+# Link-aggregator pages ("smart links") that labels and artists make for a release: one page with every service.
+SMARTLINK_HOSTS = ("lnk.to", "ffm.to", "fanlink.tv", "fanlink.to", "smarturl.it", "orcd.co", "found.ee", "hypeddit.com",
+                   "ditto.fm", "linkfire.com", "song.link", "album.link", "odesli.co", "distrokid.com/hyperfollow",
+                   "push.fm", "show.co", "bfan.link", "sml.to")
+
+
+def is_smartlink(url):
+    rest = url.lower().split("://", 1)[-1]
+    host = rest.split("/", 1)[0].removeprefix("www.")
+    for h in SMARTLINK_HOSTS:
+        if "/" in h:
+            if (host + rest[len(rest.split("/", 1)[0]):]).startswith(h):
+                return True
+        elif host == h or host.endswith("." + h):
+            return True
+    return False

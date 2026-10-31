@@ -21,6 +21,8 @@ def enrich(rev, plaintext, archive):
         r["duration_min"] = det["duration_min"]
         if det["bandcamp"]:
             r["links"]["bandcamp"] = det["bandcamp"]
+        if det.get("smartlink"):
+            r["links"]["songlink"] = det["smartlink"]  # the artist's own all-platforms page, if MusicBrainz knows it
         info = mb.artist_info(rg["artist_id"]) or {}
         r["artist"] = {"mbid": rg["artist_id"], **{k: info.get(k) for k in ("type", "country", "area", "begin", "end", "aliases")}}
         if not r.get("type"):
@@ -29,7 +31,7 @@ def enrich(rev, plaintext, archive):
 
     dz = links.deezer_album(artist, album) if album else None
     if dz:
-        r["links"]["songlink"] = links.songlink(dz["url"])
+        r["links"].setdefault("songlink", links.songlink(dz["url"]))
         r["duration_min"] = r.get("duration_min") or dz["duration_min"]
     r["links"].setdefault("bandcamp", links.bandcamp_search(artist, album))
     r["links"]["ytmusic"] = links.ytmusic_search(artist, album)
