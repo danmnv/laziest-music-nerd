@@ -37,8 +37,6 @@ jobs:
           ODESLI_API_KEY: ${{ secrets.ODESLI_API_KEY }}
           SITE_LIVE: ${{ vars.SITE_LIVE }}
           WORKER_LIVE: ${{ vars.WORKER_LIVE }}
-          WORKER_URL: ${{ vars.WORKER_URL }}
-          WORKER_ACTIONS_SECRET: ${{ secrets.WORKER_ACTIONS_SECRET }}
       - name: Сохранить базу
         if: ${{ (inputs.mode || 'run') == 'run' }}
         run: |

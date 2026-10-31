@@ -4,6 +4,7 @@ MODE=run   (default) normal hourly run
 MODE=dry   no Telegram calls, print what would be sent
 MODE=test  send the newest review's card to the owner's private chat only; nothing is saved
 """
+import hashlib
 import json
 import os
 import sys
@@ -49,13 +50,23 @@ def owner_chat(tg):
     return chats.pop()
 
 
+def worker():
+    f = DATA / "worker_url.txt"
+    url = f.read_text().strip() if f.exists() else None
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not (url and token):
+        return None, None
+    # same derivation as the deploy workflow, so no extra secret is needed
+    return url.rstrip("/"), hashlib.sha256(f"{token}:actions".encode()).hexdigest()[:48]
+
+
 def owner_statuses():
     """The owner's marks for the channel's pinned list, if the Worker is up and the 'show in channel' switch is on."""
-    url, secret = os.environ.get("WORKER_URL"), os.environ.get("WORKER_ACTIONS_SECRET")
-    if not (url and secret):
+    url, secret = worker()
+    if not url:
         return {}
     try:
-        d = http.get_json(url.rstrip("/") + "/api/owner/channel-marks", headers={"Authorization": f"Bearer {secret}"})
+        d = http.get_json(url + "/api/owner/channel-marks", headers={"Authorization": f"Bearer {secret}"})
         return d.get("marks", {})
     except Exception as ex:
         print(f"worker marks unavailable: {type(ex).__name__}")
@@ -123,6 +134,13 @@ def main():
                 state["channel_pinned_id"] = msg["message_id"]
         else:
             print("---- pinned ----\n" + text)
+    if (new or seeding) and tg:
+        url, secret = worker()
+        if url:
+            try:
+                http.request(url + "/api/refresh-lists", method="POST", json_body={"items": items}, headers={"Authorization": f"Bearer {secret}"})
+            except Exception as ex:
+                print(f"worker refresh failed: {type(ex).__name__}")
     state["seeded"] = True
     save("reviews.json", reviews)
     save("archive.json", archive)
