@@ -2,6 +2,7 @@
 import html
 import os
 import re
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 
 from .colors import EMOJI, color, label
@@ -160,20 +161,37 @@ def caption(r):
     return _caption(short, {}, 0, drop)
 
 
-def buttons(r, with_callbacks=False):
+SEARCH = "🔎 "  # a button that only searches, unlike one that opens the album itself
+
+
+def link_rows(r):
+    """The listening links as two rows of (label, url): what to hear it on, then all services. A link that only
+    searches is marked with SEARCH; with no page of all services, Google is searched for the album."""
     links = r.get("links") or {}
-    row1 = [b for b in [
-        {"text": "Bandcamp", "url": links["bandcamp"]} if links.get("bandcamp") else None,
-        {"text": "YouTube (альбом)", "url": links["youtube_album"]} if links.get("youtube_album") else
-        {"text": "YouTube Music", "url": links["ytmusic"]} if links.get("ytmusic") else None,
-    ] if b]
+    bc = links.get("bandcamp")
+    row1 = [
+        (("" if "bandcamp.com/search" not in bc else SEARCH) + "Bandcamp", bc) if bc else None,
+        ("YouTube (альбом)", links["youtube_album"]) if links.get("youtube_album") else
+        (SEARCH + "YouTube Music", links["ytmusic"]) if links.get("ytmusic") else None,
+    ]
+    row2 = [
+        ("Все платформы", links["songlink"]) if links.get("songlink") else
+        (SEARCH + "Google", google_search(r["artist_name"], r["album"])) if r.get("artist_name") and r.get("album") else None,
+    ]
+    return [b for b in row1 if b], [b for b in row2 if b]
+
+
+def google_search(artist, album):
+    return "https://www.google.com/search?" + urllib.parse.urlencode({"q": f"{artist} {album}"})
+
+
+def buttons(r, with_callbacks=False):
+    top, alls = link_rows(r)
+    row1 = [{"text": t, "url": u} for t, u in top]
     # The review itself is the YouTube video; the TND page (transcript) is linked from the site's release page.
     review = ({"text": "▶ Видеообзор", "url": f"https://youtu.be/{r['video_id']}"} if r.get("video_id")
               else {"text": "Обзор", "url": r["url"]})
-    row2 = [b for b in [
-        {"text": "Все платформы", "url": links["songlink"]} if links.get("songlink") else None,
-        review,
-    ] if b]
+    row2 = [{"text": t, "url": u} for t, u in alls] + [review]
     rows = [row for row in (row1, row2) if row]
     if with_callbacks:
         sid = r["id"]

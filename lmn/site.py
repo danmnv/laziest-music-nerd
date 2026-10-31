@@ -45,7 +45,6 @@ def release_page(r):
     c = color(r.get("score"), r.get("not_good"), r.get("classic"))
     a = r.get("artist") or {}
     ai = r.get("ai") or {}
-    links = r.get("links") or {}
     rows = []
     if ai.get("who"):
         rows.append(("Кто", e(ai["who"])))
@@ -73,9 +72,9 @@ def release_page(r):
     if r.get("previous"):
         hist = "".join(f'<li><a href="{e(p["url"])}">{e(p["album"])}</a> — {label(p.get("score"), p.get("not_good"), p.get("classic"), "?")} <span class="muted">{e(p["published"][:4])}</span></li>' for p in r["previous"])
         rows.append(("История оценок", f"<ul>{hist}</ul>"))
-    btns = "".join(f'<a class="btn" href="{e(u)}">{n}</a>' for n, u in [
-        ("Bandcamp", links.get("bandcamp")), ("YouTube (альбом)", links.get("youtube_album")), ("YouTube Music", links.get("ytmusic")),
-        ("Все платформы", links.get("songlink")), ("Текст обзора на TND", r.get("tnd_url") or (r["url"] if "theneedledrop.com" in r["url"] else None)),
+    top, alls = card.link_rows(r)
+    btns = "".join(f'<a class="btn" href="{e(u)}">{e(n)}</a>' for n, u in top + alls + [
+        ("Текст обзора на TND", r.get("tnd_url") or (r["url"] if "theneedledrop.com" in r["url"] else None)),
         ("Видео", f"https://youtu.be/{r['video_id']}" if r.get("video_id") else None)] if u)
     meta = " · ".join(x for x in [", ".join(r.get("genres", [])[:5]), card.TYPE_RU.get(r.get("type")),
                                     f"{r['duration_min']} мин" if r.get("duration_min") else None, r["published"][:10],

@@ -5,6 +5,10 @@ Bandcamp in 37%. The artist's YouTube video usually links a release page of the 
 and the like) that lists every service; of 120 such links opened without a browser, 95 showed links to three or
 more services in their HTML. A track video may link the single rather than the album, so a page counts only if its
 title names the album.
+
+When the video links no release page for the album, the album may still be a playlist on the channel that posted
+the video (checked 2026-10-31: 2 of 7 such reviews, both official). YouTube search finds "full album" playlists for
+most of them, but those come from fan channels and cost 100 quota units, so it is not used.
 """
 import html
 import os
@@ -36,6 +40,18 @@ def youtube_target(url):
     return None
 
 
+def names_album(title, album):
+    """Whether a playlist or page title names the album. A short name ("C", "Mud") must appear as whole words."""
+    key = norm(album)
+    if not key:
+        return False
+    if len(key) >= 6:
+        return key in norm(title)
+    words = lambda s: [norm(w) for w in re.split(r"\W+", s or "") if norm(w)]
+    t, a = words(title), words(album)
+    return any(t[i:i + len(a)] == a for i in range(len(t) - len(a) + 1))
+
+
 def _page_title(url):
     page = http.request(url, headers={"User-Agent": BROWSER_UA}, timeout=15, retries=0)
     titles = re.findall(r'<meta[^>]+property="og:title"[^>]+content="([^"]*)"', page) + re.findall(r"<title[^>]*>(.*?)</title>", page, re.S)
@@ -44,24 +60,30 @@ def _page_title(url):
 
 def resolve(listen_url, album, max_pages=3):
     """From a YouTube "Listen:" link: {"youtube_album": the link, if it is a playlist named after the album,
-    "release_page": the release page linked from the artist's video, if its title names the album}."""
+    "release_page": the release page linked from the artist's video, if its title names the album}.
+    A linked video's channel is also searched for a playlist named after the album (1 more quota unit)."""
     out = {}
     target = youtube_target(listen_url)
-    key = album and norm(album)
-    if not target or not key or not (os.environ.get("YOUTUBE_API_KEY") or "").strip():
+    if not target or not norm(album) or not (os.environ.get("YOUTUBE_API_KEY") or "").strip():
         return out
     from .yt_archive import yt
     kind, ident = target
     if kind == "playlist":
         pl = yt("playlists", part="snippet", id=ident).get("items") or []
-        if pl and key in norm(pl[0]["snippet"].get("title")):
+        if pl and names_album(pl[0]["snippet"].get("title"), album):
             out["youtube_album"] = listen_url
         items = yt("playlistItems", part="contentDetails", playlistId=ident, maxResults=1).get("items") or []
         if not items:
             return out
         ident = items[0]["contentDetails"]["videoId"]
     videos = yt("videos", part="snippet", id=ident).get("items") or []
-    desc = videos[0]["snippet"].get("description", "") if videos else ""
+    snippet = videos[0]["snippet"] if videos else {}
+    desc = snippet.get("description", "")
+    if "youtube_album" not in out and snippet.get("channelId"):
+        for p in yt("playlists", part="snippet", channelId=snippet["channelId"], maxResults=50).get("items") or []:
+            if names_album(p["snippet"].get("title"), album):
+                out["youtube_album"] = f"https://www.youtube.com/playlist?list={p['id']}"
+                break
     seen = []
     for u in URL.findall(desc):
         u = u.rstrip(".,;")
@@ -73,7 +95,7 @@ def resolve(listen_url, album, max_pages=3):
         except Exception as ex:  # a dead or blocked page: try the next one
             print(f"release page {urllib.parse.urlparse(u).netloc}: {type(ex).__name__} {getattr(ex, 'status', '')}")
             continue
-        if key in norm(title):
+        if names_album(title, album):
             out["release_page"] = u
             break
     return out

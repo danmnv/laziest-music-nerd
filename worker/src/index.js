@@ -261,7 +261,7 @@ function albumMessage(a, intro) {
     text: `${intro}\n\n🟢 ${sc} · <b>${esc(a.artist_name)} — ${esc(a.album)}</b> (${a.published.slice(0, 4)})` +
       (a.genres && a.genres.length ? `\n${esc(a.genres.slice(0, 3).join(", "))}` : ""),
     reply_markup: { inline_keyboard: [
-      [{ text: "Обзор", url: a.url }, { text: "YouTube Music", url: `https://music.youtube.com/search?q=${q}` }],
+      [{ text: "Обзор", url: a.url }, { text: "🔎 YouTube Music", url: `https://music.youtube.com/search?q=${q}` }],
       [{ text: "• Отложить", callback_data: `m:${a.id}:later` }, { text: "✓ Прослушано", callback_data: `m:${a.id}:done` }, { text: "✗ Не понравилось", callback_data: `m:${a.id}:nope` }],
     ] },
   };
