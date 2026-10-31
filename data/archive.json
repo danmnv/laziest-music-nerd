@@ -11350,7 +11350,8 @@
    "prog",
    "rock",
    "rock opera"
-  ]
+  ],
+  "artist_mbid": "507a63d3-2efb-4657-958c-bc9457131f01"
  },
  {
   "id": "6684c32c49ea2a054e09280c",
@@ -12552,7 +12553,8 @@
    "samples",
    "sampling",
    "the avalalnches"
-  ]
+  ],
+  "artist_mbid": "a6623d39-2d8e-4f70-8242-0a9553b91e50"
  },
  {
   "id": "6684c32c49ea2a054e0927cc",
@@ -20381,7 +20383,8 @@
    "nu-disco",
    "plunderphonics",
    "Pop"
-  ]
+  ],
+  "artist_mbid": "a6623d39-2d8e-4f70-8242-0a9553b91e50"
  },
  {
   "id": "6684c32c49ea2a054e09262a",
@@ -24074,7 +24077,8 @@
    "lucky number",
    "post-punk",
    "rock"
-  ]
+  ],
+  "artist_mbid": "507a63d3-2efb-4657-958c-bc9457131f01"
  },
  {
   "id": "6684c32c49ea2a054e09255e",
@@ -29889,7 +29893,8 @@
    "sony",
    "synthpop",
    "uk"
-  ]
+  ],
+  "artist_mbid": null
  },
  {
   "id": "6684c32c49ea2a054e092415",
@@ -38398,7 +38403,8 @@
    "nu-disco",
    "plunderphonics",
    "xl"
-  ]
+  ],
+  "artist_mbid": "a6623d39-2d8e-4f70-8242-0a9553b91e50"
  },
  {
   "id": "6684c32c49ea2a054e092141",
@@ -38828,7 +38834,8 @@
    "rap",
    "track",
    "wildflower"
-  ]
+  ],
+  "artist_mbid": null
  },
  {
   "id": "6684c32c49ea2a054e09210a",
@@ -62089,5 +62096,40 @@
    "death metal",
    "sweden"
   ]
+ },
+ {
+  "id": "ZAHEPtclKOg",
+  "url": "https://www.youtube.com/watch?v=ZAHEPtclKOg",
+  "published": "2026-10-23T02:46:33Z",
+  "artist_name": "The Avalanches",
+  "album": "No Bad Memories",
+  "score": 8,
+  "not_good": false,
+  "classic": false,
+  "guest": false,
+  "genres": [
+   "edm",
+   "plunderphonics",
+   "sound collage",
+   "chillwave"
+  ],
+  "video_id": "ZAHEPtclKOg"
+ },
+ {
+  "id": "YGFqOLufncA",
+  "url": "https://www.youtube.com/watch?v=YGFqOLufncA",
+  "published": "2026-10-29T23:04:17Z",
+  "artist_name": "HMLTD",
+  "album": "FANGS",
+  "score": 5,
+  "not_good": false,
+  "classic": false,
+  "guest": false,
+  "genres": [
+   "art rock",
+   "darkwave",
+   "new rave"
+  ],
+  "video_id": "YGFqOLufncA"
  }
 ]
