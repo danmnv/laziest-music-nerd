@@ -118,6 +118,7 @@ def review_from_video(u):
         "fav_tracks": d.get("fav_tracks", []), "least_fav_track": d.get("least_fav_track"),
         "year": d.get("year"), "label": d.get("label"),
         "listen_bandcamp": listen if host == "bandcamp.com" or host.endswith(".bandcamp.com") else None,
+        "listen_url": listen or None,
     }
 
 
@@ -141,7 +142,7 @@ def _merge(u, site_rev):
     and what only the description has (Fantano's favourite tracks, label, Bandcamp)."""
     v = review_from_video(u)
     r = dict(site_rev, published=u["published"], video_id=u["video_id"])
-    for k in ("fav_tracks", "least_fav_track", "year", "label", "listen_bandcamp", "genres", "thumb"):
+    for k in ("fav_tracks", "least_fav_track", "year", "label", "listen_bandcamp", "listen_url", "genres", "thumb"):
         if v.get(k) and not r.get(k):
             r[k] = v[k]
     return r

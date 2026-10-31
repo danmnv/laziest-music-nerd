@@ -164,6 +164,7 @@ def buttons(r, with_callbacks=False):
     links = r.get("links") or {}
     row1 = [b for b in [
         {"text": "Bandcamp", "url": links["bandcamp"]} if links.get("bandcamp") else None,
+        {"text": "YouTube (альбом)", "url": links["youtube_album"]} if links.get("youtube_album") else
         {"text": "YouTube Music", "url": links["ytmusic"]} if links.get("ytmusic") else None,
     ] if b]
     # The review itself is the YouTube video; the TND page (transcript) is linked from the site's release page.
