@@ -4,6 +4,7 @@
 
 import { isDigestSunday } from "./digest.mjs";
 import { nameKey, followMatches } from "./follow.mjs";
+import { searchArchive, badge } from "./search.mjs";
 
 const STATUS_LABEL = { later: "• отложено", done: "✓ прослушано", nope: "✗ не понравилось" };
 const STATUS_ICON = { later: " •", done: " ✓", nope: " ✗" };
@@ -115,7 +116,10 @@ async function onUpdate(u, env) {
     if (!isOwner(env, uid)) return;
     await setSetting(env, "show_in_channel", text.endsWith("on") ? "1" : "0");
     await tg(env, "sendMessage", { chat_id: uid, text: text.endsWith("on") ? "Твои отметки снова видны в канале (обновятся при следующем обзоре)." : "Отметки теперь только в личке." });
+    return;
   }
+  if (text.startsWith("/search")) return search(env, uid, text.slice("/search".length).trim());
+  if (text && !text.startsWith("/")) return search(env, uid, text); // anything else typed is a search
 }
 
 async function welcome(env, uid) {
@@ -128,6 +132,7 @@ async function welcome(env, uid) {
       "Кнопки «Отложить», «Прослушано», «Не понравилось» под карточками видишь только ты. " +
       "Ниже — закреплённый список свежих обзоров с твоими отметками.\n\n" +
       "Кнопка «" + RANDOM_BUTTON + "» внизу выдаёт альбом с оценкой от 8, который ты ещё не отмечал(а).\n\n" +
+      "Поиск: просто напиши мне артиста или альбом — найду обзоры Фантано с 2010 года.\n\n" +
       "«🔔 Следить за артистом» под карточкой: о новом обзоре этого артиста напишу сюда. Список — кнопка «" + FOLLOWS_BUTTON + "».\n\n" +
       "Неофициальный фан-проект. Не связан с Anthony Fantano и The Needle Drop.",
     reply_markup: MENU,
@@ -158,6 +163,9 @@ async function onCallback(q, env) {
       // the first follow: say where the list is, and give people who started the bot earlier the new menu button
       await tg(env, "sendMessage", { chat_id: uid, text: `${res.text}\nСписок и отписка — кнопка «${FOLLOWS_BUTTON}» внизу.`, reply_markup: MENU });
     }
+  } else if (parts[0] === "a") {
+    const a = (await archive(env)).find((x) => x.id === parts[1]);
+    if (a) await sendAlbum(env, uid, a, "");
   } else if (parts[0] === "uf") {
     const row = await env.DB.prepare("SELECT artist_name FROM follows WHERE id=? AND user_id=?").bind(Number(parts[1]), uid).first();
     if (row) await env.DB.prepare("DELETE FROM follows WHERE id=? AND user_id=?").bind(Number(parts[1]), uid).run();
@@ -279,33 +287,94 @@ async function refreshOwnerLists(env) {
 
 // ---------- archive: random pick, similar albums, mood "другое" ----------
 
+let archiveCache = null; // kept while this Worker instance lives, so a search doesn't parse 1.4 MB every time
+
 async function archive(env) {
+  if (archiveCache && Date.now() - archiveCache.at < 600e3) return archiveCache.data;
   const r = await fetch(env.DATA_URL.replace("reviews.json", "archive.json"), { cf: { cacheTtl: 3600 } });
-  return r.ok ? r.json() : [];
+  if (!r.ok) return archiveCache ? archiveCache.data : [];
+  archiveCache = { at: Date.now(), data: await r.json() };
+  return archiveCache.data;
 }
 
 const good = (a) => !a.guest && (a.classic || (a.score != null && a.score >= 8)) && a.artist_name && a.album;
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
-function albumMessage(a, intro) {
-  const sc = a.classic ? "CLASSIC" : `${a.score}/10`;
-  const q = encodeURIComponent(`${a.artist_name} ${a.album}`);
-  return {
-    parse_mode: "HTML",
-    text: `${intro}\n\n🟢 ${sc} · <b>${esc(a.artist_name)} — ${esc(a.album)}</b> (${a.published.slice(0, 4)})` +
-      (a.genres && a.genres.length ? `\n${esc(a.genres.slice(0, 3).join(", "))}` : ""),
-    reply_markup: { inline_keyboard: [
-      [{ text: "Обзор", url: a.url }, { text: "🔎 YouTube Music", url: `https://music.youtube.com/search?q=${q}` }],
-      [{ text: "• Отложить", callback_data: `m:${a.id}:later` }, { text: "✓ Прослушано", callback_data: `m:${a.id}:done` }, { text: "✗ Не понравилось", callback_data: `m:${a.id}:nope` }],
-    ] },
-  };
+// The Deezer album, checked against the names ("Kid A (Remastered)" counts as "Kid A", "Muddy" doesn't as "Mud"):
+// cover, track count, length and a page for every service.
+async function deezerAlbum(artist, album) {
+  try {
+    const q = encodeURIComponent(`artist:"${artist}" album:"${album}"`);
+    const r = await fetch(`https://api.deezer.com/search/album?q=${q}&limit=5`);
+    const d = r.ok ? await r.json() : {};
+    const want = nameKey(album);
+    const hit = (d.data || []).find((x) => x.artist && nameKey(x.artist.name) === nameKey(artist) && (nameKey(x.title) === want || nameKey(x.title.replace(/\s*[([].*$/, "")) === want));
+    if (!hit) return null;
+    const full = await fetch(`https://api.deezer.com/album/${hit.id}`).then((x) => (x.ok ? x.json() : {})).catch(() => ({}));
+    return { cover: hit.cover_xl || hit.cover_big || null, link: hit.link, tracks: hit.nb_tracks || null,
+             minutes: full.duration ? Math.round(full.duration / 60) : null };
+  } catch (e) {
+    return null;
+  }
+}
+
+// A full card for one review, as in the channel: cover, score, genres, length, links, marks and "🔔".
+// a: an archive entry; a review the bot posted a card for has more in reviews.json, and that is used first.
+async function sendAlbum(env, uid, a, intro) {
+  const full = (await reviews(env)).find((x) => x.id === a.id);
+  const r = full || a;
+  const links = (full && full.links) || {};
+  const dz = (full && full.covers && full.covers.length && full.duration_min) ? null : await deezerAlbum(r.artist_name, r.album);
+  const cover = (full && full.covers && full.covers[0]) || (dz && dz.cover);
+  const tracks = (full && full.tracks && full.tracks.length) || (dz && dz.tracks);
+  const minutes = (full && full.duration_min) || (dz && dz.minutes);
+  const facts = [
+    (r.genres || []).slice(0, 3).join(", "),
+    tracks ? `${tracks} трек${tracks % 10 === 1 && tracks % 100 !== 11 ? "" : [2, 3, 4].includes(tracks % 10) && ![12, 13, 14].includes(tracks % 100) ? "а" : "ов"}` : "",
+    minutes ? `${minutes} мин` : "",
+    `обзор ${String(r.published).slice(0, 4)}`,
+    r.guest ? "гостевой обзор" : "",
+  ].filter(Boolean).join(" · ");
+  const text = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>\n${badge(r)} · ${esc(facts)}`;
+  const q = encodeURIComponent(`${r.artist_name} ${r.album}`);
+  const allServices = links.songlink || (dz && dz.link ? `https://album.link/${dz.link}` : null);
+  const reply_markup = { inline_keyboard: [
+    [
+      r.video_id ? { text: "▶ Видеообзор", url: `https://youtu.be/${r.video_id}` } : { text: "Обзор", url: r.url },
+      links.youtube_album ? { text: "YouTube (альбом)", url: links.youtube_album } : { text: "🔎 YouTube Music", url: `https://music.youtube.com/search?q=${q}` },
+    ],
+    [allServices ? { text: "Все платформы", url: allServices } : { text: "🔎 Google", url: `https://www.google.com/search?q=${q}` }],
+    [{ text: "• Отложить", callback_data: `m:${r.id}:later` }, { text: "✓ Прослушано", callback_data: `m:${r.id}:done` }, { text: "✗ Не понравилось", callback_data: `m:${r.id}:nope` }],
+    [{ text: "🔔 Следить за артистом", callback_data: `f:${r.id}` }],
+  ] };
+  if (cover) {
+    const d = await tg(env, "sendPhoto", { chat_id: uid, photo: cover, caption: text, parse_mode: "HTML", reply_markup });
+    if (d.ok) return d;
+  }
+  return tg(env, "sendMessage", { chat_id: uid, text, parse_mode: "HTML", reply_markup, link_preview_options: { is_disabled: true } });
+}
+
+async function search(env, uid, query) {
+  const { total, items } = searchArchive(await archive(env), query);
+  if (!total) {
+    return tg(env, "sendMessage", { chat_id: uid, text: `Не нашёл обзора Фантано по запросу «${query.slice(0, 100)}». Попробуй имя артиста или название альбома.` });
+  }
+  if (total === 1) return sendAlbum(env, uid, items[0], "");
+  return tg(env, "sendMessage", {
+    chat_id: uid,
+    text: total > items.length ? `Нашёл ${total}, вот ${items.length} — уточни запрос, чтобы увидеть остальные:` : `Нашёл ${total}:`,
+    reply_markup: { inline_keyboard: items.map((a) => [{
+      text: `${badge(a)} · ${short(a.artist_name)} — ${short(a.album)} (${String(a.published).slice(0, 4)})${a.guest ? " · гость" : ""}`.slice(0, 120),
+      callback_data: `a:${a.id}`,
+    }]) },
+  });
 }
 
 async function sendRandom(env, uid) {
   const marked = await userMarks(env, uid);
   const pool = (await archive(env)).filter((a) => good(a) && !marked[a.id]);
   if (!pool.length) return tg(env, "sendMessage", { chat_id: uid, text: "Ты отметил(а) всё, что было с оценкой от 8. Впечатляет." });
-  return tg(env, "sendMessage", { chat_id: uid, ...albumMessage(pick(pool), "Случайный из архива:") });
+  return sendAlbum(env, uid, pick(pool), "🎲 Случайный из архива:");
 }
 
 async function maybeSuggestSimilar(env, uid, rid) {
@@ -327,7 +396,7 @@ async function maybeSuggestSimilar(env, uid, rid) {
   const chosen = [];
   while (chosen.length < 3 && top.length) chosen.push(top.splice(Math.floor(Math.random() * top.length), 1)[0]);
   await tg(env, "sendMessage", { chat_id: uid, parse_mode: "HTML", text: `Понравилось <b>${esc(base.artist_name)} — ${esc(base.album)}</b>? Вот три похожих по жанрам:` });
-  for (const a of chosen) await tg(env, "sendMessage", { chat_id: uid, ...albumMessage(a, "") });
+  for (const a of chosen) await sendAlbum(env, uid, a, "");
 }
 
 async function askMood(env, uid, rid) {
@@ -351,7 +420,7 @@ async function reviewArtist(env, rid) {
   // Cards just posted are known from GitHub Actions (/api/new-reviews) before reviews.json is updated.
   const row = await env.DB.prepare("SELECT artist_name, mbid FROM review_artists WHERE review_id=?").bind(rid).first();
   if (row) return row;
-  const r = (await reviews(env)).find((x) => x.id === rid);
+  const r = (await reviews(env)).find((x) => x.id === rid) || (await archive(env)).find((x) => x.id === rid);
   return r && r.artist_name ? { artist_name: r.artist_name, mbid: (r.artist && r.artist.mbid) || null } : null;
 }
 

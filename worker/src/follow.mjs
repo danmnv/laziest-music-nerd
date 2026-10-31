@@ -3,7 +3,10 @@
 // (MusicBrainz may not know a new artist yet, or know them only later).
 
 export function nameKey(name) {
-  return String(name || "").normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase()
+  const s = String(name || "");
+  // fast path for plain ASCII (most names): search runs this over the whole archive on every query
+  if (!/[^\x00-\x7f]/.test(s)) return s.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "");
+  return s.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase()
     .replace(/&/g, "and").replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
