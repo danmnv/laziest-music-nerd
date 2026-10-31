@@ -15,7 +15,7 @@ def enrich(rev, plaintext, archive, use_ai=True):
     ai = {}
     if use_ai and plaintext:
         ai = _try("gemini", lambda: gemini.summarize(r["title"], plaintext)) or {}
-    elif use_ai and r.get("source") == "youtube":  # no transcript yet: Gemini watches the video
+    elif use_ai and r.get("video_id"):  # no transcript (yet): Gemini watches the video
         notes = video_notes(r)
         ai = _try("gemini", lambda: gemini.summarize(r["title"], video_id=r["video_id"], notes=notes)) or {}
     r["ai"] = {k: ai.get(k) for k in ("brief", "who", "moods", "best_tracks") if ai.get(k)}

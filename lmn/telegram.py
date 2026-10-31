@@ -65,6 +65,15 @@ class Telegram:
                 return None
             raise
 
+    def edit_caption(self, chat_id, message_id, caption, buttons=None):
+        try:
+            return self.call("editMessageCaption", chat_id=chat_id, message_id=message_id, caption=caption,
+                             parse_mode="HTML", reply_markup=_markup(buttons))
+        except RuntimeError as e:
+            if "message is not modified" in str(e):
+                return None
+            raise
+
     def pin(self, chat_id, message_id):
         return self.call("pinChatMessage", chat_id=chat_id, message_id=message_id, disable_notification=True)
 

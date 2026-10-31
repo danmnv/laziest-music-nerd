@@ -12,7 +12,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import card, http, tnd, youtube
+from . import card, http, refresh, tnd, youtube
 from .enrich import archive_entry, enrich
 from .telegram import Telegram
 
@@ -51,6 +51,61 @@ def send_card(tg, chat_id, r):
             # A timeout is different (the post may be out already) and is raised, not retried.
             print(f"Telegram rejected the cover ({str(ex)[:200]}), trying next")
     return tg.send_message(chat_id, text, kb)
+
+
+def edit_card(tg, chat_id, r, kb):
+    """Edit a posted card in place: the caption of a photo post, or the text of a post that went out without a cover."""
+    text = card.caption(r)
+    if r.get("tg_kind") != "text":
+        try:
+            tg.edit_caption(chat_id, r["tg_channel_msg"], text, kb)
+            r["tg_kind"] = "photo"
+            return
+        except RuntimeError as ex:
+            if "no caption" not in str(ex):
+                raise
+    tg.edit_message(chat_id, r["tg_channel_msg"], text, kb)
+    r["tg_kind"] = "text"
+
+
+def refresh_cards(reviews, posts, archive, tg, channel, started):
+    """Cards already out: fill in what was missing and edit the channel post (see refresh.py). Returns how many were looked at."""
+    wl = os.environ.get("WORKER_LIVE") == "1"
+    texts = {p["id"]: p.get("plaintext") for p in posts}
+    looked = 0
+    for r in sorted(reviews, key=lambda x: refresh._ts(x["published"]), reverse=True):
+        stage = refresh.due(r)
+        if not stage:
+            continue
+        need = refresh.missing(r)
+        stale = bool(r.get("tg_channel_msg")) and refresh.shown(r, wl) != r.get("tg_shown")
+        if not (need or stale):  # complete and posted as it is: nothing to do, nothing to write
+            continue
+        if looked >= refresh.MAX_PER_RUN or time.monotonic() - started > TIME_BUDGET_SEC:
+            print("refresh: the rest go next hour")
+            break
+        looked += 1
+        if need:
+            print(f"refresh {r['id']} ({stage}): looking up {', '.join(need)}")
+            try:
+                refresh.fill(r, enrich(r, texts.get(r.get("tnd_id") or r["id"]), archive, use_ai="brief" in need))
+            except Exception as ex:
+                print(f"refresh {r['id']}: enrich failed ({type(ex).__name__}: {str(ex)[:200]})")
+        if r.get("tg_channel_msg") and refresh.shown(r, wl) != r.get("tg_shown"):
+            if not tg:
+                print("---- edit ----\n" + card.caption(r))
+            else:
+                try:
+                    edit_card(tg, channel, r, card.buttons(r, with_callbacks=wl))
+                    r["tg_shown"] = refresh.shown(r, wl)
+                    print(f"refresh {r['id']}: channel post updated")
+                except Exception as ex:
+                    r["refresh_tries"] = r.get("refresh_tries", 0) + 1
+                    print(f"refresh {r['id']}: editing the channel post failed ({str(ex)[:200]})")
+                    if "message to edit not found" not in str(ex) and r["refresh_tries"] < refresh.MAX_TRIES:
+                        continue  # what was found is kept; the post is edited next hour
+        refresh.mark(r, stage)
+    return looked
 
 
 def owner_chat(tg):
@@ -178,8 +233,11 @@ def main():
                     print(f"posting {rev['id']} failed: {failed}")
                     break
                 r["tg_channel_msg"] = msg["message_id"]
+                r["tg_kind"] = "photo" if msg.get("photo") else "text"
+                r["tg_shown"] = refresh.shown(r, os.environ.get("WORKER_LIVE") == "1")
             else:
                 print("----\n" + card.caption(r) + "\n" + json.dumps(card.buttons(r), ensure_ascii=False))
+        r["refreshed"] = refresh.passed_stages(r)  # just looked up: a stage already behind it is not repeated
         reviews.append(r)
         done += 1
         if r["id"] not in arch_ids and not (r.get("video_id") and r["video_id"] in arch_videos):
@@ -192,13 +250,17 @@ def main():
         save("archive.json", archive)
     complete = done == len(new)
     new = new[:done]
+    if not seeding and refresh_cards(reviews, posts, archive, tg, channel, started):
+        save("reviews.json", reviews)
+        save("archive.json", archive)
     if upgrades and not new:  # nothing else would save them
         save("reviews.json", reviews)
 
     items = card.list_items(reviews)
-    if load("list.json", {}).get("items") != items:  # otherwise every hourly run would commit a new timestamp
+    list_changed = load("list.json", {}).get("items") != items
+    if list_changed:  # otherwise every hourly run would commit a new timestamp
         save("list.json", {"updated": datetime.now(timezone.utc).isoformat(timespec="seconds"), "items": items})
-    if new or seeding or not state.get("channel_pinned_id"):
+    if new or seeding or list_changed or not state.get("channel_pinned_id"):
         text = card.render_list(items, owner_statuses())
         if tg:
             if state.get("channel_pinned_id"):
@@ -215,7 +277,7 @@ def main():
                 state["channel_pinned_id"] = msg["message_id"]
         else:
             print("---- pinned ----\n" + text)
-    if (new or seeding) and tg:
+    if (new or seeding or list_changed) and tg:
         url, secret = worker()
         if url:
             try:
