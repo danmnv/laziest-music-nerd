@@ -12,8 +12,17 @@ def _try(name, fn, default=None):
 
 def enrich(rev, plaintext, archive, use_ai=True):
     r = dict(rev)
-    ai = (_try("gemini", lambda: gemini.summarize(r["title"], plaintext)) if use_ai else None) or {}
+    ai = {}
+    if use_ai and plaintext:
+        ai = _try("gemini", lambda: gemini.summarize(r["title"], plaintext)) or {}
+    elif use_ai and r.get("source") == "youtube":  # no transcript yet: Gemini watches the video
+        notes = video_notes(r)
+        ai = _try("gemini", lambda: gemini.summarize(r["title"], video_id=r["video_id"], notes=notes)) or {}
     r["ai"] = {k: ai.get(k) for k in ("brief", "who", "moods", "best_tracks") if ai.get(k)}
+    if r.get("fav_tracks"):  # Fantano's own list from the video description beats a guess
+        r["ai"]["best_tracks"] = r["fav_tracks"]
+    if ai.get("score_note") and r.get("score") is not None and not r.get("score_note"):
+        r["score_note"] = ai["score_note"]
     if not r.get("artist_name") and ai.get("artist"):
         r["artist_name"], r["album"] = ai["artist"], ai.get("album")
     if not r.get("artist_name"):
@@ -22,14 +31,14 @@ def enrich(rev, plaintext, archive, use_ai=True):
 
     rg = _try("musicbrainz search", lambda: mb.find_release_group(artist, album)) if album else None
     r["artist"] = {}
-    r["links"] = {}
+    r["links"] = {"bandcamp": r["listen_bandcamp"]} if r.get("listen_bandcamp") else {}
     if rg:
         r["mb_release_group"] = rg["rg_id"]
         det = _try("musicbrainz release", lambda: mb.release_details(rg["releases"]), {})
         r["duration_min"] = det.get("duration_min")
         r["tracks"] = det.get("tracks")
         if det.get("bandcamp"):
-            r["links"]["bandcamp"] = det["bandcamp"]
+            r["links"].setdefault("bandcamp", det["bandcamp"])
         if det.get("smartlink"):
             r["links"]["songlink"] = det["smartlink"]  # the artist's own all-platforms page, if MusicBrainz knows it
         info = _try("musicbrainz artist", lambda: mb.artist_info(rg["artist_id"])) or {}
@@ -53,6 +62,16 @@ def enrich(rev, plaintext, archive, use_ai=True):
     ] if c]
     r["previous"], r["previous_unsure"] = _try("previous reviews", lambda: previous_reviews(r, archive), ([], 0))
     return r
+
+
+def video_notes(r):
+    """What the video description says, as context for Gemini."""
+    bits = [f"Оценка: {r['score']}/10" if r.get("score") is not None else "NOT GOOD" if r.get("not_good") else "",
+            "Жанры: " + ", ".join(r["genres"]) if r.get("genres") else "",
+            "Лучшие треки: " + ", ".join(r["fav_tracks"]) if r.get("fav_tracks") else "",
+            f"Худший трек: {r['least_fav_track']}" if r.get("least_fav_track") else "",
+            f"Год: {r['year']}, лейбл: {r['label']}" if r.get("year") else ""]
+    return "\n".join(b for b in bits if b)
 
 
 def previous_reviews(r, archive, max_checks=10):
@@ -84,4 +103,5 @@ def previous_reviews(r, archive, max_checks=10):
 
 
 def archive_entry(rev):
-    return {k: rev.get(k) for k in ("id", "url", "published", "artist_name", "album", "score", "not_good", "classic", "guest", "genres")}
+    return {k: rev.get(k) for k in ("id", "url", "published", "artist_name", "album", "score", "not_good", "classic", "guest", "genres",
+                                    "video_id")}

@@ -31,6 +31,8 @@ def score_text(r):
         return "NOT GOOD"
     if r.get("classic"):
         return "CLASSIC"
+    if r.get("not_bad"):
+        return "NOT BAD"
     if r.get("score") is None:
         return "без оценки"
     note = f" ({r['score_note']})" if r.get("score_note") else ""
@@ -213,7 +215,7 @@ def recent(reviews, days=60, now=None):
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=days)
     rs = [r for r in reviews if datetime.fromisoformat(r["published"]) >= cutoff]
-    return sorted(rs, key=lambda r: r["published"], reverse=True)
+    return sorted(rs, key=lambda r: datetime.fromisoformat(r["published"]), reverse=True)  # mixed "Z" and "-04:00" dates
 
 
 LIST_HEAD = "<b>Свежие обзоры Фантано за 60 дней</b>\n\n"

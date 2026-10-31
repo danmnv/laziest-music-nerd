@@ -71,9 +71,10 @@ def parse_title(title):
     if m:
         info.update(staff=True, artist=m.group(2).strip(), album=m.group(1).strip())
         return info
-    m = re.match(r"^(.+?)['’]s?\s+(.+?)\s+is\s+(NOT GOOD|BAD)\s*$", t)
+    m = re.match(r"^(.+?)['’]s?\s+(.+?)\s+is\s+(NOT GOOD|BAD|NOT MUSIC|NOT BAD)\s*$", t)
     if m:
-        info.update(not_good_title=True, artist=m.group(1).strip(), album=m.group(2).strip())
+        verdict = "not_bad_title" if m.group(3) == "NOT BAD" else "not_good_title"
+        info.update({verdict: True, "artist": m.group(1).strip(), "album": m.group(2).strip()})
         return info
     t = re.sub(r"\s+(?:ALBUM|EP|MIXTAPE)\s+REVIEW\s*$", "", t, flags=re.I)
     m = re.match(r"^(.+?)\s*[-–—]\s+(.+)$", t) or re.match(r"^(.+?)\s+[-–—]\s*(.+)$", t)
@@ -137,7 +138,7 @@ def parse_post(p):
         genres.append(t)
     video = None
     for src in (p.get("canonical_url") or "", p.get("html") or ""):
-        m = re.search(r"(?:watch\?v=|youtu\.be/|/embed/)([\w-]{11})", htmlmod.unescape(src))
+        m = re.search(r"(?:watch\?v=|youtu\.be/|/embed/|/live/|/shorts/)([\w-]{11})", htmlmod.unescape(src))
         if m:
             video = m.group(1)
             break
@@ -153,6 +154,7 @@ def parse_post(p):
         "score": score,
         "not_good": bool(not_good),
         "classic": bool(classic),
+        "not_bad": bool(info.get("not_bad_title") or ("not bad" in low and score is None and not not_good)),
         "score_note": verdict.get("note") if verdict.get("score") == score else None,
         "type": rtype,
         "genres": genres,
