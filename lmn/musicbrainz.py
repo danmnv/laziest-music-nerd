@@ -84,8 +84,8 @@ def cover_url(rg_id):
 
 
 def release_details(release_ids):
-    """Duration (minutes) and Bandcamp URL from the first release with full track lengths."""
-    out = {"duration_min": None, "bandcamp": None, "smartlink": None}
+    """Duration (minutes), tracklist and Bandcamp / smart-link URLs from the first release with full track lengths."""
+    out = {"duration_min": None, "bandcamp": None, "smartlink": None, "tracks": None}
     for rid in release_ids[:3]:
         try:
             d = _get(f"release/{rid}", inc="recordings+url-rels")
@@ -100,6 +100,7 @@ def release_details(release_ids):
         tracks = [t for m in d.get("media", []) for t in m.get("tracks", [])]
         if not out["duration_min"] and tracks and all(t.get("length") for t in tracks):
             out["duration_min"] = round(sum(t["length"] for t in tracks) / 60000)
+            out["tracks"] = [{"title": t.get("title") or (t.get("recording") or {}).get("title"), "sec": round(t["length"] / 1000)} for t in tracks]
         if out["duration_min"] and out["bandcamp"]:
             break
     return out

@@ -5,7 +5,7 @@ from . import gemini, links, musicbrainz as mb
 def enrich(rev, plaintext, archive):
     r = dict(rev)
     ai = gemini.summarize(r["title"], plaintext) or {}
-    r["ai"] = {k: ai.get(k) for k in ("brief", "who", "moods") if ai.get(k)}
+    r["ai"] = {k: ai.get(k) for k in ("brief", "who", "moods", "best_tracks") if ai.get(k)}
     if not r.get("artist_name") and ai.get("artist"):
         r["artist_name"], r["album"] = ai["artist"], ai.get("album")
     if not r.get("artist_name"):
@@ -19,6 +19,7 @@ def enrich(rev, plaintext, archive):
         r["mb_release_group"] = rg["rg_id"]
         det = mb.release_details(rg["releases"])
         r["duration_min"] = det["duration_min"]
+        r["tracks"] = det.get("tracks")
         if det["bandcamp"]:
             r["links"]["bandcamp"] = det["bandcamp"]
         if det.get("smartlink"):
@@ -33,6 +34,7 @@ def enrich(rev, plaintext, archive):
     if dz:
         r["links"].setdefault("songlink", links.songlink(dz["url"]))
         r["duration_min"] = r.get("duration_min") or dz["duration_min"]
+        r["tracks"] = r.get("tracks") or dz.get("tracks")
     r["links"].setdefault("bandcamp", links.bandcamp_search(artist, album))
     r["links"]["ytmusic"] = links.ytmusic_search(artist, album)
 

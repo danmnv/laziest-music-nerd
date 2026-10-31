@@ -60,7 +60,34 @@ def who_line(r):
     return e(", ".join(bits)) or None
 
 
-def caption(r):
+def plural_tracks(n):
+    if n % 10 == 1 and n % 100 != 11:
+        return f"{n} трек"
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return f"{n} трека"
+    return f"{n} треков"
+
+
+def _norm(t):
+    return "".join(ch for ch in (t or "").lower() if ch.isalnum())
+
+
+def tracklist(r, limit=None):
+    tracks = r.get("tracks") or []
+    best = [_norm(b) for b in (r.get("ai") or {}).get("best_tracks", []) if _norm(b)]
+    out = []
+    for i, t in enumerate(tracks[:limit] if limit is not None else tracks, 1):
+        n = _norm(t.get("title"))
+        star = " ★" if n and any(b == n or (len(b) > 3 and b in n) for b in best) else ""
+        dur = f" {t['sec'] // 60}:{t['sec'] % 60:02d}" if t.get("sec") else ""
+        out.append(f"{i}. {e(t.get('title'))}{dur}{star}")
+    if limit is not None and len(tracks) > limit:
+        out.append(f"… ещё {len(tracks) - limit}")
+    return out
+
+
+def caption(r, _ai=None, _limit=None):
+    ai = _ai if _ai is not None else (r.get("ai") or {})
     lines = [f"<b>{e(r['artist_name'])} — {e(r['album'])}</b>"]
     genres = ", ".join(r.get("genres", [])[:4])
     kind = TYPE_RU.get(r.get("type"))
@@ -69,6 +96,10 @@ def caption(r):
         second += f" · {kind}"
     if genres:
         second += f" · {e(genres)}"
+    size = [plural_tracks(len(r["tracks"])) if r.get("tracks") else None,
+            f"{r['duration_min']} мин" if r.get("duration_min") else None]
+    if any(size):
+        second += " · " + ", ".join(x for x in size if x)
     if r.get("guest"):
         second += " · гостевой обзор"
     lines.append(second)
@@ -79,17 +110,26 @@ def caption(r):
     before = fantano_before(r)
     if before:
         lines.append(f"<b>Фантано раньше:</b> {before}")
-    ai = r.get("ai") or {}
     if ai.get("brief"):
         lines.append(f"<b>Бриф:</b> {e(ai['brief'])}")
     if ai.get("moods"):
         lines.append(f"<b>Похоже на:</b> {e(' / '.join(ai['moods']))}?")
-    if r.get("video_id"):
-        lines.append(f'\n<a href="https://youtu.be/{r["video_id"]}">Видеообзор на YouTube</a>')
+    tl = tracklist(r, _limit) if _limit != 0 else []
+    if tl:
+        legend = " (★ — выделил Фантано)" if any(x.endswith("★") for x in tl) else ""
+        lines.append(f"<blockquote expandable><b>Треклист</b>{legend}\n" + "\n".join(tl) + "</blockquote>")
     text = "\n".join(lines)
-    while len(text) > CAPTION_LIMIT and ai.get("brief"):
-        ai = dict(ai, brief=ai["brief"][: max(0, len(ai["brief"]) - (len(text) - CAPTION_LIMIT) - 1)] + "…")
-        text = caption(dict(r, ai=ai))
+    if len(text) <= CAPTION_LIMIT:
+        return text
+    # Too long for a photo caption: first shorten the tracklist, then the brief.
+    n = len(r.get("tracks") or [])
+    limit = n if _limit is None else _limit
+    if limit > 0:
+        return caption(r, ai, max(0, limit - 3) if limit > 3 else 0)
+    if ai.get("brief"):
+        cut = len(ai["brief"]) - (len(text) - CAPTION_LIMIT) - 1
+        brief = ai["brief"][:cut].rstrip() + "…" if cut >= 40 else None
+        return caption(r, {k: v for k, v in dict(ai, brief=brief).items() if v}, 0)
     return text[:CAPTION_LIMIT]
 
 
@@ -99,9 +139,12 @@ def buttons(r, with_callbacks=False):
         {"text": "Bandcamp", "url": links["bandcamp"]} if links.get("bandcamp") else None,
         {"text": "YouTube Music", "url": links["ytmusic"]} if links.get("ytmusic") else None,
     ] if b]
+    # The review itself is the YouTube video; the TND page (transcript) is linked from the site's release page.
+    review = ({"text": "▶ Видеообзор", "url": f"https://youtu.be/{r['video_id']}"} if r.get("video_id")
+              else {"text": "Обзор", "url": r["url"]})
     row2 = [b for b in [
         {"text": "Все платформы", "url": links["songlink"]} if links.get("songlink") else None,
-        {"text": "Обзор", "url": r["url"]},
+        review,
     ] if b]
     rows = [row for row in (row1, row2) if row]
     if with_callbacks:
