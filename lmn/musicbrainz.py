@@ -37,22 +37,28 @@ def find_release_group(artist, album):
         print(f"musicbrainz search failed: {e.status}")
         return None
     na, nt = norm(artist), norm(album)
+    matches = []
     for rg in res.get("release-groups", []):
         credit = rg.get("artist-credit") or []
         names = norm("".join(c.get("name", "") + c.get("joinphrase", "") for c in credit))
         first = credit[0]["artist"] if credit and "artist" in credit[0] else None
         if rg.get("score", 0) >= 90 and norm(rg.get("title")) == nt and first and (names == na or norm(first["name"]) == na or na in names):
-            return {
-                "rg_id": rg["id"],
-                "artist_id": first["id"],
-                "artist_name": first["name"],
-                "title": rg.get("title"),
-                "type": rg.get("primary-type"),
-                "secondary": rg.get("secondary-types", []),
-                "date": rg.get("first-release-date"),
-                "releases": [r["id"] for r in rg.get("releases", [])],
-            }
-    return None
+            matches.append((rg, first))
+    if not matches:
+        return None
+    # A title track often exists as a single too; prefer the album/EP.
+    pref = {"Album": 0, "EP": 1, None: 2, "Other": 2, "Broadcast": 3, "Single": 4}
+    rg, first = min(matches, key=lambda m: pref.get(m[0].get("primary-type"), 2))
+    return {
+        "rg_id": rg["id"],
+        "artist_id": first["id"],
+        "artist_name": first["name"],
+        "title": rg.get("title"),
+        "type": rg.get("primary-type"),
+        "secondary": rg.get("secondary-types", []),
+        "date": rg.get("first-release-date"),
+        "releases": [r["id"] for r in rg.get("releases", [])],
+    }
 
 
 def artist_info(artist_id):

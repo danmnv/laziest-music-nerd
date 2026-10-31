@@ -49,6 +49,19 @@ def owner_chat(tg):
     return chats.pop()
 
 
+def owner_statuses():
+    """The owner's marks for the channel's pinned list, if the Worker is up and the 'show in channel' switch is on."""
+    url, secret = os.environ.get("WORKER_URL"), os.environ.get("WORKER_ACTIONS_SECRET")
+    if not (url and secret):
+        return {}
+    try:
+        d = http.get_json(url.rstrip("/") + "/api/owner/channel-marks", headers={"Authorization": f"Bearer {secret}"})
+        return d.get("marks", {})
+    except Exception as ex:
+        print(f"worker marks unavailable: {type(ex).__name__}")
+        return {}
+
+
 def main():
     reviews = load("reviews.json", [])
     state = load("state.json", {})
@@ -97,8 +110,10 @@ def main():
         save("reviews.json", reviews)
         save("archive.json", archive)
 
+    items = card.list_items(reviews)
+    save("list.json", {"updated": datetime.now(timezone.utc).isoformat(timespec="seconds"), "items": items})
     if new or seeding or not state.get("channel_pinned_id"):
-        text = card.pinned_text(reviews)
+        text = card.render_list(items, owner_statuses())
         if tg:
             if state.get("channel_pinned_id"):
                 tg.edit_message(channel, state["channel_pinned_id"], text)

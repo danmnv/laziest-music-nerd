@@ -17,11 +17,11 @@ def color(score, not_good=False, classic=False):
     return "red"
 
 
-def label(score, not_good=False, classic=False):
+def label(score, not_good=False, classic=False, unknown="—"):
     if not_good:
         return "NOT GOOD"
     if classic:
         return "CLASSIC"
     if score is None:
-        return "—"
+        return unknown
     return f"{score:g}"

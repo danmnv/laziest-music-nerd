@@ -66,6 +66,12 @@ class ParseTest(unittest.TestCase):
         self.assertIn("Dopamine Chamber", txt)
         self.assertNotIn("Dopamine Chamber", card.pinned_text([r], now=datetime(2027, 1, 31, tzinfo=timezone.utc)))
 
+    def test_person_begin_is_not_activity(self):
+        r = {"previous": [{"album": "X", "score": None}], "previous_unsure": 0, "artist": {"type": "Person", "begin": "1996"}}
+        self.assertEqual(card.fantano_before(r), "X — ?")
+        r["artist"] = {"type": "Group", "begin": "1996"}
+        self.assertEqual(card.fantano_before(r), "X — ?; активны с 1996")
+
     def test_first_review(self):
         r = {"previous": [], "previous_unsure": 0, "artist": {}}
         self.assertEqual(card.fantano_before(r), "обозревает впервые")

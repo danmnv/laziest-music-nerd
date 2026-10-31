@@ -25,7 +25,7 @@ def enrich(rev, plaintext, archive):
         r["artist"] = {"mbid": rg["artist_id"], **{k: info.get(k) for k in ("type", "country", "area", "begin", "end", "aliases")}}
         if not r.get("type"):
             sec = [s.lower() for s in rg.get("secondary") or []]
-            r["type"] = {"EP": "ep", "Single": "single"}.get(rg.get("type")) or ("live" if "live" in sec else "mixtape" if "mixtape/street" in sec else None)
+            r["type"] = {"EP": "ep"}.get(rg.get("type")) or ("live" if "live" in sec else "mixtape" if "mixtape/street" in sec else None)
 
     dz = links.deezer_album(artist, album) if album else None
     if dz:
@@ -69,4 +69,4 @@ def previous_reviews(r, archive, max_checks=10):
 
 
 def archive_entry(rev):
-    return {k: rev.get(k) for k in ("id", "url", "published", "artist_name", "album", "score", "not_good", "classic", "guest")}
+    return {k: rev.get(k) for k in ("id", "url", "published", "artist_name", "album", "score", "not_good", "classic", "guest", "genres")}

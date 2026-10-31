@@ -35,13 +35,14 @@ def fantano_before(r):
     elif not prev:
         return f"не уверен: есть {unsure} обзор(а) артиста с таким же именем, но сверить по MusicBrainz не удалось"
     else:
-        parts = [f"{e(p['album'])} — {label(p.get('score'), p.get('not_good'), p.get('classic'))}" for p in prev[:4]]
+        parts = [f"{e(p['album'])} — {label(p.get('score'), p.get('not_good'), p.get('classic'), unknown='?')}" for p in prev[:4]]
         text = "; ".join(parts)
         if len(prev) > 4:
             text += f" и ещё {len(prev) - 4}"
         if unsure:
             text += f" (ещё {unsure} — не уверен, тот ли артист)"
-    begin = (r.get("artist") or {}).get("begin")
+    a = r.get("artist") or {}
+    begin = a.get("begin") if a.get("type") != "Person" else None  # for a person MusicBrainz 'begin' is the birth date
     if begin and begin[:4].isdigit() and int(begin[:4]) <= datetime.now().year - 10:
         text += f"; активны с {begin[:4]}"
     return text
@@ -144,14 +145,26 @@ def recent(reviews, days=60, now=None):
     return sorted(rs, key=lambda r: r["published"], reverse=True)
 
 
-def pinned_text(reviews, statuses=None, now=None):
+LIST_HEAD = "<b>Свежие обзоры Фантано за 60 дней</b>\n\n"
+
+
+def list_tail():
+    return f'\n\n<a href="{SITE_URL}/">Полный список на сайте</a>' if SITE_LIVE else ""
+
+
+def list_items(reviews, now=None):
+    """Pre-rendered lines without statuses; the Worker appends each person's status itself."""
+    return [{"id": r["id"], "line": list_line(r)} for r in recent(reviews, now=now)]
+
+
+def render_list(items, statuses=None):
     statuses = statuses or {}
-    rs = recent(reviews, now=now)
-    head = "<b>Свежие обзоры Фантано за 60 дней</b>\n\n"
-    tail = f'\n\n<a href="{SITE_URL}/">Полный список на сайте</a>' if SITE_LIVE else ""
-    lines = [list_line(r, statuses.get(r["id"])) for r in rs]
-    while lines and len(head + "\n".join(lines) + tail) > MESSAGE_LIMIT:
+    lines = [i["line"] + STATUS.get(statuses.get(i["id"]), "") for i in items]
+    tail = list_tail()
+    while lines and len(LIST_HEAD + "\n".join(lines) + tail) > MESSAGE_LIMIT:
         lines.pop()
-    if not lines:
-        lines = ["Пока пусто."]
-    return head + "\n".join(lines) + tail
+    return LIST_HEAD + ("\n".join(lines) if lines else "Пока пусто.") + tail
+
+
+def pinned_text(reviews, statuses=None, now=None):
+    return render_list(list_items(reviews, now=now), statuses)
