@@ -28,6 +28,8 @@ def enrich(rev, plaintext, archive, use_ai=True):
     if not r.get("artist_name"):
         r["artist_name"], r["album"] = r["title"], ""
     artist, album = r["artist_name"], r["album"] or ""
+    if mb.norm(album) == "selftitled":  # Fantano's name for an album titled after the artist (seen: Pain of Truth)
+        album = artist
 
     rg = _try("musicbrainz search", lambda: mb.find_release_group(artist, album)) if album else None
     r["artist"] = {}
@@ -52,6 +54,11 @@ def enrich(rev, plaintext, archive, use_ai=True):
         r["links"].setdefault("songlink", links.songlink(dz["url"]))
         r["duration_min"] = r.get("duration_min") or dz.get("duration_min")
         r["tracks"] = r.get("tracks") or dz.get("tracks")
+    bc = r["links"].get("bandcamp")
+    if not (r.get("tracks") and r.get("duration_min")) and links.is_bandcamp_album(bc):  # new albums reach Bandcamp first
+        page = _try("bandcamp", lambda: links.bandcamp_album(bc)) or {}
+        r["tracks"] = r.get("tracks") or page.get("tracks")
+        r["duration_min"] = r.get("duration_min") or page.get("duration_min")
     r["links"].setdefault("bandcamp", links.bandcamp_search(artist, album))
     r["links"]["ytmusic"] = links.ytmusic_search(artist, album)
 
