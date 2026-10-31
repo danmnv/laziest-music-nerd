@@ -31,6 +31,8 @@ def score_text(r):
         return "NOT GOOD"
     if r.get("classic"):
         return "CLASSIC"
+    if r.get("not_bad"):
+        return "NOT BAD"
     if r.get("score") is None:
         return "без оценки"
     note = f" ({r['score_note']})" if r.get("score_note") else ""
@@ -103,12 +105,12 @@ def _caption(r, ai, limit, drop=()):
     second = f"{EMOJI[color(r.get('score'), r.get('not_good'), r.get('classic'))]} {score_text(r)}"
     if kind:
         second += f" · {kind}"
-    if genres:
-        second += f" · {e(genres)}"
     size = [plural_tracks(len(r["tracks"])) if r.get("tracks") else None,
             f"{r['duration_min']} мин" if r.get("duration_min") else None]
-    if any(size):
+    if any(size):  # before the genres: after a long genre list it got lost
         second += " · " + ", ".join(x for x in size if x)
+    if genres:
+        second += f" · {e(genres)}"
     if r.get("guest"):
         second += " · гостевой обзор"
     lines.append(second)
@@ -213,7 +215,7 @@ def recent(reviews, days=60, now=None):
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=days)
     rs = [r for r in reviews if datetime.fromisoformat(r["published"]) >= cutoff]
-    return sorted(rs, key=lambda r: r["published"], reverse=True)
+    return sorted(rs, key=lambda r: datetime.fromisoformat(r["published"]), reverse=True)  # mixed "Z" and "-04:00" dates
 
 
 LIST_HEAD = "<b>Свежие обзоры Фантано за 60 дней</b>\n\n"

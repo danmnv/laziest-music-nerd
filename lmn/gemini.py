@@ -1,6 +1,7 @@
 """Gemini Flash: Russian brief, 'who is this', mood guesses. Returns None on any failure (empty field beats broken pipeline)."""
 import json
 import os
+import re
 import time
 
 from . import http
@@ -17,20 +18,21 @@ MOODS = ["для тренировки", "для настроения", "для �
 _unavailable = set()  # models found used up for today (or closed) during this run: skipped for the next reviews
 
 PROMPT = """Ты помогаешь вести русскоязычный Telegram-канал о музыкальных обзорах Anthony Fantano (The Needle Drop).
-Ниже — расшифровка его видеообзора. Ответь строго JSON-объектом с полями:
+{source} Ответь строго JSON-объектом с полями:
 - "brief": 1–2 предложения на русском, своими словами: что за релиз и что Фантано о нём думает. Не цитируй обзор, не переводи его дословно. До 220 символов.
 - "who": 1 строка на русском о том, кто исполнитель (жанр/сцена, откуда, какой это по счёту релиз, если ясно из текста). Только факты из текста; если не ясно — пустая строка. До 140 символов.
 - "moods": список из 1–2 вариантов ровно из этого набора: {moods}. Когда лучше всего слушать этот релиз.
 - "best_tracks": до 3 названий треков, которые Фантано выделил как лучшие, точно как они написаны в тексте. Если не выделил — пустой список.
 - "artist": имя исполнителя как в оригинале.
 - "album": название релиза как в оригинале.
+- "score_note": если Фантано назвал оценку вместе со словом light, decent или strong (например «a strong 7» или «light to decent 6»), это слово или пара слов по-английски строчными буквами; иначе пустая строка.
 Названия альбомов, треков и жанров оставляй в оригинале.
 
-Заголовок поста: {title}
-
-Текст обзора:
-{text}
-"""
+Заголовок: {title}
+{text}"""
+SOURCE_TEXT = "Ниже — расшифровка его видеообзора."
+SOURCE_VIDEO = "Выше — сам его видеообзор на YouTube; ниже — описание видео."
+NOTE = re.compile(r"^(?:light|decent|strong)(?: to (?:light|decent|strong))?$")
 
 
 def generate(body, api_key, budget=BUDGET_SEC, sleep=time.sleep, clock=time.monotonic):
@@ -62,20 +64,29 @@ def generate(body, api_key, budget=BUDGET_SEC, sleep=time.sleep, clock=time.mono
     return None, None
 
 
-def summarize(title, text, api_key=None):
+def summarize(title, text=None, api_key=None, video_id=None, notes=""):
+    """From the transcript (text) or, when there is none yet, from the video itself (video_id; notes = its description)."""
     api_key = (api_key or os.environ.get("GEMINI_API_KEY") or "").strip()
-    if not api_key or not text:
+    if not api_key or not (text or video_id):
         return None
-    body = {
-        "contents": [{"parts": [{"text": PROMPT.format(moods=json.dumps(MOODS, ensure_ascii=False), title=title, text=text[:30000])}]}],
-        "generationConfig": {"responseMimeType": "application/json", "temperature": 0.4},
-    }
+    moods = json.dumps(MOODS, ensure_ascii=False)
+    if text:
+        parts = [{"text": PROMPT.format(source=SOURCE_TEXT, moods=moods, title=title, text="\nТекст обзора:\n" + text[:30000])}]
+        config = {}
+    else:
+        parts = [{"fileData": {"fileUri": f"https://www.youtube.com/watch?v={video_id}"}},
+                 {"text": PROMPT.format(source=SOURCE_VIDEO, moods=moods, title=title, text="\nОписание видео:\n" + (notes or "")[:3000])}]
+        config = {"mediaResolution": "MEDIA_RESOLUTION_LOW"}  # ~45k tokens for a 8-minute review instead of ~130k
+    body = {"contents": [{"parts": parts}],
+            "generationConfig": {"responseMimeType": "application/json", "temperature": 0.4, **config}}
     model, raw = generate(body, api_key)
     if raw is None:
         return None
     try:
         out = json.loads(raw["candidates"][0]["content"]["parts"][0]["text"])
         out["moods"] = [m for m in out.get("moods", []) if m in MOODS][:2]
+        note = str(out.get("score_note") or "").strip().lower()
+        out["score_note"] = note if NOTE.match(note) else None
         return out
     except (KeyError, IndexError, TypeError, ValueError, AttributeError) as e:
         print(f"gemini {model}: bad response {e!r}")

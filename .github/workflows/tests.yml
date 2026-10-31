@@ -47,4 +47,5 @@ jobs:
           MODE: dry
           DATA_DIR: /tmp/data
           DRY_LIMIT: "4"
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           # no GEMINI_API_KEY here on purpose: the free daily quota is for real cards

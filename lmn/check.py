@@ -12,7 +12,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import card, http, tnd
+from . import card, http, tnd, youtube
 from .enrich import archive_entry, enrich
 from .telegram import Telegram
 
@@ -115,22 +115,28 @@ def main():
     reviews = load("reviews.json", [])
     state = load("state.json", {})
     archive = load("archive.json", [])
-    known = {r["id"] for r in reviews}
 
     if not archive:
         print("building archive index from TND…")
         archive = [archive_entry(tnd.parse_post(p)) for p in tnd.fetch_all_light()]
         print(f"archive: {len(archive)} reviews")
     arch_ids = {a["id"] for a in archive}
+    arch_videos = {a["video_id"] for a in archive if a.get("video_id")}
 
     seeding = not state.get("seeded")
     since = (datetime.now(timezone.utc) - timedelta(days=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
     posts = tnd.fetch_posts(limit=50 if seeding else 15, with_text=True, since=since if seeding else None)["posts"]
     posts.sort(key=lambda p: p["published_at"])
 
+    # New reviews are noticed on YouTube: the site posts them a day or more later, and skips some (see youtube.py).
+    uploads = youtube.latest_uploads()
+
     if MODE == "test":
-        p = posts[-1]
-        r = next((x for x in reviews if x["id"] == p["id"]), None) or enrich(tnd.parse_post(p), p.get("plaintext"), archive)
+        # The newest review anywhere, even if it is already in the channel: a card for the owner only, nothing saved.
+        everything, _ = youtube.plan(posts, uploads, [], seeding=False)
+        item = everything[-1]
+        r = next((x for x in reviews if x["id"] == item["rev"]["id"] or (x.get("video_id") and x.get("video_id") == item["rev"].get("video_id"))), None)
+        r = r or enrich(item["rev"], item["text"], archive)
         tg = Telegram()
         send_card(tg, owner_chat(tg), r)
         print("test card sent to the owner's private chat:", r["title"])
@@ -138,26 +144,31 @@ def main():
 
     tg = Telegram() if MODE == "run" else None
     channel = (os.environ.get("TELEGRAM_CHANNEL") or "").strip()
-    new = [p for p in posts if p["id"] not in known]
+    new, upgrades = youtube.plan(posts, uploads, reviews, seeding)
+    for old, site_rev in upgrades:
+        print(f"site post appeared for {old['id']}: linking its transcript page")
+        youtube.apply_upgrade(old, site_rev)
     if MODE == "dry" and os.environ.get("DRY_LIMIT"):
         new = new[-int(os.environ["DRY_LIMIT"]):]
-    print(f"{len(new)} new review(s){' (seeding, no cards)' if seeding else ''}")
-    done, failed = 0, None
-    for p in new:
-        if not seeding and done >= MAX_NEW_PER_RUN:
-            print(f"limit of {MAX_NEW_PER_RUN} per run reached; the rest go next hour")
+    print(f"{len(new)} new review(s), {sum(i['card'] for i in new)} with a card{' (seeding)' if seeding else ''}")
+    done, cards, failed = 0, 0, None
+    for item in new:
+        if item["card"] and cards >= MAX_NEW_PER_RUN:
+            print(f"limit of {MAX_NEW_PER_RUN} cards per run reached; the rest go next hour")
             break
         if done and time.monotonic() - started > TIME_BUDGET_SEC:
             print("time budget used up; the rest go next hour")
             break
-        rev = tnd.parse_post(p)
-        # Seeding fills the list and the site with ~50 older reviews: no Gemini there, its free daily limit is for new cards.
+        rev = item["rev"]
+        # Reviews without a card (seeding, or found too late) only fill the list and the site: no Gemini there,
+        # its free daily limit is for new cards.
         try:
-            r = enrich(rev, p.get("plaintext"), archive, use_ai=not seeding)
+            r = enrich(rev, item["text"], archive, use_ai=item["card"])
         except Exception as ex:  # a broken source must not stop the card
             print(f"enrich failed for {rev['id']} ({type(ex).__name__}: {str(ex)[:200]}), posting a bare card")
             r = bare(rev)
-        if not seeding:
+        if item["card"]:
+            cards += 1
             if tg:
                 try:
                     msg = send_card(tg, channel, r)
@@ -171,14 +182,18 @@ def main():
                 print("----\n" + card.caption(r) + "\n" + json.dumps(card.buttons(r), ensure_ascii=False))
         reviews.append(r)
         done += 1
-        if r["id"] not in arch_ids:
+        if r["id"] not in arch_ids and not (r.get("video_id") and r["video_id"] in arch_videos):
             archive.append(archive_entry(r))
             arch_ids.add(r["id"])
+            if r.get("video_id"):
+                arch_videos.add(r["video_id"])
         # save after every review so a crash later never re-posts this one
         save("reviews.json", reviews)
         save("archive.json", archive)
     complete = done == len(new)
     new = new[:done]
+    if upgrades and not new:  # nothing else would save them
+        save("reviews.json", reviews)
 
     items = card.list_items(reviews)
     if load("list.json", {}).get("items") != items:  # otherwise every hourly run would commit a new timestamp

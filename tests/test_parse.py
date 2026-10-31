@@ -53,7 +53,7 @@ class ParseTest(unittest.TestCase):
                  links={"bandcamp": "https://b", "ytmusic": "https://y", "songlink": "https://album.link/x"})
         c = card.caption(r)
         self.assertIn("<b>Fontaines D.C. — Dopamine Chamber</b>", c)
-        self.assertIn("🟡 7/10 · darkwave, dream pop", c)
+        self.assertIn("🟡 7/10 · 44 мин · darkwave, dream pop", c)
         self.assertIn("Romance — 7; Skinty Fia — 6", c)
         self.assertLessEqual(card.tg_len(c), 1024)
         line = card.list_line(r)
@@ -87,7 +87,7 @@ class ParseTest(unittest.TestCase):
                  tracks=[{"title": "Big Fire", "sec": 201}, {"title": "Favourite", "sec": 62}],
                  ai={"brief": "Бриф.", "best_tracks": ["big fire"]})
         c = card.caption(r)
-        self.assertIn("· 2 трека, 44 мин", c)
+        self.assertIn("🟡 7/10 · 2 трека, 44 мин · darkwave", c)
         self.assertIn("1. Big Fire 3:21 ★", c)
         self.assertIn("2. Favourite 1:02</blockquote>", c)
         self.assertIn("<blockquote expandable>", c)
