@@ -20,13 +20,15 @@ def check(name, fn):
 
 
 def telegram():
-    tok = os.environ["TELEGRAM_BOT_TOKEN"]
+    tok = os.environ["TELEGRAM_BOT_TOKEN"].strip()
     me = http.get_json(f"https://api.telegram.org/bot{tok}/getMe")["result"]
     return "@" + me["username"]
 
 
 def channel():
-    tok, ch = os.environ["TELEGRAM_BOT_TOKEN"], os.environ["TELEGRAM_CHANNEL"]
+    tok, raw = os.environ["TELEGRAM_BOT_TOKEN"].strip(), os.environ["TELEGRAM_CHANNEL"]
+    ch = raw.strip()
+    print(f"     channel value: {ch!r} (raw length {len(raw)})")
     bot_id = tok.split(":")[0]
     m = http.get_json(f"https://api.telegram.org/bot{tok}/getChatMember?chat_id={urllib.parse.quote(ch)}&user_id={bot_id}")["result"]
     if m["status"] != "administrator" or not m.get("can_post_messages"):
@@ -35,7 +37,7 @@ def channel():
 
 
 def private_chat():
-    tok = os.environ["TELEGRAM_BOT_TOKEN"]
+    tok = os.environ["TELEGRAM_BOT_TOKEN"].strip()
     ups = http.get_json(f"https://api.telegram.org/bot{tok}/getUpdates")["result"]
     n = len({u["message"]["chat"]["id"] for u in ups if u.get("message", {}).get("chat", {}).get("type") == "private"})
     if n != 1:
@@ -47,12 +49,12 @@ def gemini():
     from .gemini import MODEL
     body = {"contents": [{"parts": [{"text": "Ответь одним словом: привет"}]}]}
     d = http.get_json(f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent", method="POST",
-                      json_body=body, headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]}, retries=0)
+                      json_body=body, headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"].strip()}, retries=0)
     return f"{MODEL} answered: {d['candidates'][0]['content']['parts'][0]['text'].strip()[:40]}"
 
 
 def youtube():
-    d = http.get_json("https://www.googleapis.com/youtube/v3/channels?part=statistics&forHandle=@theneedledrop&key=" + os.environ["YOUTUBE_API_KEY"])
+    d = http.get_json("https://www.googleapis.com/youtube/v3/channels?part=statistics&forHandle=@theneedledrop&key=" + os.environ["YOUTUBE_API_KEY"].strip())
     return f"TND channel videos: {d['items'][0]['statistics']['videoCount']}"
 
 

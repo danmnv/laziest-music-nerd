@@ -17,7 +17,7 @@ SCORE = re.compile(r"(?<![\d.])(10|[0-9])\s*/\s*10\b")
 
 
 def yt(path, **params):
-    params["key"] = os.environ["YOUTUBE_API_KEY"]
+    params["key"] = os.environ["YOUTUBE_API_KEY"].strip()
     try:
         return http.get_json(f"{API}/{path}?{urllib.parse.urlencode(params)}")
     except http.HttpError as e:

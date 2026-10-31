@@ -8,7 +8,7 @@ from . import http
 
 class Telegram:
     def __init__(self, token=None):
-        self.token = token or os.environ["TELEGRAM_BOT_TOKEN"]
+        self.token = token or os.environ["TELEGRAM_BOT_TOKEN"].strip()
 
     def call(self, method, **params):
         payload = {k: v for k, v in params.items() if v is not None}

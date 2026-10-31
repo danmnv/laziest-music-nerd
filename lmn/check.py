@@ -53,7 +53,7 @@ def owner_chat(tg):
 def worker():
     f = DATA / "worker_url.txt"
     url = f.read_text().strip() if f.exists() else None
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
     if not (url and token):
         return None, None
     # same derivation as the deploy workflow, so no extra secret is needed
@@ -99,7 +99,7 @@ def main():
         return
 
     tg = Telegram() if MODE == "run" else None
-    channel = os.environ.get("TELEGRAM_CHANNEL")
+    channel = (os.environ.get("TELEGRAM_CHANNEL") or "").strip()
     new = [p for p in posts if p["id"] not in known]
     if MODE == "dry" and os.environ.get("DRY_LIMIT"):
         new = new[-int(os.environ["DRY_LIMIT"]):]

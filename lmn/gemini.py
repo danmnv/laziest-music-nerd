@@ -5,7 +5,8 @@ import time
 
 from . import http
 
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+# gemini-2.5-flash is closed to new API keys (checked 2026-10-31: HTTP 404 "no longer available to new users").
+MODEL = os.environ.get("GEMINI_MODEL") or "gemini-3.8-flash"
 MOODS = ["для тренировки", "для настроения", "для работы за столом", "для тусовки"]
 
 PROMPT = """Ты помогаешь вести русскоязычный Telegram-канал о музыкальных обзорах Anthony Fantano (The Needle Drop).
@@ -25,7 +26,7 @@ PROMPT = """Ты помогаешь вести русскоязычный Telegr
 
 
 def summarize(title, text, api_key=None):
-    api_key = api_key or os.environ.get("GEMINI_API_KEY")
+    api_key = (api_key or os.environ.get("GEMINI_API_KEY") or "").strip()
     if not api_key or not text:
         return None
     body = {
