@@ -15,7 +15,7 @@ def ts(s):
 
 site = {}
 for page in (1, 2):
-    for p in tnd.fetch_posts(limit=50, page=page)["posts"]:
+    for p in tnd.fetch_posts(limit=50, page=page, with_text=True)["posts"]:
         r = tnd.parse_post(p)
         if r.get("video_id"):
             site[r["video_id"]] = r
@@ -43,15 +43,15 @@ for it in vids:
         lags.append(lag)
     elif is_review:
         missing.append(sn["title"])
-    if is_review and shown < 3:
-        shown += 1
-        print("  ---- description ----\n  " + sn.get("description", "")[:1500].replace("\n", "\n  ") + "\n  ----")
+    tail = [l.strip() for l in sn.get("description", "").splitlines() if l.strip()][-5:]
+    if "/10" in " ".join(tail) or is_review:
+        print("      tail: " + " | ".join(tail)[:300])
 lags.sort()
 if lags:
     print(f"lag hours: n={len(lags)} min={lags[0]:.1f} median={lags[len(lags)//2]:.1f} max={lags[-1]:.1f}")
 print(f"review videos not on site: {len(missing)}: {missing}")
 
-hm = next((it for it in vids if "HMLTD" in it["snippet"]["title"]), None)
+hm = None
 if hm:
     vid = hm["contentDetails"]["videoId"]
     body = {"contents": [{"parts": [{"fileData": {"fileUri": f"https://www.youtube.com/watch?v={vid}"}},
