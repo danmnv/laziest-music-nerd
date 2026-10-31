@@ -89,6 +89,15 @@ class GeminiFallbackTest(unittest.TestCase):
             gemini.summarize("t", "text", api_key="k")
         self.assertEqual(self.calls, gemini.MODELS[:2] + [gemini.MODELS[1]])  # the used-up model is skipped next time
 
+    def test_object_wrapped_in_a_list_is_unwrapped(self):
+        def answer(text):
+            return lambda m: {"candidates": [{"content": {"parts": [{"text": text}]}}]}
+        with mock.patch.object(http, "get_json", self.fake_get(answer(json.dumps([{"brief": "Бриф", "moods": ["для тусовки"]}])))):
+            self.assertEqual(gemini.summarize("t", "text", api_key="k")["brief"], "Бриф")
+        for bad in ("[]", '"brief"', "[1, 2]"):
+            with mock.patch.object(http, "get_json", self.fake_get(answer(bad))):
+                self.assertIsNone(gemini.summarize("t", "text", api_key="k"))
+
     def test_overload_retries_once_per_model_and_never_sleeps_after_the_last_try(self):
         with mock.patch.object(http, "get_json", self.fake_get(lambda m: http.HttpError(503, "{}", "url"))):
             model, out = gemini.generate({}, "k", sleep=self.sleeps.append)
@@ -130,6 +139,32 @@ class EnrichSourceFailureTest(unittest.TestCase):
         self.assertEqual(r["links"]["songlink"], "https://album.link/https://www.deezer.com/album/1")
         self.assertEqual(r["covers"][0], "https://c/x.jpg")
         self.assertEqual(r["ai"], {})
+
+    def test_self_titled_is_looked_up_by_the_artist_name(self):
+        rev = tnd.parse_post(post("Pain of Truth - Self-Titled", ["Album Reviews", "7/10"]))
+        with mock.patch.object(enrich_mod.mb, "find_release_group", return_value=None) as mbf, \
+                mock.patch.object(enrich_mod.links, "deezer_album", return_value=None) as dzf:
+            r = enrich_mod.enrich(rev, "text", [], use_ai=False)
+        self.assertEqual(mbf.call_args.args, ("Pain of Truth", "Pain of Truth"))
+        self.assertEqual(dzf.call_args.args, ("Pain of Truth", "Pain of Truth"))
+        self.assertEqual(r["album"], "Self-Titled")  # the card keeps Fantano's wording
+
+    def test_bandcamp_album_page_fills_the_tracklist_when_databases_miss(self):
+        import html as htmlmod
+        tralbum = htmlmod.escape(json.dumps({"current": {"title": "FANGS"}, "trackinfo": [
+            {"title": "What The Hell", "duration": 203.4}, {"title": "Umami", "duration": 264.0}]}), quote=True)
+        page = f'<div id="pagedata"></div><script data-tralbum="{tralbum}" data-band="{{}}"></script>'
+        rev = dict(tnd.parse_post(post("HMLTD - FANGS", ["Album Reviews", "5/10"])),
+                   listen_bandcamp="https://hmltd.bandcamp.com/album/fangs")
+        with mock.patch.object(enrich_mod.mb, "find_release_group", return_value=None), \
+                mock.patch.object(enrich_mod.links, "deezer_album", return_value=None), \
+                mock.patch.object(enrich_mod.links.http, "request", return_value=page) as req:
+            r = enrich_mod.enrich(rev, "text", [], use_ai=False)
+        self.assertEqual(req.call_args.args[0], "https://hmltd.bandcamp.com/album/fangs")
+        self.assertEqual(r["tracks"], [{"title": "What The Hell", "sec": 203}, {"title": "Umami", "sec": 264}])
+        self.assertEqual(r["duration_min"], 8)
+        self.assertIsNone(enrich_mod.links.bandcamp_album("https://bandcamp.com/search?q=x"))
+        self.assertIsNone(enrich_mod.links.bandcamp_album("https://hmltd.bandcamp.com/track/umami"))
 
 
 if __name__ == "__main__":

@@ -84,6 +84,10 @@ def summarize(title, text=None, api_key=None, video_id=None, notes=""):
         return None
     try:
         out = json.loads(raw["candidates"][0]["content"]["parts"][0]["text"])
+        if isinstance(out, list):  # gemini-3.5-flash sometimes wraps the object in a list (seen 2026-10-31 on HMLTD)
+            out = next((x for x in out if isinstance(x, dict)), None)
+        if not isinstance(out, dict):
+            raise ValueError(f"expected a JSON object, got {type(out).__name__}")
         out["moods"] = [m for m in out.get("moods", []) if m in MOODS][:2]
         note = str(out.get("score_note") or "").strip().lower()
         out["score_note"] = note if NOTE.match(note) else None

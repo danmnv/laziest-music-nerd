@@ -1,5 +1,8 @@
 """Listening links. Every lookup is optional: on failure the button is just not shown."""
+import html
+import json
 import os
+import re
 import urllib.parse
 
 from . import http
@@ -42,6 +45,28 @@ def songlink(deezer_url):
         except http.HttpError as e:
             print(f"song.link API: HTTP {e.status}")
     return "https://album.link/" + deezer_url
+
+
+def is_bandcamp_album(url):
+    host = re.sub(r"^https?://", "", url or "").split("/", 1)[0].lower()
+    return (host == "bandcamp.com" or host.endswith(".bandcamp.com")) and "/album/" in url
+
+
+def bandcamp_album(url):
+    """Tracklist and length from the artist's own Bandcamp album page (its data-tralbum JSON).
+    Album pages open fine from GitHub Actions (checked 2026-10-31 on HMLTD - FANGS, which MusicBrainz,
+    Deezer and Apple Music didn't have); only bandcamp.com/search is behind a challenge."""
+    if not is_bandcamp_album(url):
+        return None
+    m = re.search(r'data-tralbum="([^"]+)"', http.request(url))
+    if not m:
+        return None
+    tracks = [{"title": t.get("title"), "sec": round(t["duration"]) if t.get("duration") else None}
+              for t in json.loads(html.unescape(m.group(1))).get("trackinfo") or [] if t.get("title")]
+    if not tracks:
+        return None
+    total = sum(t["sec"] or 0 for t in tracks)
+    return {"tracks": tracks, "duration_min": round(total / 60) if total and all(t["sec"] for t in tracks) else None}
 
 
 def bandcamp_search(artist, album):

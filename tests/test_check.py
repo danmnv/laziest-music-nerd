@@ -33,6 +33,10 @@ class FakeTelegram:
 
     def edit_message(self, chat_id, message_id, text, buttons=None):
         self.edited.append(message_id)
+        self.texts = getattr(self, "texts", []) + [(message_id, text)]
+
+    def edit_caption(self, chat_id, message_id, caption, buttons=None):
+        self.captions = getattr(self, "captions", []) + [(message_id, caption)]
 
     def pin(self, chat_id, message_id):
         self.pinned.append(message_id)
