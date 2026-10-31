@@ -74,7 +74,7 @@ def release_page(r):
         hist = "".join(f'<li><a href="{e(p["url"])}">{e(p["album"])}</a> — {label(p.get("score"), p.get("not_good"), p.get("classic"), "?")} <span class="muted">{e(p["published"][:4])}</span></li>' for p in r["previous"])
         rows.append(("История оценок", f"<ul>{hist}</ul>"))
     btns = "".join(f'<a class="btn" href="{e(u)}">{n}</a>' for n, u in [
-        ("Bandcamp", links.get("bandcamp")), ("YouTube Music", links.get("ytmusic")),
+        ("Bandcamp", links.get("bandcamp")), ("YouTube (альбом)", links.get("youtube_album")), ("YouTube Music", links.get("ytmusic")),
         ("Все платформы", links.get("songlink")), ("Текст обзора на TND", r.get("tnd_url") or (r["url"] if "theneedledrop.com" in r["url"] else None)),
         ("Видео", f"https://youtu.be/{r['video_id']}" if r.get("video_id") else None)] if u)
     meta = " · ".join(x for x in [", ".join(r.get("genres", [])[:5]), card.TYPE_RU.get(r.get("type")),

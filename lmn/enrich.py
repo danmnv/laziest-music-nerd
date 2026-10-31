@@ -1,5 +1,5 @@
 """Turn a parsed TND post into a full card record. Each source is optional: one failing source only empties its own fields."""
-from . import gemini, links, musicbrainz as mb
+from . import gemini, links, listen, musicbrainz as mb
 
 
 def _try(name, fn, default=None):
@@ -34,6 +34,11 @@ def enrich(rev, plaintext, archive, use_ai=True):
     rg = _try("musicbrainz search", lambda: mb.find_release_group(artist, album)) if album else None
     r["artist"] = {}
     r["links"] = {"bandcamp": r["listen_bandcamp"]} if r.get("listen_bandcamp") else {}
+    found = _try("listen link", lambda: listen.resolve(r.get("listen_url"), album), {}) if r.get("listen_url") else {}
+    if found.get("youtube_album"):  # the album on YouTube, free to hear, from Fantano's own link
+        r["links"]["youtube_album"] = found["youtube_album"]
+    if found.get("release_page"):  # the artist's or label's own page with every service beats album.link
+        r["links"]["songlink"] = found["release_page"]
     if rg:
         r["mb_release_group"] = rg["rg_id"]
         det = _try("musicbrainz release", lambda: mb.release_details(rg["releases"]), {})
@@ -42,7 +47,7 @@ def enrich(rev, plaintext, archive, use_ai=True):
         if det.get("bandcamp"):
             r["links"].setdefault("bandcamp", det["bandcamp"])
         if det.get("smartlink"):
-            r["links"]["songlink"] = det["smartlink"]  # the artist's own all-platforms page, if MusicBrainz knows it
+            r["links"].setdefault("songlink", det["smartlink"])  # the artist's own all-platforms page, if MusicBrainz knows it
         info = _try("musicbrainz artist", lambda: mb.artist_info(rg["artist_id"])) or {}
         r["artist"] = {"mbid": rg["artist_id"], **{k: info.get(k) for k in ("type", "country", "area", "begin", "end", "aliases")}}
         if not r.get("type"):

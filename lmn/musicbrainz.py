@@ -109,7 +109,7 @@ def release_details(release_ids):
 # Link-aggregator pages ("smart links") that labels and artists make for a release: one page with every service.
 SMARTLINK_HOSTS = ("lnk.to", "ffm.to", "fanlink.tv", "fanlink.to", "smarturl.it", "orcd.co", "found.ee", "hypeddit.com",
                    "ditto.fm", "linkfire.com", "song.link", "album.link", "odesli.co", "distrokid.com/hyperfollow",
-                   "push.fm", "show.co", "bfan.link", "sml.to")
+                   "push.fm", "show.co", "bfan.link", "sml.to", "nfan.link", "sng.to", "x-l.co", "vyd.co", "songwhip.com")
 
 
 def is_smartlink(url):
