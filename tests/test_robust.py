@@ -89,6 +89,15 @@ class GeminiFallbackTest(unittest.TestCase):
             gemini.summarize("t", "text", api_key="k")
         self.assertEqual(self.calls, gemini.MODELS[:2] + [gemini.MODELS[1]])  # the used-up model is skipped next time
 
+    def test_object_wrapped_in_a_list_is_unwrapped(self):
+        def answer(text):
+            return lambda m: {"candidates": [{"content": {"parts": [{"text": text}]}}]}
+        with mock.patch.object(http, "get_json", self.fake_get(answer(json.dumps([{"brief": "Бриф", "moods": ["для тусовки"]}])))):
+            self.assertEqual(gemini.summarize("t", "text", api_key="k")["brief"], "Бриф")
+        for bad in ("[]", '"brief"', "[1, 2]"):
+            with mock.patch.object(http, "get_json", self.fake_get(answer(bad))):
+                self.assertIsNone(gemini.summarize("t", "text", api_key="k"))
+
     def test_overload_retries_once_per_model_and_never_sleeps_after_the_last_try(self):
         with mock.patch.object(http, "get_json", self.fake_get(lambda m: http.HttpError(503, "{}", "url"))):
             model, out = gemini.generate({}, "k", sleep=self.sleeps.append)
