@@ -86,6 +86,29 @@ class HourlyRunTest(unittest.TestCase):
         self.assertEqual(len(self.cards()), 1)
         self.assertIn("Album 10", self.cards()[0])
 
+    def test_followers_are_told_once_per_card_and_again_if_the_worker_was_down(self):
+        self.seed()
+        (self.data / "worker_url.txt").write_text("https://w.example\n")
+        told = []
+
+        def fake_request(url, **kw):
+            if url.endswith("/api/new-reviews"):
+                told.append(kw["json_body"]["reviews"])
+                if len(told) == 1:
+                    raise check.http.HttpError(503, "down", url)
+                return '{"ok": true, "sent": 1}'
+            return '{"ok": true}'
+        with mock.patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "t"}), mock.patch.object(check.http, "request", fake_request):
+            self.posts.append(tnd_post(10, days_ago=0))
+            self.run_once()  # the card goes out, the Worker is down
+            self.run_once()  # told now
+            self.run_once()  # nothing left to tell
+        self.assertEqual(len(told), 2)
+        self.assertEqual([r["artist_name"] for r in told[1]], ["Artist 10"])
+        self.assertEqual(told[1][0]["msg"], told[0][0]["msg"])
+        self.assertEqual(told[1][0]["score"], "🟡 7/10")
+        self.assertTrue(json.loads((self.data / "reviews.json").read_text())[-1]["followers_told"])
+
     def test_enrich_crash_still_posts_a_bare_card(self):
         self.seed()
         self.posts.append(tnd_post(10, days_ago=0))

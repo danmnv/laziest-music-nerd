@@ -1,8 +1,9 @@
 // Laziest Music Nerd — Cloudflare Worker.
 // Handles Telegram button presses and /start, site login (Telegram Login Widget), personal marks,
-// and a daily cron for "later" reminders. Personal marks are visible only to their owner.
+// following artists, and a daily cron for "later" reminders. Personal marks are visible only to their owner.
 
 import { isDigestSunday } from "./digest.mjs";
+import { nameKey, followMatches } from "./follow.mjs";
 
 const STATUS_LABEL = { later: "• отложено", done: "✓ прослушано", nope: "✗ не понравилось" };
 const STATUS_ICON = { later: " •", done: " ✓", nope: " ✗" };
@@ -10,7 +11,8 @@ const LIST_HEAD = "<b>Свежие обзоры Фантано за 60 дней<
 const MESSAGE_LIMIT = 4096;
 const MOODS = ["для тренировки", "для настроения", "для работы за столом", "для тусовки"];
 const RANDOM_BUTTON = "🎲 Случайный из архива";
-const MENU = { keyboard: [[{ text: RANDOM_BUTTON }]], resize_keyboard: true, is_persistent: true };
+const FOLLOWS_BUTTON = "🔔 Мои артисты";
+const MENU = { keyboard: [[{ text: RANDOM_BUTTON }, { text: FOLLOWS_BUTTON }]], resize_keyboard: true, is_persistent: true };
 
 export default {
   async fetch(req, env, ctx) {
@@ -45,6 +47,14 @@ export default {
         const { results } = await env.DB.prepare("SELECT user_id FROM users WHERE dm_pinned_id IS NOT NULL").all();
         ctx.waitUntil((async () => { for (const u of results) await refreshDmList(env, u.user_id, false); })());
         return json({ ok: true, users: results.length });
+      }
+      if (url.pathname === "/api/new-reviews" && req.method === "POST") {
+        // Called by GitHub Actions right after cards are posted: remember each card's artist, message the followers.
+        if (req.headers.get("Authorization") !== `Bearer ${env.ACTIONS_SECRET}`) return new Response("forbidden", { status: 403 });
+        const body = await req.json().catch(() => ({}));
+        let sent = 0;
+        for (const r of Array.isArray(body.reviews) ? body.reviews : []) sent += await tellFollowers(env, r);
+        return json({ ok: true, sent });
       }
       if (url.pathname === "/api/owner/id") {
         // For GitHub Actions' test mode and key check: once the webhook is set, Telegram's getUpdates is closed to them.
@@ -88,32 +98,41 @@ async function onUpdate(u, env) {
   if (!m || m.chat.type !== "private") return;
   const uid = m.from.id;
   const text = (m.text || "").trim();
+  if (text.startsWith("/start follow_")) {
+    // pressed "🔔 Следить" in the channel before ever starting the bot
+    await welcome(env, uid);
+    const { text: answer } = await follow(env, uid, text.slice("/start follow_".length), false);
+    return tg(env, "sendMessage", { chat_id: uid, text: answer });
+  }
+  if (text === "/follows" || text === FOLLOWS_BUTTON) return sendFollows(env, uid);
   if (text.startsWith("/start mood_")) {
     await env.DB.prepare("INSERT OR IGNORE INTO users (user_id, started_at) VALUES (?, ?)").bind(uid, now()).run();
     return askMood(env, uid, text.slice("/start mood_".length));
   }
   if (text === "/random" || text === RANDOM_BUTTON) return sendRandom(env, uid);
-  if (text.startsWith("/start")) {
-    await env.DB.prepare("INSERT OR IGNORE INTO users (user_id, started_at) VALUES (?, ?)").bind(uid, now()).run();
-    await tg(env, "sendMessage", {
-      chat_id: uid,
-      parse_mode: "HTML",
-      text:
-        "Привет! Я присылаю карточки новых обзоров Anthony Fantano в канал " + env.CHANNEL + ".\n\n" +
-        "Кнопки «Отложить», «Прослушано», «Не понравилось» под карточками видишь только ты. " +
-        "Ниже — закреплённый список свежих обзоров с твоими отметками.\n\n" +
-        "Кнопка «" + RANDOM_BUTTON + "» внизу выдаёт альбом с оценкой от 8, который ты ещё не отмечал(а).\n\n" +
-        "Неофициальный фан-проект. Не связан с Anthony Fantano и The Needle Drop.",
-      reply_markup: MENU,
-    });
-    await refreshDmList(env, uid, true);
-    return;
-  }
+  if (text.startsWith("/start")) return welcome(env, uid);
   if (text === "/channel_marks_on" || text === "/channel_marks_off") {
     if (!isOwner(env, uid)) return;
     await setSetting(env, "show_in_channel", text.endsWith("on") ? "1" : "0");
     await tg(env, "sendMessage", { chat_id: uid, text: text.endsWith("on") ? "Твои отметки снова видны в канале (обновятся при следующем обзоре)." : "Отметки теперь только в личке." });
   }
+}
+
+async function welcome(env, uid) {
+  await env.DB.prepare("INSERT OR IGNORE INTO users (user_id, started_at) VALUES (?, ?)").bind(uid, now()).run();
+  await tg(env, "sendMessage", {
+    chat_id: uid,
+    parse_mode: "HTML",
+    text:
+      "Привет! Я присылаю карточки новых обзоров Anthony Fantano в канал " + env.CHANNEL + ".\n\n" +
+      "Кнопки «Отложить», «Прослушано», «Не понравилось» под карточками видишь только ты. " +
+      "Ниже — закреплённый список свежих обзоров с твоими отметками.\n\n" +
+      "Кнопка «" + RANDOM_BUTTON + "» внизу выдаёт альбом с оценкой от 8, который ты ещё не отмечал(а).\n\n" +
+      "«🔔 Следить за артистом» под карточкой: о новом обзоре этого артиста напишу сюда. Список — кнопка «" + FOLLOWS_BUTTON + "».\n\n" +
+      "Неофициальный фан-проект. Не связан с Anthony Fantano и The Needle Drop.",
+    reply_markup: MENU,
+  });
+  await refreshDmList(env, uid, true);
 }
 
 async function onCallback(q, env) {
@@ -129,6 +148,21 @@ async function onCallback(q, env) {
     if (isOwner(env, uid)) await refreshOwnerLists(env);
     else await refreshDmList(env, uid, false);
     if (next === "done") await maybeSuggestSimilar(env, uid, rid);
+  } else if (parts[0] === "f") {
+    const user = await env.DB.prepare("SELECT 1 FROM users WHERE user_id=?").bind(uid).first();
+    // The bot can't write first to someone who never started it: open the bot, the follow is made there.
+    if (!user) return tg(env, "answerCallbackQuery", { callback_query_id: q.id, url: `https://t.me/${env.BOT_USERNAME}?start=follow_${parts[1]}` });
+    const res = await follow(env, uid, parts[1], true);
+    answer = res.text;
+    if (res.first) {
+      // the first follow: say where the list is, and give people who started the bot earlier the new menu button
+      await tg(env, "sendMessage", { chat_id: uid, text: `${res.text}\nСписок и отписка — кнопка «${FOLLOWS_BUTTON}» внизу.`, reply_markup: MENU });
+    }
+  } else if (parts[0] === "uf") {
+    const row = await env.DB.prepare("SELECT artist_name FROM follows WHERE id=? AND user_id=?").bind(Number(parts[1]), uid).first();
+    if (row) await env.DB.prepare("DELETE FROM follows WHERE id=? AND user_id=?").bind(Number(parts[1]), uid).run();
+    answer = row ? `Больше не следишь за ${short(row.artist_name)}` : "";
+    if (q.message) await sendFollows(env, uid, q.message.message_id);
   } else if (parts[0] === "v" && parts[2] === "o") {
     // "другое": continue in the private chat, where the bot can show all four options
     return tg(env, "answerCallbackQuery", { callback_query_id: q.id, url: `https://t.me/${env.BOT_USERNAME}?start=mood_${parts[1]}` });
@@ -304,6 +338,76 @@ async function askMood(env, uid, rid) {
     text: `Когда лучше слушать <b>${esc(r.artist_name)} — ${esc(r.album)}</b>?`,
     reply_markup: { inline_keyboard: MOODS.map((m, i) => [{ text: m, callback_data: `vo:${rid}:${i}` }]) },
   });
+}
+
+// ---------- following artists ----------
+
+function short(name) {
+  const s = String(name || "");
+  return s.length > 80 ? s.slice(0, 79) + "…" : s;
+}
+
+async function reviewArtist(env, rid) {
+  // Cards just posted are known from GitHub Actions (/api/new-reviews) before reviews.json is updated.
+  const row = await env.DB.prepare("SELECT artist_name, mbid FROM review_artists WHERE review_id=?").bind(rid).first();
+  if (row) return row;
+  const r = (await reviews(env)).find((x) => x.id === rid);
+  return r && r.artist_name ? { artist_name: r.artist_name, mbid: (r.artist && r.artist.mbid) || null } : null;
+}
+
+// Returns {text for the person, first: whether this is their first follow}.
+// toggle: a second press on the card's button stops following.
+async function follow(env, uid, rid, toggle) {
+  const a = await reviewArtist(env, rid);
+  const key = a && nameKey(a.artist_name);
+  if (!key) return { text: "Не нашёл артиста этого обзора." };
+  const cur = await env.DB.prepare("SELECT id FROM follows WHERE user_id=? AND name_key=?").bind(uid, key).first();
+  if (cur && toggle) {
+    await env.DB.prepare("DELETE FROM follows WHERE id=?").bind(cur.id).run();
+    return { text: `Больше не следишь за ${short(a.artist_name)}.` };
+  }
+  let first = false;
+  if (!cur) {
+    first = !(await env.DB.prepare("SELECT 1 FROM follows WHERE user_id=?").bind(uid).first());
+    await env.DB.prepare("INSERT INTO follows (user_id, name_key, mbid, artist_name, created_at) VALUES (?,?,?,?,?)")
+      .bind(uid, key, a.mbid || null, a.artist_name, now()).run();
+  }
+  return { text: `🔔 Ты следишь за ${short(a.artist_name)}. О новом обзоре напишу в личку.`, first };
+}
+
+async function sendFollows(env, uid, editId) {
+  const { results } = await env.DB.prepare("SELECT id, artist_name FROM follows WHERE user_id=? ORDER BY artist_name COLLATE NOCASE").bind(uid).all();
+  const text = results.length
+    ? "<b>Ты следишь за:</b>\n" + results.map((f) => "• " + esc(f.artist_name)).join("\n") + "\n\nНажми на артиста ниже, чтобы перестать следить."
+    : "Ты пока ни за кем не следишь. Нажми «🔔 Следить за артистом» под карточкой в канале.";
+  const reply_markup = { inline_keyboard: results.slice(0, 90).map((f) => [{ text: `✗ ${short(f.artist_name)}`, callback_data: `uf:${f.id}` }]) };
+  if (editId) return tg(env, "editMessageText", { chat_id: uid, message_id: editId, text, parse_mode: "HTML", reply_markup });
+  return tg(env, "sendMessage", { chat_id: uid, text, parse_mode: "HTML", reply_markup });
+}
+
+// r: {id, artist_name, mbid, album, score, msg} from GitHub Actions. Returns how many people were messaged.
+// Each person hears about a review once, however often Actions retries.
+async function tellFollowers(env, r) {
+  if (!r || !r.id || !r.artist_name) return 0;
+  const rid = String(r.id);
+  await env.DB.prepare("INSERT INTO review_artists (review_id, artist_name, mbid) VALUES (?,?,?) " +
+    "ON CONFLICT(review_id) DO UPDATE SET artist_name=excluded.artist_name, mbid=excluded.mbid").bind(rid, r.artist_name, r.mbid || null).run();
+  const { results } = await env.DB.prepare("SELECT user_id, name_key, mbid FROM follows WHERE name_key=? OR mbid=?")
+    .bind(nameKey(r.artist_name), r.mbid || "").all();
+  const post = r.msg ? `https://t.me/${String(env.CHANNEL).replace(/^@/, "")}/${r.msg}` : null;
+  let sent = 0;
+  for (const f of results) {
+    if (!followMatches(f, r)) continue;
+    const ins = await env.DB.prepare("INSERT OR IGNORE INTO follow_sent (user_id, review_id, sent_at) VALUES (?,?,?)").bind(f.user_id, rid, now()).run();
+    if (!ins.meta || !ins.meta.changes) continue;
+    const d = await tg(env, "sendMessage", {
+      chat_id: f.user_id, parse_mode: "HTML",
+      text: `🔔 Новый обзор: <b>${esc(r.artist_name)} — ${esc(r.album)}</b>${r.score ? ", " + esc(r.score) : ""}`,
+      ...(post ? { reply_markup: { inline_keyboard: [[{ text: "Карточка в канале", url: post }]] } } : {}),
+    });
+    if (d.ok) sent++;
+  }
+  return sent;
 }
 
 // ---------- digest (Sunday cron, every second Sunday, see digest.mjs) ----------
