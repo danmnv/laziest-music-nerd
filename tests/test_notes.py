@@ -87,6 +87,16 @@ class Build(unittest.TestCase):
                                "t": [["Everything in Its Right Place", 251], ["Kid A", 284]]})
         with mock.patch.object(notes.http, "get_json", return_value={"data": []}):
             self.assertEqual(notes.deezer_album("Radiohead", "Kid A", sleep=lambda s: None), 0)
+        other = {"data": [{"id": 3, "title": "KID A MNESIA", "artist": {"name": "Radiohead"}}]}
+        with mock.patch.object(notes.http, "get_json", return_value=other):  # another record, not an edition of this one
+            self.assertEqual(notes.deezer_album("Radiohead", "Kid A", sleep=lambda s: None), 0)
+        deluxe = {"data": [{"id": 4, "title": "Kid A (Deluxe Edition)", "artist": {"name": "Radiohead"}}]}
+        long_ = {"id": 4, "nb_tracks": 3, "tracks": {"data": [{"title": "One", "duration": 1}]}}
+        rest = {"data": [{"title": "One", "duration": 1}, {"title": "Two", "duration": 2}, {"title": "Three", "duration": 3}]}
+        with mock.patch.object(notes.http, "get_json", side_effect=[deluxe, long_, rest]) as g:
+            out = notes.deezer_album("Radiohead", "Kid A", sleep=lambda s: None)
+        self.assertEqual((out["dz"], len(out["t"])), (4, 3))
+        self.assertEqual(g.call_args_list[2].args[0], "https://api.deezer.com/album/4/tracks?limit=500")
         with mock.patch.object(notes.http, "get_json", return_value={"error": {"code": 4, "message": "Quota limit exceeded"}}):
             self.assertIsNone(notes.deezer_album("Radiohead", "Kid A", sleep=lambda s: None))
 

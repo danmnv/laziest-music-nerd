@@ -65,6 +65,7 @@ def deezer_track(artist, title):
     return 0
 
 
+EDITION = re.compile(r"\b(deluxe|expanded|edition|remaster(ed)?|anniversary|bonus|special)\b", re.I)
 APPLE_SLEEP = 3.1  # the iTunes Search API allows about 20 requests a minute
 
 
@@ -97,16 +98,23 @@ def deezer_album(artist, album, sleep=time.sleep):
         return d
     try:
         d = get("https://api.deezer.com/search/album?q=" + urllib.parse.quote(f'artist:"{artist}" album:"{album}"') + "&limit=10")
-        hit = next((x for x in d.get("data") or [] if norm((x.get("artist") or {}).get("name")) == norm(artist)
-                    and norm(x.get("title")).startswith(norm(album)[:20])), None)
+        mine = [x for x in d.get("data") or [] if norm((x.get("artist") or {}).get("name")) == norm(artist)]
+        # the same title (as the bot's links.deezer_album asks); else only an edition of it ("Kid A (Deluxe)"), never
+        # another record that merely starts the same ("Ye" -> "Yeezus", "Kid A" -> "Kid A Mnesia")
+        hit = next((x for x in mine if norm(x.get("title")) == norm(album)), None) or \
+            next((x for x in mine if norm(x.get("title")).startswith(norm(album)) and EDITION.search(x.get("title") or "")), None)
         if not hit:
             return 0
         sleep(SLEEP)
         full = get(f"https://api.deezer.com/album/{int(hit['id'])}")
+        data = (full.get("tracks") or {}).get("data") or []
+        if full.get("nb_tracks") and len(data) < full["nb_tracks"]:  # a long album's embedded list may be cut
+            sleep(SLEEP)
+            data = get(f"https://api.deezer.com/album/{int(hit['id'])}/tracks?limit=500").get("data") or data
     except Exception as e:
         print(f"  ! deezer album {artist} - {album}: {e}", file=sys.stderr)
         return None
-    tracks = [[t.get("title") or "", int(t.get("duration") or 0)] for t in (full.get("tracks") or {}).get("data") or []]
+    tracks = [[t.get("title") or "", int(t.get("duration") or 0)] for t in data]
     out = {"dz": int(hit["id"]), "cv": full.get("cover_xl") or hit.get("cover_xl"), "y": (full.get("release_date") or "")[:4],
            "min": round(int(full.get("duration") or 0) / 60) or None, "t": tracks}
     return {k: v for k, v in out.items() if v}
