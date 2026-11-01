@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
     inputs:
       limit:
-        description: "Сколько обзоров за запуск (весь архив — 3400; запуск сам остановится через 5,5 часа и сохранит сделанное)"
-        default: "300"
+        description: "Сколько обзоров за запуск (больше 150 Gemini за раз не переведёт, остальные переведутся в следующий запуск)"
+        default: "150"
       compare:
         description: "Только сравнить три способа на 10 свежих обзорах без брифа (ничего не сохраняет)"
         type: boolean
@@ -40,7 +40,7 @@ jobs:
           # not the first models: new reviews' briefs keep their quota
           GEMINI_MODEL: gemini-3.5-flash,gemini-3.5-flash-lite
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
-          BRIEFS_LIMIT: ${{ inputs.limit || '300' }}
+          BRIEFS_LIMIT: ${{ inputs.limit || '150' }}
           BRIEFS_MINUTES: "330"   # GitHub stops a job after 6 hours; this leaves time to save
           BRIEFS_COMPARE: ${{ inputs.compare && '1' || '' }}
       - name: Сохранить

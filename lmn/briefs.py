@@ -8,7 +8,7 @@ calques (tried 2026-11-01 on Groq's openai/gpt-oss-120b: «светло‑при
 Russian by them (no "tr") are written again. BRIEFS_LANG=ru: the model writes in Russian itself.
 
 Writes data/briefs.json: {review id: {"brief", "about", "who", "moods", "m": model, "tr": translating model, "en": the
-English}}; an entry with "en" and no "brief" waits for its translation. Skipped: guest reviews (not Fantano's
+English}}; an entry with "en" and no "tr" waits for its translation. Skipped: guest reviews (not Fantano's
 opinion), single-song reviews, reviews whose card already has a Gemini brief; posts without a text are kept as
 {"skip": ...}, reviews no model answered for as {"fail": n} (left alone after FAIL_MAX runs).
 
@@ -74,8 +74,11 @@ def entry(out, lang="ru"):
     return {k: v for k, v in e.items() if v}
 
 
+TR_FAIL_MAX = 2  # runs in which Gemini gave no translation for this entry: then it is left alone
+
+
 def untranslated(data):
-    return [k for k, v in data.items() if v.get("en") and not v.get("brief")]
+    return [k for k, v in data.items() if v.get("en") and not v.get("tr") and v.get("trf", 0) < TR_FAIL_MAX]
 
 
 def translate(data, budget, final=False):
@@ -91,7 +94,10 @@ def translate(data, budget, final=False):
             return 0
         for k, t in zip(chunk, out):
             if t.get("brief"):
-                data[k] = {**data[k], **{f: t[f] for f in ("brief", "about", "who", "tr") if t.get(f)}}
+                old = {f: v for f, v in data[k].items() if f not in ("brief", "about", "who", "trf")}  # an old Russian one goes now
+                data[k] = {**old, **{f: t[f] for f in ("brief", "about", "who", "tr") if t.get(f)}}
+            else:  # an empty one: not again and again, in every run's first batch
+                data[k] = {**data[k], "trf": data[k].get("trf", 0) + 1}
     return budget
 
 
@@ -138,7 +144,7 @@ def run():
         return compare(archive, reviews)
     path = DATA / "briefs.json"
     data = json.loads(path.read_text()) if path.exists() else {}
-    limit = int(os.environ.get("BRIEFS_LIMIT", "300"))
+    limit = int(os.environ.get("BRIEFS_LIMIT") or "150")  # 150 = what 15 translation requests of 10 take
     lang = os.environ.get("BRIEFS_LANG") or "en"
     budget = int(os.environ.get("BRIEFS_TRANSLATE_MAX") or "15")
     todo = targets(archive, reviews, {k for k, v in data.items() if finished(v, lang)})
@@ -165,7 +171,10 @@ def run():
         title = f"{a['artist_name']} - {a['album']}"
         out = llm.summarize(title, text, lang="en", verdict=verdict(a)) if lang == "en" else llm.summarize(title, text)
         if out and (out.get("brief") or "").strip():
+            old = data.get(a["id"]) or {}
             data[a["id"]] = entry(out, lang)
+            if lang == "en" and old.get("brief"):  # the old Russian one stays on the site until the translation comes
+                data[a["id"]].update({f: old[f] for f in ("brief", "about", "who") if old.get(f)})
             made += 1
             streak = []
             if lang == "en":

@@ -284,9 +284,24 @@ class English(unittest.TestCase):
             old = {"brief": "Калька.", "m": "openai/gpt-oss-120b"}
             (p / "briefs.json").write_text(json.dumps({f"{0:024x}": old, f"{1:024x}": old}))
             answers = iter([None, dict(self.EN)])  # newest first: 1 fails, 0 gets a new one
-            _, _, out = self.run_briefs(p, lambda *a, **kw: next(answers), self.fake_translate)
+            _, _, out = self.run_briefs(p, lambda *a, **kw: next(answers), lambda items: None)
             self.assertEqual(out[f"{1:024x}"], old)
+            self.assertEqual(out[f"{0:024x}"]["brief"], "Калька.")  # on the site until the translation comes
+            self.assertEqual(briefs.untranslated(out), [f"{0:024x}"])
+            s, _, out = self.run_briefs(p, lambda *a, **kw: dict(self.EN), self.fake_translate)
+            self.assertEqual(s.call_count, 1)  # only 1 written again; 0 just translated
             self.assertEqual(out[f"{0:024x}"]["brief"], "Ru Short, 7/10.")
+            self.assertEqual(out[f"{0:024x}"]["about"], "Подробно.")
+
+    def test_an_empty_translation_is_not_tried_forever(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(self.archive(1)))
+            for _ in range(3):
+                _, t, out = self.run_briefs(p, lambda *a, **kw: dict(self.EN), lambda items: [{"brief": "", "tr": "gm"} for _ in items])
+            self.assertEqual(t.call_count, 0)
+            self.assertEqual(out[f"{0:024x}"]["trf"], briefs.TR_FAIL_MAX)
+            self.assertEqual(briefs.untranslated(out), [])
 
     def test_verdict_never_invents_a_score(self):
         self.assertEqual(briefs.verdict({"score": 0}), "Fantano's score: 0/10.")
