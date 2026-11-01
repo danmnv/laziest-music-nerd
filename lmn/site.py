@@ -135,7 +135,7 @@ def notes_rows(n, rid=None):
 def fav_section(n):
     """Fantano's favourite tracks under the page's main part, each opening an official player on a tap: Deezer's
     widget, or Apple Music's embed for a track Deezer doesn't have (both play 30-second previews; embedding them is
-    what they are offered for, unlike handing out the audio). Closed, a player is not loaded at all."""
+    what they are offered for, unlike handing out the audio). Closed, a player isn't loaded (checked in Chromium 153)."""
     fav = (n or {}).get("fav") or []
     if not fav:
         return ""

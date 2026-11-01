@@ -102,15 +102,16 @@ def deezer_cover(artist, album):
     return 0
 
 
-def covers(archive, old, limit=1500):
-    """{review id: cover URL or 0} for every archive review; at most limit lookups per run, the rest next run."""
+def covers(archive, old, limit=1500, deadline=None):
+    """{review id: cover URL or 0} for every archive review; at most limit lookups per run and none after deadline
+    (time.monotonic()), the rest next run."""
     out, n = {}, 0
     for a in sorted(archive, key=lambda x: x.get("published") or "", reverse=True):  # newest first
         if not (a.get("artist_name") and a.get("album")) or a.get("track"):
             continue
         if old.get(a["id"]) is not None:
             out[a["id"]] = old[a["id"]]
-        elif n < limit:
+        elif n < limit and not (deadline and time.monotonic() > deadline):
             n += 1
             c = deezer_cover(a["artist_name"], a["album"])
             time.sleep(SLEEP)
@@ -120,14 +121,20 @@ def covers(archive, old, limit=1500):
     return out
 
 
-def build(uploads, archive, old, deezer_limit=1500, apple_limit=200):
+def build(uploads, archive, old, deezer_limit=1500, apple_limit=200, deadline=None):
     """Notes for every archive review with a matching video; Deezer IDs looked up at most deezer_limit times per run
-    (the rest next week). old: the previous notes.json, kept where a lookup is not repeated."""
+    (the rest next week), Apple Music paths at most apple_limit times, and no lookup after deadline (time.monotonic()), so
+    the job's time limit never cuts a run before it saves. old: the previous notes.json, kept where a lookup is not
+    repeated."""
     by_key = {}
     for a in archive:
         if a.get("artist_name") and a.get("album") and not a.get("guest"):
             by_key.setdefault(norm(a["artist_name"]) + "|" + norm(a["album"]), a)
     out, lookups, apple = {}, 0, 0
+
+    def late():
+        return bool(deadline) and time.monotonic() > deadline
+
     for v in uploads:
         a = next((by_key.get(norm(ar) + "|" + norm(al)) for ar, al in title_keys(v["title"]) if by_key.get(norm(ar) + "|" + norm(al))), None)
         if not a:
@@ -140,7 +147,7 @@ def build(uploads, archive, old, deezer_limit=1500, apple_limit=200):
         for t in parse_description(v["desc"]).get("fav_tracks", [])[:5]:
             if t in known:
                 fav.append({"t": t, "dz": known[t]})
-            elif lookups < deezer_limit:
+            elif lookups < deezer_limit and not late():
                 lookups += 1
                 fav.append({"t": t, "dz": deezer_track(a["artist_name"], t)})
                 time.sleep(SLEEP)  # Deezer allows about 50 requests per 5 seconds
@@ -150,7 +157,7 @@ def build(uploads, archive, old, deezer_limit=1500, apple_limit=200):
             if f.get("dz") == 0:  # not on Deezer: Apple Music's player instead
                 if t in known_am:
                     f["am"] = known_am[t]
-                elif apple < apple_limit:
+                elif apple < apple_limit and not late():
                     apple += 1
                     am = apple_track(a["artist_name"], t)
                     if am is not None:

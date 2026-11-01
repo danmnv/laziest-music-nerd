@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -147,12 +148,14 @@ def run():
     ups = all_uploads()
     npath = DATA / "notes.json"
     old_notes = json.loads(npath.read_text()) if npath.exists() else {}
+    # no new lookups after 28 minutes: the step's limit is 40, and the lists and the save come after
+    deadline = time.monotonic() + 60 * float(os.environ.get("LOOKUP_MINUTES", "28"))
     nt = notes.build(ups, archive, old_notes, int(os.environ.get("NOTES_DEEZER_LIMIT", "1500")),
-                     int(os.environ.get("NOTES_APPLE_LIMIT", "200")))
+                     int(os.environ.get("NOTES_APPLE_LIMIT", "200")), deadline)
     npath.write_text("{\n" + ",\n".join(json.dumps(k) + ": " + json.dumps(nt[k], ensure_ascii=False, separators=(",", ":"))
                                           for k in sorted(nt)) + "\n}\n")
     cpath = DATA / "covers.json"
-    cv = notes.covers(archive, json.loads(cpath.read_text()) if cpath.exists() else {}, int(os.environ.get("COVERS_LIMIT", "1500")))
+    cv = notes.covers(archive, json.loads(cpath.read_text()) if cpath.exists() else {}, int(os.environ.get("COVERS_LIMIT", "1500")), deadline)
     cpath.write_text("{\n" + ",\n".join(json.dumps(k) + ": " + json.dumps(cv[k]) for k in sorted(cv)) + "\n}\n")
     lists = []
     for u in ups:

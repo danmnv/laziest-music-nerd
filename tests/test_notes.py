@@ -74,6 +74,16 @@ class Build(unittest.TestCase):
             self.assertEqual(notes.covers(archive, out, limit=5), {"b": "https://cdn/b.jpg", "a": 0})
             dc.assert_called_once_with("A", "X")
 
+    def test_no_lookups_after_the_deadline(self):
+        archive = [{"id": "nat", "artist_name": "The National", "album": "First Two Pages of Frankenstein"}]
+        ups = [{"id": "v", "title": "The National - First Two Pages of Frankenstein ALBUM REVIEW", "desc": DESC}]
+        with mock.patch.object(notes, "deezer_track") as dz, mock.patch.object(notes, "deezer_cover") as dc:
+            out = notes.build(ups, archive, {}, deadline=1)  # long past
+            self.assertEqual(notes.covers(archive, {}, deadline=1), {})
+        dz.assert_not_called()
+        dc.assert_not_called()
+        self.assertEqual(out["nat"]["fav"], [{"t": "EUCALYPTUS"}, {"t": "TROPIC MORNING NEWS"}])
+
     def test_lookup_limit_leaves_the_rest_for_next_run(self):
         archive = [{"id": "nat", "artist_name": "The National", "album": "First Two Pages of Frankenstein"}]
         ups = [{"id": "v", "title": "The National - First Two Pages of Frankenstein ALBUM REVIEW", "desc": DESC}]
