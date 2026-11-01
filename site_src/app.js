@@ -42,6 +42,37 @@
   // A cover the CDN won't serve leaves the layout without the empty frame.
   document.querySelectorAll(".release .cover").forEach((img) => { img.onerror = () => img.remove(); if (img.complete && !img.naturalWidth) img.remove(); });
 
+  const escHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const votesWord = (n) => n + " " + (n % 10 === 1 && n % 100 !== 11 ? "голос" : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? "голоса" : "голосов");
+
+  // «Когда слушать» votes from the bot's buttons: {mood: {y, n}}. One person can vote for several moods, so the counts
+  // are votes per mood, not people. A release card has the AI's guess in span.moods (the votes go under it); an archive
+  // page has an empty hidden dt.moods-h + dd.moods row that is shown only once someone has voted.
+  function showMoodVotes(rel, mv) {
+    const rows = Object.entries(mv).map(([m, v]) => ({ m, y: Number(v.y) || 0, n: Number(v.n) || 0 }))
+      .filter((r) => r.y || r.n).sort((a, b) => b.y - a.y || a.n - b.n || a.m.localeCompare(b.m));
+    const el = rel.querySelector(".moods");
+    if (!el || !rows.length) return;
+    const total = rows.reduce((t, r) => t + r.y + r.n, 0), top = Math.max(1, ...rows.map((r) => r.y));
+    // Spec: a mood is a guess until a majority agrees (more «за» than «против»); then it's settled and marked ✓.
+    const ok = rows.filter((r) => r.y > r.n).map((r) => r.m);
+    const html = `<div class="votes"><p class="muted">По голосам в боте (${votesWord(total)}), ✓ — закреплено большинством:</p><ul>` + rows.map((r) =>
+      `<li class="${r.y > r.n ? "ok" : ""}"><span class="vm">${r.y > r.n ? "✓ " : ""}${escHtml(r.m)}</span><span class="vbar"><i style="width:${Math.round(100 * r.y / top)}%"></i></span>` +
+      `<span class="vn">${r.y} за${r.n ? ` <span class="muted">· ${r.n} против</span>` : ""}</span></li>`).join("") + "</ul></div>";
+    if (el.tagName === "DD") {
+      el.innerHTML = html;
+      el.hidden = false;
+      const dt = rel.querySelector(".moods-h");
+      if (dt) dt.hidden = false;
+      el.closest("dl")?.removeAttribute("hidden");
+    } else {
+      // the bot card's AI guess gives way to what the majority settled on; with nothing settled the guess stays as is
+      if (ok.length) el.innerHTML = escHtml(ok.join(" / ")) + ' <span class="muted">(закреплено голосами)</span>';
+      else el.querySelector(".votes")?.remove();
+      el.insertAdjacentHTML("beforeend", html);
+    }
+  }
+
   // ---- release page: my marks + public average ----
   const rel = document.querySelector(".release");
   if (rel) {
@@ -51,10 +82,7 @@
     api("/api/public").then((d) => {
       const a = d.avg && d.avg[id];
       if (a) rel.querySelector(".avg").textContent = `Средняя оценка посетителей: ${a.avg} (${a.n})`;
-      const mv = (d.moods && d.moods[id]) || {};
-      const ok = Object.entries(mv).filter(([, v]) => v.y > v.n).map(([m]) => m);
-      const el = rel.querySelector(".moods");
-      if (el && ok.length) el.innerHTML = ok.join(" / ") + ' <span class="muted">(подтверждено голосованием)</span>';
+      showMoodVotes(rel, (d.moods && d.moods[id]) || {});
     }).catch(() => {});
     if (token) loadMarks().then(() => {
       const m = marks[id] || {};
