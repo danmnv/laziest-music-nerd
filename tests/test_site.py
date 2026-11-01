@@ -127,9 +127,15 @@ class Lists(unittest.TestCase):
 class Notes(unittest.TestCase):
     def test_blurb_and_players(self):
         a = {"id": "nat", "url": "https://tnd/nat", "published": "2023-05-05", "artist_name": "The National", "album": "First Two Pages", "score": 6}
-        n = {"blurb": "If you found <it> too colorful", "fav": [{"t": "EUCALYPTUS", "dz": 111}, {"t": "ALIEN", "dz": None}, {"t": "X"}]}
-        html_ = site.archive_page(a, [a], None, None, n)
+        n = {"blurb": "If you found <it> too colorful", "fav": [{"t": "EUCALYPTUS", "dz": 111}, {"t": "ALIEN", "dz": None}, {"t": "X"},
+                                                                  {"t": "TROPIC", "dz": 0, "am": "us/album/x/123?i=456"}]}
+        html_ = site.archive_page(a, [a], None, None, n, cover="https://cdn/cover.jpg")
         self.assertIn('<dt>Фантано в описании ролика</dt><dd><q lang="en">If you found &lt;it&gt; too colorful</q></dd>', html_)
-        self.assertIn('<span id="fav">EUCALYPTUS, ALIEN, X</span>', html_)
+        self.assertIn('<img class="cover" src="https://cdn/cover.jpg" alt="">\n<h1>', html_)  # the cover first
+        # the favourites come after the buttons, each player behind a tap; a track with no player is just its title
+        self.assertLess(html_.index('class="btns"'), html_.index('<h2 id="fav">Любимые треки Фантано</h2>'))
+        self.assertEqual(html_.count("<details>"), 2)
         self.assertEqual(html_.count("widget.deezer.com/widget/auto/track/"), 1)
         self.assertIn('src="https://widget.deezer.com/widget/auto/track/111"', html_)
+        self.assertIn('src="https://embed.music.apple.com/us/album/x/123?i=456"', html_)
+        self.assertIn('<li><span class="trk">ALIEN</span></li>', html_)

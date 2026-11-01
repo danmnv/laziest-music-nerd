@@ -34,17 +34,45 @@ class Blurb(unittest.TestCase):
 
 
 class Build(unittest.TestCase):
+    def setUp(self):  # never the network: a track not on Deezer would ask Apple
+        patcher = mock.patch.object(notes, "apple_track", return_value=0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_matches_archive_and_looks_up_once(self):
         archive = [{"id": "nat", "artist_name": "The National", "album": "First Two Pages of Frankenstein"}]
         ups = [{"id": "cuAbVa3NM5I", "title": "The National - First Two Pages of Frankenstein ALBUM REVIEW", "desc": DESC}]
         with mock.patch.object(notes, "deezer_track", side_effect=[111, 0]) as dz:
             out = notes.build(ups, archive, {})
-        self.assertEqual(out["nat"]["fav"], [{"t": "EUCALYPTUS", "dz": 111}, {"t": "TROPIC MORNING NEWS", "dz": 0}])
+        self.assertEqual(out["nat"]["fav"], [{"t": "EUCALYPTUS", "dz": 111}, {"t": "TROPIC MORNING NEWS", "dz": 0, "am": 0}])
         self.assertEqual(out["nat"]["video_id"], "cuAbVa3NM5I")
         with mock.patch.object(notes, "deezer_track") as dz:
             again = notes.build(ups, archive, out)
         dz.assert_not_called()  # both were looked up already, one simply isn't on Deezer
         self.assertEqual(again, out)
+
+    def test_a_track_not_on_deezer_gets_apple_music_once(self):
+        archive = [{"id": "nat", "artist_name": "The National", "album": "First Two Pages of Frankenstein"}]
+        ups = [{"id": "v", "title": "The National - First Two Pages of Frankenstein ALBUM REVIEW", "desc": DESC}]
+        with mock.patch.object(notes, "deezer_track", side_effect=[111, 0]), \
+                mock.patch.object(notes, "apple_track", return_value="us/album/x/1?i=2") as am:
+            out = notes.build(ups, archive, {})
+        am.assert_called_once_with("The National", "TROPIC MORNING NEWS")
+        self.assertEqual(out["nat"]["fav"][1], {"t": "TROPIC MORNING NEWS", "dz": 0, "am": "us/album/x/1?i=2"})
+        with mock.patch.object(notes, "deezer_track") as dz, mock.patch.object(notes, "apple_track") as am:
+            self.assertEqual(notes.build(ups, archive, out), out)
+        am.assert_not_called()
+
+    def test_covers_newest_first_with_a_limit_and_remembered(self):
+        archive = [{"id": "a", "artist_name": "A", "album": "X", "published": "2020"}, {"id": "b", "artist_name": "B", "album": "Y", "published": "2021"},
+                   {"id": "s", "artist_name": "C", "album": "Song", "published": "2022", "track": True}]
+        with mock.patch.object(notes, "deezer_cover", return_value="https://cdn/b.jpg") as dc, mock.patch.object(notes.time, "sleep"):
+            out = notes.covers(archive, {}, limit=1)
+            self.assertEqual(out, {"b": "https://cdn/b.jpg"})
+            dc.reset_mock()
+            dc.return_value = 0
+            self.assertEqual(notes.covers(archive, out, limit=5), {"b": "https://cdn/b.jpg", "a": 0})
+            dc.assert_called_once_with("A", "X")
 
     def test_lookup_limit_leaves_the_rest_for_next_run(self):
         archive = [{"id": "nat", "artist_name": "The National", "album": "First Two Pages of Frankenstein"}]
@@ -52,6 +80,18 @@ class Build(unittest.TestCase):
         with mock.patch.object(notes, "deezer_track", return_value=5):
             out = notes.build(ups, archive, {}, deezer_limit=1)
         self.assertEqual(out["nat"]["fav"], [{"t": "EUCALYPTUS", "dz": 5}, {"t": "TROPIC MORNING NEWS"}])
+
+
+class AppleTrack(unittest.TestCase):
+    def test_apple_track_checks_the_artist_and_keeps_the_path(self):
+        res = {"results": [{"artistName": "Someone", "trackName": "Karma Police", "trackViewUrl": "https://music.apple.com/us/album/a/1?i=9&uo=4"},
+                           {"artistName": "Radiohead", "trackName": "Karma Police", "trackViewUrl": "https://music.apple.com/us/album/ok/2?i=3&uo=4"}]}
+        with mock.patch.object(notes.http, "get_json", return_value=res):
+            self.assertEqual(notes.apple_track("Radiohead", "Karma Police", sleep=lambda s: None), "us/album/ok/2?i=3")
+        with mock.patch.object(notes.http, "get_json", return_value={"results": []}):
+            self.assertEqual(notes.apple_track("Radiohead", "Karma Police", sleep=lambda s: None), 0)
+        with mock.patch.object(notes.http, "get_json", side_effect=OSError("down")):
+            self.assertIsNone(notes.apple_track("Radiohead", "Karma Police", sleep=lambda s: None))
 
 
 class DeezerTrack(unittest.TestCase):
