@@ -73,6 +73,7 @@ class ParseTest(unittest.TestCase):
         self.assertIsNone(ratings.to10("favorable"))
         self.assertIsNone(ratings.to10("12/10"))
         self.assertEqual(ratings.to10("61%"), 6.1)
+        self.assertEqual(ratings.clean("{{Rating|3.5.|5}}"), "3.5/5")  # typo seen in a real article
         s = ratings.summarize(ratings.parse("{{Album ratings|rev1=The Quietus|rev1score=Positive|rev2=Pitchfork|rev2score=7.8/10}}"))
         self.assertEqual([c["outlet"] for c in s["critics"]], ["Pitchfork"])
         self.assertEqual(s["critics_total"], 2)
