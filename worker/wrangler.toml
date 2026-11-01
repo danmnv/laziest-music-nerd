@@ -5,6 +5,7 @@ compatibility_date = "2026-10-01"
 [vars]
 DATA_URL = "https://raw.githubusercontent.com/danmnv/laziest-music-nerd/main/data/reviews.json"
 SITE_URL = "https://danmnv.github.io/laziest-music-nerd"
+SITE_LIVE = "1"   # the site is up (2026-11-01): album titles and lists link to its pages
 CHANNEL = "@laziestmusicnerd"
 BOT_USERNAME = "laziest_music_nerd_bot"
 

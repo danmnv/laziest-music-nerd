@@ -111,7 +111,7 @@ class HourlyRefreshTest(unittest.TestCase):
         return getattr(self.tg, "texts", []) + getattr(self.tg, "captions", [])
 
     def card_edits(self):
-        return [e for e in self.edits() if "Свежие обзоры" not in e[1]]
+        return [e for e in self.edits() if "Последние 30 обзоров" not in e[1]]
 
     def test_card_found_late_waits_for_the_next_stage_then_gets_what_was_missing(self):
         self.assertEqual(self.saved()["refreshed"], ["1d"])
@@ -158,7 +158,7 @@ class HourlyRefreshTest(unittest.TestCase):
         self.enrich = later_enrich
 
         def broken(chat_id, message_id, text, buttons=None):
-            if "Свежие обзоры" in text:  # the pinned list is fine
+            if "Последние 30 обзоров" in text:  # the pinned list is fine
                 return
             self.tg.tries = getattr(self.tg, "tries", 0) + 1
             raise RuntimeError("Telegram editMessageText failed: Bad Request: message can't be edited")

@@ -10,7 +10,8 @@ import { wikiCritics } from "./wiki.mjs";
 
 const STATUS_LABEL = { later: "• отложено", done: "✓ прослушано", nope: "✗ не понравилось" };
 const STATUS_ICON = { later: " •", done: " ✓", nope: " ✗" };
-const LIST_HEAD = "<b>Свежие обзоры Фантано за 60 дней</b>\n\n";
+const LIST_HEAD = "<b>Последние 30 обзоров Фантано</b>\n\n"; // the channel's pinned list (lmn/card.py LIST_HEAD)
+const LATER_HEAD = "<b>Отложено</b>\n\n"; // the pinned list in a private chat: only that person's «Отложить»
 const MESSAGE_LIMIT = 4096;
 // When to listen. The order is fixed: buttons carry the index (old messages too), votes store the words.
 // The same list is lmn/gemini.py MOODS (a test keeps them equal).
@@ -140,6 +141,15 @@ async function onUpdate(u, env) {
   }
   if (text === "/random" || text === RANDOM_BUTTON) return sendRandom(env, uid);
   if (text === "/later" || text === LATER_BUTTON) return sendLater(env, uid);
+  const open = openFromStart(text);
+  if (open) {
+    // an album tapped in a pinned list (the channel's or this chat's): its card here. Telegram sent "/start …" for the
+    // tap; it is removed so the chat holds only cards.
+    const known = await env.DB.prepare("SELECT 1 FROM users WHERE user_id=?").bind(uid).first();
+    if (!known) await welcome(env, uid);
+    else await tg(env, "deleteMessage", { chat_id: uid, message_id: m.message_id });
+    return openCard(env, uid, open);
+  }
   if (text.startsWith("/start")) return welcome(env, uid);
   if (text === "/channel_marks_on" || text === "/channel_marks_off") {
     if (!isOwner(env, uid)) return;
@@ -158,8 +168,8 @@ async function welcome(env, uid) {
     parse_mode: "HTML",
     text:
       "Привет! Я присылаю карточки новых обзоров Anthony Fantano в канал " + env.CHANNEL + ".\n\n" +
-      "Кнопки «Отложить», «Слушал», «Не моё» под карточками видишь только ты. " +
-      "Ниже — закреплённый список свежих обзоров с твоими отметками, а всё отложенное — кнопка «" + LATER_BUTTON + "».\n\n" +
+      "Кнопки «Отложить», «Слушал», «Не моё» под карточками видят все, а твои отметки — только ты. " +
+      "Закреплённое здесь — то, что ты отложил(а); нажми на альбом, и я пришлю его карточку. Свежие обзоры — в закреплённом в канале.\n\n" +
       "Кнопка «" + RANDOM_BUTTON + "» внизу выдаёт альбом с оценкой от 8, который ты ещё не отмечал(а).\n\n" +
       "Поиск: просто напиши мне артиста или альбом — найду обзоры Фантано с 2010 года.\n\n" +
       "«🔔 Следить за артистом» под карточкой: о новом обзоре этого артиста напишу сюда. Список — кнопка «" + FOLLOWS_BUTTON + "».\n\n" +
@@ -299,6 +309,26 @@ async function publicStats(env) {
 
 // ---------- pinned lists ----------
 
+// A card's button action ("a:<id>", "dz:<id>", "mb:<mbid>") as a link that opens it in the private chat:
+// t.me/<bot>?start=a_<id>. Start parameters allow only A-Z, a-z, 0-9, _ and -, up to 64 characters.
+export function startLink(env, open) {
+  return `https://t.me/${env.BOT_USERNAME}?start=${open.replace(":", "_")}`;
+}
+
+export function openFromStart(text) {
+  const m = /^\/start (a|dz|mb)_([A-Za-z0-9_-]{1,60})$/.exec(text);
+  return m ? `${m[1]}:${m[2]}` : null;
+}
+
+async function openCard(env, uid, open) {
+  const [kind, id] = [open.slice(0, open.indexOf(":")), open.slice(open.indexOf(":") + 1)];
+  if (kind === "dz") return sendDeezerAlbum(env, uid, id);
+  if (kind === "mb") return sendMbAlbum(env, uid, id, null);
+  const a = (await archive(env)).find((x) => x.id === id) || (await reviews(env)).find((x) => x.id === id);
+  if (a) return sendAlbum(env, uid, a, "");
+  return tg(env, "sendMessage", { chat_id: uid, text: "Не нашёл этот альбом." });
+}
+
 async function listItems(env) {
   // GitHub Actions pushes the fresh list here after each new review; the repo copy is only a fallback.
   const cached = await getSetting(env, "list_items");
@@ -328,7 +358,7 @@ function renderList(env, items, statuses) {
 async function refreshDmList(env, uid, createIfMissing) {
   const user = await env.DB.prepare("SELECT dm_pinned_id FROM users WHERE user_id=?").bind(uid).first();
   if (!user) return; // the bot can't write to someone who never pressed /start
-  const text = renderList(env, await listItems(env), statusMap(await userMarks(env, uid)));
+  const text = await laterList(env, uid);
   if (user.dm_pinned_id) {
     const d = await tg(env, "editMessageText", { chat_id: uid, message_id: user.dm_pinned_id, text, parse_mode: "HTML", link_preview_options: { is_disabled: true } });
     if (d.ok || String(d.description || "").includes("not modified") || !createIfMissing) return;
@@ -338,6 +368,23 @@ async function refreshDmList(env, uid, createIfMissing) {
     await tg(env, "pinChatMessage", { chat_id: uid, message_id: d.result.message_id, disable_notification: true });
     await env.DB.prepare("UPDATE users SET dm_pinned_id=? WHERE user_id=?").bind(d.result.message_id, uid).run();
   }
+}
+
+// The pinned list in a private chat: what this person put off, last first, each a link to its card.
+async function laterList(env, uid) {
+  const { results } = await env.DB.prepare("SELECT review_id FROM marks WHERE user_id=? AND status='later' ORDER BY later_at DESC").bind(uid).all();
+  const names = results.length ? await markedNames(env, results.map((r) => r.review_id)) : {};
+  const items = results.map((r) => names[r.review_id]).filter(Boolean);
+  if (!items.length) return LATER_HEAD + "Отложенных пока нет. Нажми «• Отложить» под карточкой, и альбом появится здесь.";
+  return renderLater(env, items);
+}
+
+export function renderLater(env, items) {
+  const lines = items.map((x) => `${x.badge ? x.badge + " · " : ""}<a href="${startLink(env, x.open)}">${esc(x.artist_name)} — ${esc(x.album)}</a>`);
+  let n = lines.length;
+  const tail = (k) => (k < lines.length ? `\n\nЕщё ${lines.length - k} — кнопка «${LATER_BUTTON}»` : "");
+  while (n > 1 && tgLen(LATER_HEAD + lines.slice(0, n).join("\n") + tail(n)) > MESSAGE_LIMIT) n--;
+  return LATER_HEAD + lines.slice(0, n).join("\n") + tail(n);
 }
 
 async function refreshOwnerLists(env) {
@@ -622,7 +669,7 @@ async function sendAlbum(env, uid, a, intro) {
     moods.length ? `<b>Когда слушать:</b> ${esc(moods.join(" / "))} <i>(догадка ИИ, поправь кнопками)</i>` : "",
   ].filter(Boolean).map((l) => "\n" + l).join("");
   // a blank line between the score line and the words, so they don't read as one block
-  const text = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}${words ? "\n" + words : ""}${criticsText(rt)}`;
+  const text = (intro ? intro + "\n\n" : "") + `<b>${titleLink(env, r)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}${words ? "\n" + words : ""}${criticsText(rt)}`;
   const q = encodeURIComponent(`${r.artist_name} ${r.album}`);
   const allServices = links.songlink || (dz && dz.link ? `https://album.link/${dz.link}` : null);
   const reply_markup = { inline_keyboard: [
@@ -645,6 +692,12 @@ async function sendAlbum(env, uid, a, intro) {
     if (d.ok) return d;
   }
   return tg(env, "sendMessage", { chat_id: uid, text, parse_mode: "HTML", reply_markup, link_preview_options: { is_disabled: true } });
+}
+
+// "Artist — Album", a link to the album's page on the site when the site is up.
+function titleLink(env, r) {
+  const name = `${esc(r.artist_name)} — ${esc(r.album)}`;
+  return env.SITE_URL && env.SITE_LIVE === "1" ? `<a href="${env.SITE_URL}/r/${encodeURIComponent(r.id)}.html">${name}</a>` : name;
 }
 
 // Critic scores and charts for a review, from the site's rt/<id>.json (built from data/ratings.json; source:
@@ -875,8 +928,8 @@ async function markedNames(env, ids) {
   const out = {};
   if (!ids.length) return out;
   const want = new Set(ids);
-  for (const a of await archive(env)) if (want.has(a.id)) out[a.id] = { artist_name: a.artist_name, album: a.album, open: `a:${a.id}` };
-  for (const r of await reviews(env)) if (want.has(r.id) && !out[r.id]) out[r.id] = { artist_name: r.artist_name, album: r.album, open: `a:${r.id}` };
+  for (const a of await archive(env)) if (want.has(a.id)) out[a.id] = { artist_name: a.artist_name, album: a.album, open: `a:${a.id}`, badge: badge(a) };
+  for (const r of await reviews(env)) if (want.has(r.id) && !out[r.id]) out[r.id] = { artist_name: r.artist_name, album: r.album, open: `a:${r.id}`, badge: badge(r) };
   const rest = ids.filter((id) => !out[id]);
   for (let i = 0; i < rest.length; i += 50) {
     const part = rest.slice(i, i + 50);
