@@ -49,6 +49,32 @@ def verdict(desc):
     return {}
 
 
+def parse_title(title):
+    """(artist, album) from a review video title, or None. Handles the current format
+    "Artist - Album ALBUM REVIEW" and the 2010-2012 one, "Artist- Album Review" (no space before the dash)."""
+    if re.search(r"\bTRACK\s+REVIEW\b", title, re.I):
+        return None
+    t = re.sub(r"\s*[-–(\[]?\s*(ALBUM|EP|MIXTAPE|LP)?\s*REVIEW[)\]]?\s*$", "", title, flags=re.I)
+    if t == title:
+        return None
+    m = re.match(r"^(.+?)\s*[-–]\s+(.+)$", t)
+    if not m:
+        return None
+    artist, album = m.group(1).strip(), m.group(2).strip().strip('"“”')
+    return (artist, album) if artist and album else None
+
+
+def title_keys(title):
+    """Name pairs to look up: a "Self-Titled" review may be stored under the artist's name as the album."""
+    p = parse_title(title)
+    if not p:
+        return []
+    out = [p]
+    if norm(p[1]) in ("selftitled", "st"):
+        out.append((p[0], p[0]))
+    return out
+
+
 def key(artist, album):
     return norm(artist) + "|" + norm(album)
 
@@ -62,11 +88,11 @@ def main():
     print(f"videos on the channel: {len(videos)}")
     filled = 0
     for v in videos:
-        t = re.sub(r"\s*[-–(\[]?\s*(ALBUM|EP|MIXTAPE|TRACK)?\s*REVIEW[)\]]?\s*$", "", v["title"], flags=re.I)
-        m = re.match(r"^(.+?)\s+[-–]\s+(.+)$", t)
-        if not m:
-            continue
-        a = missing.get(key(m.group(1), m.group(2)))
+        a = None
+        for artist, album in title_keys(v["title"]):
+            a = missing.get(key(artist, album))
+            if a:
+                break
         if not a:
             continue
         vd = verdict(v["desc"])

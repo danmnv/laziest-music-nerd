@@ -11,12 +11,15 @@ by_id = {v["id"]: v for v in videos}
 archive = json.load(open("data/archive.json"))
 missing = {ya.key(a["artist_name"], a["album"]): a for a in archive
            if a.get("artist_name") and a.get("album") and a.get("score") is None and not a.get("not_good") and not a.get("classic")}
-hits, old_titles = [], []
+hits, old_titles, noverdict, years = [], [], [], {}
 for v in videos:
-    t = re.sub(r"\s*[-–(\[]?\s*(ALBUM|EP|MIXTAPE|TRACK)?\s*REVIEW[)\]]?\s*$", "", v["title"], flags=re.I)
-    m = re.match(r"^(.+?)\s+[-–]\s+(.+)$", t)
-    if m and ya.key(m.group(1), m.group(2)) in missing and ya.verdict(v["desc"]):
+    ks = [ya.key(a, b) for a, b in ya.title_keys(v["title"])]
+    hit = next((k for k in ks if k in missing), None)
+    if hit and ya.verdict(v["desc"]):
         hits.append(v)
+        years[v["date"][:4]] = years.get(v["date"][:4], 0) + 1
+    elif hit and v["date"][:4] in ("2010", "2011", "2012"):
+        noverdict.append(v)
     elif v["date"][:4] in ("2010", "2011", "2012") and "review" in v["title"].lower():
         old_titles.append(v["title"])
 random.seed(5)
@@ -27,3 +30,12 @@ for v in random.sample(hits, min(12, len(hits))):
 print(f"2010-2012 review videos not matched: {len(old_titles)}; examples:")
 for t in random.sample(old_titles, min(15, len(old_titles))):
     print("   ", repr(t))
+print("fills by upload year:", dict(sorted(years.items())), "total", len(hits))
+print(f"2010-2012 matched but no verdict in description: {len(noverdict)}; examples:")
+for v in noverdict[:6]:
+    print("   ", repr(v["title"]), "<-", repr(v["desc"][-160:]))
+old_hits = [v for v in hits if v["date"][:4] in ("2010", "2011", "2012")]
+for v in random.sample(old_hits, min(8, len(old_hits))):
+    ms = list(ya.SCORE.finditer(v["desc"]))
+    ctx = v["desc"][max(0, ms[-1].start() - 80): ms[-1].end() + 20].replace("\n", " | ") if ms else v["desc"][:100]
+    print(f"   OLD {v['title']!r}: {ya.verdict(v['desc'])} <- ...{ctx}...")
