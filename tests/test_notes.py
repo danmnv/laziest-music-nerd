@@ -40,6 +40,7 @@ class BandcampLink(unittest.TestCase):
         self.assertIsNone(notes.bandcamp("Listen: https://notbandcamp.com.evil.io/x\n"))
         self.assertIsNone(notes.bandcamp("Listen: https://bandcamp.com/search?q=x\n"))
         self.assertIsNone(notes.bandcamp("no listen line"))
+        self.assertEqual(notes.bandcamp("Listen: http://x.bandcamp.com/album/y\n"), "https://x.bandcamp.com/album/y")
 
 
 class Build(unittest.TestCase):

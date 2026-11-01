@@ -28,7 +28,7 @@ NOISE = re.compile(r"^(listen|buy this|more .*reviews?|subscribe|official site|t
 
 def bandcamp(desc):
     """The "Listen:" link of the description when it is a Bandcamp page (the album's, sometimes the artist's), or None."""
-    url = parse_description(desc).get("listen_url") or ""
+    url = re.sub(r"^http://", "https://", parse_description(desc).get("listen_url") or "")  # old descriptions: http, Bandcamp serves https
     host = re.sub(r"^https?://", "", url).split("/", 1)[0].lower()
     return url if url.startswith("http") and (host == "bandcamp.com" or host.endswith(".bandcamp.com")) and "/search" not in url else None
 
