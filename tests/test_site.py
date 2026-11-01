@@ -56,6 +56,8 @@ class SiteTest(unittest.TestCase):
             artist = (out / "a" / "swans.html").read_text()
             self.assertLess(artist.index("To Be Kind"), artist.index("The Seer"))  # newest first
             self.assertIn("2 обзора Фантано", artist)
+            self.assertEqual(site.slug("Björk"), "bjork")
+            self.assertNotEqual(site.slug("坂本龍一 & X"), site.slug("Кино & X"))
             kino = site.slug("Кино")
             self.assertTrue(kino.startswith("x") and (out / "a" / f"{kino}.html").exists())
             cat = {x["i"]: x for x in json.loads((out / "catalog.json").read_text())}

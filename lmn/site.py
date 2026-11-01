@@ -4,6 +4,7 @@ import html
 import json
 import os
 import shutil
+import unicodedata
 import urllib.parse
 from pathlib import Path
 
@@ -46,9 +47,13 @@ def worker_url():
 
 
 def slug(name):
-    """The artist page's file name: the plain-Latin name, or a hash for names without Latin letters (Кино)."""
+    """The artist page's file name: the plain-Latin name (Björk -> bjork), or a hash when letters would be lost on
+    the way to Latin (Кино, 坂本龍一 & X), so two such artists never share a page. Names that normalise alike
+    ("Low", "LOW") share one, as in the bot's search."""
+    name = name or ""
+    lost = any(ch.isalpha() and not unicodedata.normalize("NFKD", ch).encode("ascii", "ignore") for ch in name)
     k = norm(name)
-    return k[:60] if k else "x" + hashlib.sha1((name or "").encode()).hexdigest()[:10]
+    return k[:60] if k and not lost else "x" + hashlib.sha1(name.encode()).hexdigest()[:10]
 
 
 def score_badge(a):
