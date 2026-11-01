@@ -224,7 +224,7 @@ async function onCallback(q, env) {
   } else if (parts[0] === "v") {
     const [, rid, idx, vote] = parts;
     const r = (await reviews(env)).find((x) => x.id === rid);
-    const mood = r && r.ai && r.ai.moods ? r.ai.moods[Number(idx)] : null;
+    const mood = cardMoods(r, r && r.ai && r.ai.moods ? null : await criticsOf(env, rid))[Number(idx)] || null;
     if (mood && (vote === "y" || vote === "n")) {
       await env.DB.prepare("INSERT INTO mood_votes (user_id, review_id, mood, vote) VALUES (?,?,?,?) ON CONFLICT(user_id, review_id, mood) DO UPDATE SET vote=excluded.vote")
         .bind(uid, rid, mood, vote).run();
@@ -588,12 +588,15 @@ async function sendAlbum(env, uid, a, intro) {
   ].filter(Boolean).join(" · ");
   // the short brief: the card's own (Gemini), else the archive's (lmn/briefs.py, in rt); Fantano's line only without one
   const brief = (full && full.ai && full.ai.brief) || (rt && rt.brief);
+  const moods = cardMoods(full, rt);
   const words = [
     brief ? `<b>Бриф:</b> ${esc(brief)}` : "",
     rt && rt.blurb && !brief ? `💬 <i>${esc(rt.blurb)}</i>` : "",
     rt && rt.fav && rt.fav.length ? `★ Любимые у Фантано: ${esc(rt.fav.join(", "))}` : "",
+    moods.length ? `<b>Когда слушать:</b> ${esc(moods.join(" / "))} <i>(догадка ИИ, поправь кнопками)</i>` : "",
   ].filter(Boolean).map((l) => "\n" + l).join("");
-  const text = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}${words}${criticsText(rt)}`;
+  // a blank line between the score line and the words, so they don't read as one block
+  const text = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}${words ? "\n" + words : ""}${criticsText(rt)}`;
   const q = encodeURIComponent(`${r.artist_name} ${r.album}`);
   const allServices = links.songlink || (dz && dz.link ? `https://album.link/${dz.link}` : null);
   const reply_markup = { inline_keyboard: [
@@ -604,7 +607,9 @@ async function sendAlbum(env, uid, a, intro) {
     [...(allServices ? [{ text: "Все платформы", url: allServices }] : []), { text: "🔎 Google", url: `https://www.google.com/search?q=${q}` }, aoty(r.artist_name, r.album)],
     MARK_ROW(r.id),
     [{ text: "🔔 Следить", callback_data: `f:${r.id}` }, { text: "📚 Все обзоры", callback_data: `ar:${r.id}` }],
-    [{ text: "🕒 Когда слушать?", callback_data: `mq:${r.id}` },
+    // the AI's mood guess gets the channel card's vote (да / нет, «другое» asks all four); without one, a button asks
+    ...moods.map((m, i) => [{ text: `${m}: да`, callback_data: `v:${r.id}:${i}:y` }, { text: "нет", callback_data: `v:${r.id}:${i}:n` }]),
+    [{ text: moods.length ? "Настроение: другое" : "🕒 Когда слушать?", callback_data: `mq:${r.id}` },
       // Deezer's official player for Fantano's favourite tracks lives on the site: Telegram can't embed it, and handing
       // out the audio file is against Deezer's rules
       ...(rt && rt.fav_play && env.SITE_URL ? [{ text: "▶ Любимые треки", url: `${env.SITE_URL}/r/${encodeURIComponent(r.id)}.html#fav` }] : [])],
@@ -618,6 +623,12 @@ async function sendAlbum(env, uid, a, intro) {
 
 // Critic scores and charts for a review, from the site's rt/<id>.json (built from data/ratings.json; source:
 // the album's Wikipedia article). null when there is none. One small fetch instead of parsing all ratings.
+// The AI's mood guess for a card: the bot's own card (Gemini) first, else the archive brief's (lmn/briefs.py, in rt).
+function cardMoods(full, rt) {
+  const m = (full && full.ai && full.ai.moods && full.ai.moods.length ? full.ai.moods : rt && rt.moods) || [];
+  return m.filter((x) => MOODS.includes(x)).slice(0, 2);
+}
+
 async function criticsOf(env, id) {
   try {
     const r = await fetch(`${env.SITE_URL}/rt/${encodeURIComponent(id)}.json`, { cf: { cacheTtl: 3600 } });
