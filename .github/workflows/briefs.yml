@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       limit:
-        description: "Сколько обзоров за запуск"
+        description: "Сколько обзоров за запуск (весь архив — 3400; запуск сам остановится через 5,5 часа и сохранит сделанное)"
         default: "300"
       compare:
         description: "Только сравнить модели на 10 обзорах (ничего не сохраняет)"
@@ -22,20 +22,21 @@ concurrency:
 jobs:
   briefs:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Брифы по текстам обзоров с theneedledrop.com
-        timeout-minutes: 110
+        timeout-minutes: 345
         run: python -m lmn.briefs
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
           BRIEFS_LIMIT: ${{ inputs.limit || '300' }}
+          BRIEFS_MINUTES: "330"   # GitHub stops a job after 6 hours; this leaves time to save
           BRIEFS_COMPARE: ${{ inputs.compare && '1' || '' }}
       - name: Сохранить
         if: ${{ always() && !inputs.compare }}

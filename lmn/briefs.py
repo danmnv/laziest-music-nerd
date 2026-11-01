@@ -1,5 +1,6 @@
 """Briefs for archive reviews: the same "brief", "about" (the site's longer one) and "who" lines the bot's cards have,
-written by a free model (lmn/llm.py: Mistral, then Groq, then Cerebras) from the text of the review on theneedledrop.com. Newest first, at most BRIEFS_LIMIT per run; the rest next run.
+written by a free model (lmn/llm.py: Mistral, then Groq, then Cerebras) from the text of the review on theneedledrop.com. Newest first, at most BRIEFS_LIMIT per run
+and BRIEFS_MINUTES of work; the rest next run.
 
 Writes data/briefs.json: {review id: {"brief", "about", "who", "moods", "m": model}}. Skipped: guest reviews (not Fantano's
 opinion), single-song reviews, reviews whose card already has a Gemini brief, and posts without a text.
@@ -9,6 +10,7 @@ models (and Groq, Cerebras when their keys are set) side by side on 10 reviews i
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from . import llm, tnd
@@ -86,7 +88,11 @@ def run():
     todo = targets(archive, reviews, set(data))
     print(f"briefs: {len(data)} done, {len(todo)} to do, this run up to {limit}")
     made = failed = in_row = 0
+    deadline = time.monotonic() + 60 * float(os.environ.get("BRIEFS_MINUTES", "100"))
     for a, text in texts(todo[:limit]):
+        if time.monotonic() > deadline:  # stop and save before the job's time runs out; the rest next run
+            print("briefs: time is up for this run")
+            break
         if len(text) < MIN_TEXT:
             continue
         out = llm.summarize(f"{a['artist_name']} - {a['album']}", text)
