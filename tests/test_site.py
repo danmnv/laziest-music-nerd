@@ -127,9 +127,22 @@ class Lists(unittest.TestCase):
 class Notes(unittest.TestCase):
     def test_blurb_and_players(self):
         a = {"id": "nat", "url": "https://tnd/nat", "published": "2023-05-05", "artist_name": "The National", "album": "First Two Pages", "score": 6}
-        n = {"blurb": "If you found <it> too colorful", "fav": [{"t": "EUCALYPTUS", "dz": 111}, {"t": "ALIEN", "dz": None}, {"t": "X"}]}
-        html_ = site.archive_page(a, [a], None, None, n)
+        n = {"blurb": "If you found <it> too colorful", "fav": [{"t": "EUCALYPTUS", "dz": 111}, {"t": "ALIEN", "dz": None}, {"t": "X"},
+                                                                  {"t": "TROPIC", "dz": 0, "am": "us/album/x/123?i=456"}]}
+        older = {"id": "boxer", "url": "https://tnd/boxer", "published": "2010-01-01", "artist_name": "The National", "album": "High Violet", "score": 7}
+        album = {"dz": 42, "cv": "https://cdn/cover.jpg", "y": "2023", "min": 46, "t": [["Eucalyptus", 260], ["Tropic Morning News", 301]]}
+        html_ = site.archive_page(a, [a, older], None, None, n, album=album)
+        # what the bot's card knows: year, tracks, minutes, n-th review, «Все платформы», and the tracklist with ★
+        self.assertIn("First Two Pages <span class=\"muted\">(2023)</span></h1>", html_)
+        self.assertIn("2 трека · 46 мин · обзор 2023-05-05 · 2-й из 2 обзоров артиста", html_)
+        self.assertIn('href="https://album.link/https://www.deezer.com/album/42">Все платформы</a>', html_)
+        self.assertIn("<ol><li>Eucalyptus 4:20 ★</li><li>Tropic Morning News 5:01 ★</li></ol>", html_)
         self.assertIn('<dt>Фантано в описании ролика</dt><dd><q lang="en">If you found &lt;it&gt; too colorful</q></dd>', html_)
-        self.assertIn('<span id="fav">EUCALYPTUS, ALIEN, X</span>', html_)
+        self.assertIn('<img class="cover" src="https://cdn/cover.jpg" alt="">\n<h1>', html_)  # the cover first
+        # the favourites come after the buttons, each player behind a tap; a track with no player is just its title
+        self.assertLess(html_.index('class="btns"'), html_.index('<h2 id="fav">Любимые треки Фантано</h2>'))
+        self.assertEqual(html_.count("<details>"), 2)
         self.assertEqual(html_.count("widget.deezer.com/widget/auto/track/"), 1)
         self.assertIn('src="https://widget.deezer.com/widget/auto/track/111"', html_)
+        self.assertIn('src="https://embed.music.apple.com/us/album/x/123?i=456"', html_)
+        self.assertIn('<li><span class="trk">ALIEN</span></li>', html_)

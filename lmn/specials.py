@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -147,9 +148,16 @@ def run():
     ups = all_uploads()
     npath = DATA / "notes.json"
     old_notes = json.loads(npath.read_text()) if npath.exists() else {}
-    nt = notes.build(ups, archive, old_notes, int(os.environ.get("NOTES_DEEZER_LIMIT", "1500")))
+    # no new lookups after 22 minutes: the step's limit is 40, and up to 3 Gemini videos (~4 min each) come after
+    deadline = time.monotonic() + 60 * float(os.environ.get("LOOKUP_MINUTES", "22"))
+    nt = notes.build(ups, archive, old_notes, int(os.environ.get("NOTES_DEEZER_LIMIT", "1500")),
+                     int(os.environ.get("NOTES_APPLE_LIMIT", "200")), deadline)
     npath.write_text("{\n" + ",\n".join(json.dumps(k) + ": " + json.dumps(nt[k], ensure_ascii=False, separators=(",", ":"))
                                           for k in sorted(nt)) + "\n}\n")
+    apath = DATA / "albums.json"
+    al = notes.albums(archive, json.loads(apath.read_text()) if apath.exists() else {}, int(os.environ.get("ALBUMS_LIMIT", "1500")), deadline)
+    apath.write_text("{\n" + ",\n".join(json.dumps(k) + ": " + json.dumps(al[k], ensure_ascii=False, separators=(",", ":"))
+                                          for k in sorted(al)) + "\n}\n")
     lists = []
     for u in ups:
         label = list_kind(u["title"])

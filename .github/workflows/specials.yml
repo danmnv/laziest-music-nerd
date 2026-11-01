@@ -38,7 +38,7 @@ jobs:
         run: |
           git config user.name "laziest-music-nerd-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          for f in data/specials.json data/notes.json; do [ -f "$f" ] && git add "$f"; done
+          for f in data/specials.json data/notes.json data/albums.json; do [ -f "$f" ] && git add "$f"; done
           git diff --cached --quiet && exit 0
           git commit -q -m "data: особые видео и описания роликов Фантано"
           for i in 1 2 3 4; do  # the hourly check may have pushed meanwhile

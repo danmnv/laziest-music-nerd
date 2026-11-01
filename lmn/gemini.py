@@ -15,7 +15,10 @@ MODEL = MODELS[0]
 BUDGET_SEC = 240      # per review, all models and retries together, so a slow day can't eat the hourly run
 CALL_TIMEOUT = 90
 ABOUT_MAX = 560   # the site's longer brief ("about"); the prompt asks for 500
-MOODS = ["для тренировки", "для настроения", "для работы за столом", "для тусовки"]
+# When to listen; the same list and order as MOODS in worker/src/index.js (buttons carry the index, votes the words).
+MOODS = ["для тренировки", "для настроения", "для работы за столом", "для тусовки", "в дорогу", "на прогулку", "ночью",
+         "перед сном", "когда грустно", "когда злишься", "в наушниках, вдумчиво", "фоном", "для романтики", "для бодрости"]
+AI_MOODS = [m for m in MOODS if m != "для настроения"]  # too vague to be a guess; kept in MOODS for old votes
 _unavailable = set()  # models found used up for today (or closed) during this run: skipped for the next reviews
 
 PROMPT = """Ты помогаешь вести русскоязычный Telegram-канал о музыкальных обзорах Anthony Fantano (The Needle Drop).
@@ -23,7 +26,7 @@ PROMPT = """Ты помогаешь вести русскоязычный Telegr
 - "brief": 1–2 предложения на русском, своими словами: что за релиз и что Фантано о нём думает. Не цитируй обзор, не переводи его дословно. До 220 символов.
 - "about": 3–4 предложения на русском, своими словами, для страницы сайта: что за релиз, что Фантано в нём хвалит, что ругает и к чему пришёл. Не цитируй обзор, не переводи его дословно. До 500 символов.
 - "who": 1 строка на русском о том, кто исполнитель (жанр/сцена, откуда, какой это по счёту релиз, если ясно из текста). Только факты из текста; если не ясно — пустая строка. До 140 символов.
-- "moods": список из 1–2 вариантов ровно из этого набора: {moods}. Когда лучше всего слушать этот релиз.
+- "moods": список из 1–2 вариантов ровно из этого набора: {moods}. Когда лучше всего слушать этот релиз: исходи из жанра, звучания и настроения, которые описывает обзор (тяжёлый и злой — не «фоном», тихий и грустный — не «для тусовки»).
 - "best_tracks": до 3 названий треков, которые Фантано выделил как лучшие, точно как они написаны в тексте. Если не выделил — пустой список.
 - "artist": имя исполнителя как в оригинале.
 - "album": название релиза как в оригинале.
@@ -71,7 +74,7 @@ def summarize(title, text=None, api_key=None, video_id=None, notes=""):
     api_key = (api_key or os.environ.get("GEMINI_API_KEY") or "").strip()
     if not api_key or not (text or video_id):
         return None
-    moods = json.dumps(MOODS, ensure_ascii=False)
+    moods = json.dumps(AI_MOODS, ensure_ascii=False)
     if text:
         parts = [{"text": PROMPT.format(source=SOURCE_TEXT, moods=moods, title=title, text="\nТекст обзора:\n" + text[:30000])}]
         config = {}

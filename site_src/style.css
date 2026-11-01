@@ -134,6 +134,13 @@ footer .links a{color:var(--fg)}
 .votes .vn{font-variant-numeric:tabular-nums;white-space:nowrap}
 .release q{font-style:italic;quotes:"«" "»"}
 .release iframe.dz{display:block;width:100%;max-width:560px;border:0;border-radius:var(--radius);margin:10px 0 0;background:var(--soft)}
+/* Fantano's favourite tracks: a short list under the buttons; a tap on a track opens its player (build thread) */
+.release .favs ul{list-style:none;padding:0;margin:0;max-width:560px}
+.release .favs li{border-bottom:1px solid var(--line);padding:9px 0}
+.release .favs summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:12px;align-items:baseline}
+.release .favs summary::-webkit-details-marker{display:none}
+.release .favs summary .muted{white-space:nowrap}
+.release .favs details[open] summary .muted{color:var(--accent)}
 .contested{display:inline-block;padding:1px 8px;border-radius:6px;background:color-mix(in srgb,var(--neutral) 22%,transparent);font-weight:500}
 .dossier{display:block}
 .mine{margin:8px 0 0;padding:16px;border:1px solid var(--line);border-radius:var(--radius);background:var(--card)}

@@ -12,7 +12,29 @@ const STATUS_LABEL = { later: "• отложено", done: "✓ прослуш�
 const STATUS_ICON = { later: " •", done: " ✓", nope: " ✗" };
 const LIST_HEAD = "<b>Свежие обзоры Фантано за 60 дней</b>\n\n";
 const MESSAGE_LIMIT = 4096;
-const MOODS = ["для тренировки", "для настроения", "для работы за столом", "для тусовки"];
+// When to listen. The order is fixed: buttons carry the index (old messages too), votes store the words.
+// The same list is lmn/gemini.py MOODS (a test keeps them equal).
+const MOODS = ["для тренировки", "для настроения", "для работы за столом", "для тусовки", "в дорогу", "на прогулку", "ночью",
+  "перед сном", "когда грустно", "когда злишься", "в наушниках, вдумчиво", "фоном", "для романтики", "для бодрости"];
+// Genre words → the situations they suggest, best first. For albums with no AI guess. A word matches at the start of
+// a word in the tag ("metalcore", "rapper", "gothic"), not inside one: TND tags hold artist names too ("macklemore",
+// "brockhampton"). The first group a tag matches wins, so the more specific groups come first.
+const GENRE_MOODS = [
+  [["shoegaze", "dream pop", "post-rock", "post-punk", "darkwave", "goth", "trip hop"], ["ночью", "на прогулку", "в наушниках, вдумчиво", "когда грустно"]],
+  [["hip hop", "rap", "trap", "drill", "grime", "boom bap"], ["в дорогу", "для тренировки", "для тусовки", "для бодрости"]],
+  [["dance", "house", "techno", "disco", "edm", "electropop", "synthpop", "club", "hyperpop", "funk", "microhouse"], ["для тусовки", "для бодрости", "для тренировки", "в дорогу"]],
+  [["metal", "hardcore", "punk", "grind", "thrash", "industrial", "sludge", "crust", "synthpunk"], ["для тренировки", "когда злишься", "в дорогу", "для бодрости"]],
+  [["ambient", "drone", "new age", "classical", "minimal"], ["перед сном", "для работы за столом", "фоном", "в наушниках, вдумчиво"]],
+  [["electronic", "idm", "glitch"], ["в наушниках, вдумчиво", "для работы за столом", "ночью", "для тусовки"]],
+  [["r&b", "soul", "neo-soul", "quiet storm"], ["для романтики", "ночью", "фоном", "на прогулку"]],
+  [["folk", "singer-songwriter", "country", "slowcore", "sadcore", "emo", "acoustic", "chamber"], ["когда грустно", "на прогулку", "перед сном", "в наушниках, вдумчиво"]],
+  [["jazz", "lounge", "bossa"], ["для работы за столом", "ночью", "фоном", "для романтики"]],
+  [["experimental", "noise", "avant", "art ", "psychedelic", "progressive", "krautrock"], ["в наушниках, вдумчиво", "ночью", "когда злишься", "в дорогу"]],
+  [["rock", "indie", "grunge", "garage", "pop"], ["в дорогу", "на прогулку", "для бодрости", "для тусовки"]],
+];
+const GENRE_RES = GENRE_MOODS.map(([words, moods]) =>
+  [new RegExp(`[\\s-](${words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`), moods]);
+const DEFAULT_MOODS = ["на прогулку", "в дорогу", "в наушниках, вдумчиво", "фоном"];
 const RANDOM_BUTTON = "🎲 Случайный из архива";
 const FOLLOWS_BUTTON = "🔔 Мои артисты";
 const LATER_BUTTON = "📌 Отложенные";
@@ -196,6 +218,9 @@ async function onCallback(q, env) {
   } else if (parts[0] === "mb") {
     await answerNow();
     await sendMbAlbum(env, uid, parts[1], q.message);
+  } else if (parts[0] === "ma") {
+    await answerNow();
+    await askMood(env, uid, parts[1], true, q.message && q.message.message_id);
   } else if (parts[0] === "mq") {
     await answerNow();
     await askMood(env, uid, parts[1]);
@@ -212,7 +237,7 @@ async function onCallback(q, env) {
     answer = row ? `Больше не следишь за ${short(row.artist_name)}` : "";
     if (q.message) await sendFollows(env, uid, q.message.message_id);
   } else if (parts[0] === "v" && parts[2] === "o") {
-    // "другое": continue in the private chat, where the bot can show all four options
+    // "другое": continue in the private chat, where the bot can show the options
     return tg(env, "answerCallbackQuery", { callback_query_id: q.id, url: `https://t.me/${env.BOT_USERNAME}?start=mood_${parts[1]}` });
   } else if (parts[0] === "vo") {
     const [, rid, mi] = parts;
@@ -726,14 +751,35 @@ async function maybeSuggestSimilar(env, uid, rid) {
   for (const a of chosen) await sendAlbum(env, uid, a, "");
 }
 
-async function askMood(env, uid, rid) {
+// Four situations for this album: the AI's guess first, then the ones its genres suggest (a genre listed earlier in
+// the album's tags and an earlier place in GENRE_MOODS weigh more), then common ones.
+function genreMoods(r, ai = []) {
+  const score = new Map();
+  (r.genres || []).forEach((g, gi) => {
+    const tag = ` ${String(g).toLowerCase()} `;
+    for (const [re, moods] of GENRE_RES) {
+      if (!re.test(tag)) continue;
+      moods.forEach((m, mi) => score.set(m, (score.get(m) || 0) + (4 - mi) / (gi + 1)));
+      break;  // the first group a tag matches: "art pop" is art, not pop
+    }
+  });
+  const byGenre = [...score.entries()].sort((a, b) => b[1] - a[1]).map(([m]) => m);
+  return [...new Set([...ai.filter((m) => MOODS.includes(m)), ...byGenre, ...DEFAULT_MOODS])].slice(0, 4);
+}
+
+async function askMood(env, uid, rid, all = false, messageId = null) {
   const r = (await reviews(env)).find((x) => x.id === rid) || (await archive(env)).find((x) => x.id === rid);
   if (!r) return;
-  await tg(env, "sendMessage", {
-    chat_id: uid, parse_mode: "HTML",
-    text: `Когда лучше слушать <b>${esc(r.artist_name)} — ${esc(r.album)}</b>?`,
-    reply_markup: { inline_keyboard: MOODS.map((m, i) => [{ text: m, callback_data: `vo:${rid}:${i}` }]) },
-  });
+  const ai = cardMoods(r, r.ai && r.ai.moods && r.ai.moods.length ? null : await criticsOf(env, rid));
+  const shown = all ? MOODS : genreMoods(r, ai);
+  const buttons = shown.map((m) => ({ text: m, callback_data: `vo:${rid}:${MOODS.indexOf(m)}` }));
+  const rows = [];
+  for (let i = 0; i < buttons.length; i += 2) rows.push(buttons.slice(i, i + 2));
+  if (!all) rows.push([{ text: "Другие варианты", callback_data: `ma:${rid}` }]);
+  const msg = { chat_id: uid, parse_mode: "HTML", text: `Когда лучше слушать <b>${esc(r.artist_name)} — ${esc(r.album)}</b>?`,
+    reply_markup: { inline_keyboard: rows } };
+  if (messageId) return tg(env, "editMessageText", { ...msg, message_id: messageId });
+  await tg(env, "sendMessage", msg);
 }
 
 // ---------- following artists ----------

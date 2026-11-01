@@ -126,19 +126,35 @@ def contested(a, rt):
 
 
 def notes_rows(n, rid=None):
-    """Fantano's own line from the video description, and his favourite tracks with Deezer's official player
-    (30-second previews; embedding the widget is what Deezer offers it for, unlike handing out the audio)."""
-    if not n:
+    """Fantano's own line from the video description (his favourite tracks are fav_section, below the buttons)."""
+    if not n or not n.get("blurb"):
         return []
-    rows = []
-    if n.get("blurb"):
-        rows.append(("Фантано в описании ролика", f'<q lang="en">{e(n["blurb"])}</q>'))
-    fav = n.get("fav") or []
-    if fav:
-        players = "".join(f'<iframe class="dz" title="Deezer: {e(f["t"])}" loading="lazy" src="https://widget.deezer.com/widget/auto/track/{int(f["dz"])}" '
-                          f'width="100%" height="152" frameborder="0" allow="encrypted-media; clipboard-write"></iframe>' for f in fav if f.get("dz"))
-        rows.append(("Любимые треки Фантано", f'<span id="fav">{e(", ".join(f["t"] for f in fav))}</span>{players}'))
-    return rows
+    return [("Фантано в описании ролика", f'<q lang="en">{e(n["blurb"])}</q>')]
+
+
+def fav_section(n):
+    """Fantano's favourite tracks under the page's main part, each opening an official player on a tap: Deezer's
+    widget, or Apple Music's embed for a track Deezer doesn't have (both play 30-second previews; embedding them is
+    what they are offered for, unlike handing out the audio). Closed, a player isn't loaded (checked in Chromium 153)."""
+    fav = (n or {}).get("fav") or []
+    if not fav:
+        return ""
+    items = []
+    for f in fav:
+        if f.get("dz"):  # the attributes of Deezer's own embed code
+            who, attrs = "Deezer", (f'src="https://widget.deezer.com/widget/auto/track/{int(f["dz"])}" height="152" '
+                                    'allow="encrypted-media; clipboard-write"')
+        elif f.get("am"):  # the attributes of Apple's own embed code
+            who, attrs = "Apple Music", (f'src="https://embed.music.apple.com/{e(f["am"])}" height="175" '
+                                         'allow="autoplay *; encrypted-media *; fullscreen *; clipboard-write" '
+                                         'sandbox="allow-forms allow-popups allow-same-origin allow-scripts '
+                                         'allow-storage-access-by-user-activation allow-top-navigation-by-user-activation"')
+        else:
+            items.append(f'<li><span class="trk">{e(f["t"])}</span></li>')
+            continue
+        items.append(f'<li><details><summary><span class="trk">{e(f["t"])}</span> <span class="muted">▶ {who}</span></summary>'
+                     f'<iframe class="dz" title="{who}: {e(f["t"])}" loading="lazy" {attrs} width="100%" frameborder="0"></iframe></details></li>')
+    return f'<section class="favs"><h2 id="fav">Любимые треки Фантано</h2><ul>{"".join(items)}</ul></section>'
 
 
 def lists_rows(badges):
@@ -162,33 +178,49 @@ def critics_rows(rt, a=None):
     return rows
 
 
-def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None):
+def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, album=None):
     """A release page for a review the bot never posted a card for: what the archive knows, the artist's other
     reviews, and the reader's marks."""
     review = f"https://youtu.be/{a['video_id']}" if a.get("video_id") else a["url"]
     btns = [("▶ Видеообзор" if a.get("video_id") else "Обзор", review)]
     if a.get("video_id") and "theneedledrop.com" in a["url"]:
         btns.append(("Текст обзора на TND", a["url"]))
+    # what the bot's card shows for this album, from Deezer (data/albums.json, lmn/notes.py)
+    album = album or {}
+    if album.get("dz"):
+        btns.append(("Все платформы", f"https://album.link/https://www.deezer.com/album/{int(album['dz'])}"))
     btns += search_buttons(a["artist_name"], a["album"])
-    meta = " · ".join(x for x in [", ".join((a.get("genres") or [])[:5]), "обзор " + a["published"][:10],
-                                    "гостевой обзор" if a.get("guest") else None] if x)
+    year = album.get("y") if (album.get("y") or "9999") <= a["published"][:4] else None  # Deezer may only have a later reissue
+    by_date = sorted(artist_reviews, key=lambda x: x["published"])
+    nth = next((i for i, x in enumerate(by_date, 1) if x["id"] == a["id"]), 0)
+    meta = " · ".join(x for x in [", ".join((a.get("genres") or [])[:5]),
+                                    card.plural_tracks(len(album["t"])) if album.get("t") else None,
+                                    f"{album['min']} мин" if album.get("min") else None,
+                                    "обзор " + a["published"][:10], "гостевой обзор" if a.get("guest") else None,
+                                    f"{nth}-й из {len(by_date)} обзоров артиста" if nth and len(by_date) > 1 else None] if x)
     others = [x for x in artist_reviews if x["id"] != a["id"]]
     hist = (f'<h2>Фантано об этом артисте</h2>{history_list(artist_reviews, a["id"], 1)}' if others else "")
     brief = brief or {}
     rows = [(k, e(v)) for k, v in (("Кто", brief.get("who")), ("Бриф", brief.get("about") or brief.get("brief"))) if v]
     # Fantano's line only where there's no brief (as on bot-card pages)
     rows += notes_rows({**(note or {}), "blurb": None if brief.get("brief") else (note or {}).get("blurb")} if note else None, a["id"])
+    if album.get("t"):  # Fantano's favourites marked with ★, as on bot-card pages
+        fav = {"tracks": [{"title": t, "sec": sec} for t, sec in album["t"]], "ai": {"best_tracks": [f["t"] for f in (note or {}).get("fav") or []]}}
+        rows.append(("Треклист", "<ol>" + "".join(f"<li>{line.split('. ', 1)[1]}</li>" for line in card.tracklist(fav)) + "</ol>"
+                     + ('<span class="muted">★ — любимые у Фантано</span>' if fav["ai"]["best_tracks"] else "")))
     rows += lists_rows(lists) + critics_rows(rt, a)
     # the mood row stays hidden until app.js fills it from visitors' votes (/api/public)
     dl = (f"<dl>{''.join(f'<dt>{k}</dt><dd>{v}</dd>' for k, v in rows)}"
           '<dt class="moods-h" hidden>Когда слушать</dt><dd class="moods" hidden></dd></dl>')
     body = f"""<article class="release" data-id="{e(a['id'])}">
-<h1><a href="../a/{slug(a['artist_name'])}.html">{e(a['artist_name'])}</a> — {e(a['album'])}</h1>
+{f'<img class="cover" src="{e(album["cv"])}" alt="">' if album.get("cv") else ''}
+<h1><a href="../a/{slug(a['artist_name'])}.html">{e(a['artist_name'])}</a> — {e(a['album'])}{f' <span class="muted">({e(year)})</span>' if year else ''}</h1>
 <p>{score_badge(a)} <span class="muted">{e(meta)}</span></p>
 {dl}
 <p class="btns">{''.join(f'<a class="btn" href="{e(u)}">{e(n)}</a>' for n, u in btns)}</p>
 <div class="mine" hidden></div>
 <p class="avg muted"></p>
+{fav_section(note)}
 {hist}
 </article>"""
     return page(f"{a['artist_name']} — {a['album']}", body, depth=1)
@@ -251,8 +283,8 @@ def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None):
     if r.get("tracks"):
         rows.append(("Треклист", "<ol>" + "".join(f"<li>{line.split('. ', 1)[1]}</li>" for line in card.tracklist(r)) + "</ol>"
                      + ('<span class="muted">★ — выделил Фантано</span>' if (r.get("ai") or {}).get("best_tracks") else "")))
-    # Fantano's line only where there's no brief; the favourites' players always (the tracklist only marks them with ★)
-    rows += notes_rows({"blurb": None if ai.get("brief") else (note or {}).get("blurb"), "fav": (note or {}).get("fav")}, r["id"])
+    # Fantano's line only where there's no brief; the favourites' players below the buttons (fav_section)
+    rows += notes_rows({"blurb": None if ai.get("brief") else (note or {}).get("blurb")}, r["id"])
     rows += lists_rows(lists)
     rows += critics_rows(rt, r)
     if r.get("previous"):
@@ -274,6 +306,7 @@ def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None):
 <p class="btns">{btns}</p>
 <div class="mine" hidden></div>
 <p class="avg muted"></p>
+{fav_section(note)}
 </article>"""
     return page(f"{r['artist_name']} — {r['album']}", body, depth=1)
 
@@ -317,6 +350,7 @@ def build():
     lists = specials.badges(sp)
     notes = load("notes.json", {})
     briefs = load("briefs.json", {})
+    albums = load("albums.json", {})
     (OUT / "wtb.json").write_text(json.dumps([{k: r[k] for k in ("artist", "video_id", "date")} for r in sp.get("rankings", [])],
                                              ensure_ascii=False))  # the bot's artist lists link the "worst to best" video
     (OUT / "rt").mkdir(exist_ok=True)
@@ -326,7 +360,7 @@ def build():
         nt = notes.get(a["id"])
         br = briefs.get(a["id"])
         html_ = (release_page(a, rt, artists.get((a.get("artist") or {}).get("mbid") or ""), li, nt, br) if a["id"] in enriched
-                 else archive_page(a, by_artist[slug(a["artist_name"])], rt, li, nt, br))
+                 else archive_page(a, by_artist[slug(a["artist_name"])], rt, li, nt, br, albums.get(a["id"]) or None))
         (OUT / "r" / f"{a['id']}.html").write_text(html_)
         crit, sales = critics_parts(rt)
         nt = nt or {}
@@ -337,7 +371,7 @@ def build():
                 {"crit": crit[:4], "sales": sales[:4], "wp_url": (rt or {}).get("wp_url"), "contested": contested(a, rt),
                  **({"lists": li[:4]} if li else {}), **({"blurb": nt["blurb"]} if nt.get("blurb") else {}),
                  **({"brief": bf} if bf else {}), **({"moods": bm} if bm else {}),
-                 **({"fav": [f["t"] for f in nt["fav"]], "fav_play": any(f.get("dz") for f in nt["fav"])} if nt.get("fav") else {})},
+                 **({"fav": [f["t"] for f in nt["fav"]], "fav_play": any(f.get("dz") or f.get("am") for f in nt["fav"])} if nt.get("fav") else {})},
                 ensure_ascii=False))
     for k, items in by_artist.items():
         (OUT / "a" / f"{k}.html").write_text(artist_page(items[0]["artist_name"], items))
