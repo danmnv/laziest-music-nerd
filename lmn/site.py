@@ -161,7 +161,7 @@ def critics_rows(rt, a=None):
     return rows
 
 
-def archive_page(a, artist_reviews, rt=None, lists=None, note=None):
+def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None):
     """A release page for a review the bot never posted a card for: what the archive knows, the artist's other
     reviews, and the reader's marks."""
     review = f"https://youtu.be/{a['video_id']}" if a.get("video_id") else a["url"]
@@ -173,7 +173,11 @@ def archive_page(a, artist_reviews, rt=None, lists=None, note=None):
                                     "гостевой обзор" if a.get("guest") else None] if x)
     others = [x for x in artist_reviews if x["id"] != a["id"]]
     hist = (f'<h2>Фантано об этом артисте</h2>{history_list(artist_reviews, a["id"], 1)}' if others else "")
-    rows = notes_rows(note, a["id"]) + lists_rows(lists) + critics_rows(rt, a)
+    brief = brief or {}
+    rows = [(k, e(v)) for k, v in (("Кто", brief.get("who")), ("Бриф", brief.get("about") or brief.get("brief"))) if v]
+    # Fantano's line only where there's no brief (as on bot-card pages)
+    rows += notes_rows({**(note or {}), "blurb": None if brief.get("brief") else (note or {}).get("blurb")} if note else None, a["id"])
+    rows += lists_rows(lists) + critics_rows(rt, a)
     # the mood row stays hidden until app.js fills it from visitors' votes (/api/public)
     dl = (f"<dl>{''.join(f'<dt>{k}</dt><dd>{v}</dd>' for k, v in rows)}"
           '<dt class="moods-h" hidden>Когда слушать</dt><dd class="moods" hidden></dd></dl>')
@@ -215,18 +219,20 @@ def dossier_rows(d):
     return rows
 
 
-def release_page(r, rt=None, wiki=None, lists=None, note=None):
+def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None):
     c = color(r.get("score"), r.get("not_good"), r.get("classic"))
     a = r.get("artist") or {}
     ai = r.get("ai") or {}
+    if brief and brief.get("brief") and not ai.get("brief"):  # the card went out without one (seeded, or Gemini was out of quota): the archive's
+        ai = {**ai, "brief": brief.get("brief"), "about": brief.get("about"), "who": ai.get("who") or brief.get("who"), "moods": ai.get("moods") or brief.get("moods")}
     rows = []
     if ai.get("who"):
         rows.append(("Кто", e(ai["who"])))
     before = card.fantano_before(r)
     if before:
         rows.append(("Фантано раньше", before))
-    if ai.get("brief"):
-        rows.append(("Бриф", e(ai["brief"])))
+    if ai.get("brief"):  # the site has room for the longer one; the card in Telegram keeps the short one
+        rows.append(("Бриф", e(ai.get("about") or ai["brief"])))
     if ai.get("moods"):
         rows.append(("Когда слушать", '<span class="moods">' + e(" / ".join(ai["moods"])) + ' <span class="muted">(догадка ИИ)</span></span>'))
     dossier = []
@@ -309,6 +315,7 @@ def build():
     sp = load("specials.json", {})
     lists = specials.badges(sp)
     notes = load("notes.json", {})
+    briefs = load("briefs.json", {})
     (OUT / "wtb.json").write_text(json.dumps([{k: r[k] for k in ("artist", "video_id", "date")} for r in sp.get("rankings", [])],
                                              ensure_ascii=False))  # the bot's artist lists link the "worst to best" video
     (OUT / "rt").mkdir(exist_ok=True)
@@ -316,15 +323,18 @@ def build():
         rt = ratings.get(a["id"])
         li = lists.get(a["id"])
         nt = notes.get(a["id"])
-        html_ = (release_page(a, rt, artists.get((a.get("artist") or {}).get("mbid") or ""), li, nt) if a["id"] in enriched
-                 else archive_page(a, by_artist[slug(a["artist_name"])], rt, li, nt))
+        br = briefs.get(a["id"])
+        html_ = (release_page(a, rt, artists.get((a.get("artist") or {}).get("mbid") or ""), li, nt, br) if a["id"] in enriched
+                 else archive_page(a, by_artist[slug(a["artist_name"])], rt, li, nt, br))
         (OUT / "r" / f"{a['id']}.html").write_text(html_)
         crit, sales = critics_parts(rt)
         nt = nt or {}
-        if crit or sales or li or nt:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
+        bf = (a.get("ai") or {}).get("brief") or (br or {}).get("brief")
+        if crit or sales or li or nt or bf:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
             (OUT / "rt" / f"{a['id']}.json").write_text(json.dumps(
                 {"crit": crit[:4], "sales": sales[:4], "wp_url": (rt or {}).get("wp_url"), "contested": contested(a, rt),
                  **({"lists": li[:4]} if li else {}), **({"blurb": nt["blurb"]} if nt.get("blurb") else {}),
+                 **({"brief": bf} if bf else {}),
                  **({"fav": [f["t"] for f in nt["fav"]], "fav_play": any(f.get("dz") for f in nt["fav"])} if nt.get("fav") else {})},
                 ensure_ascii=False))
     for k, items in by_artist.items():

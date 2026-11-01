@@ -583,8 +583,11 @@ async function sendAlbum(env, uid, a, intro) {
     r.guest ? "гостевой обзор" : "",
     nth && ofArtist.length > 1 ? `${nth}-й из ${ofArtist.length} обзоров артиста` : "",
   ].filter(Boolean).join(" · ");
+  // the short brief: the card's own (Gemini), else the archive's (lmn/briefs.py, in rt); Fantano's line only without one
+  const brief = (full && full.ai && full.ai.brief) || (rt && rt.brief);
   const words = [
-    rt && rt.blurb && !(full && full.ai && full.ai.brief) ? `💬 <i>${esc(rt.blurb)}</i>` : "",
+    brief ? `<b>Бриф:</b> ${esc(brief)}` : "",
+    rt && rt.blurb && !brief ? `💬 <i>${esc(rt.blurb)}</i>` : "",
     rt && rt.fav && rt.fav.length ? `★ Любимые у Фантано: ${esc(rt.fav.join(", "))}` : "",
   ].filter(Boolean).map((l) => "\n" + l).join("");
   const text = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}${words}${criticsText(rt)}`;
