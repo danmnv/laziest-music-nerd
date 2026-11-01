@@ -20,7 +20,7 @@ PROVIDERS = [
      os.environ.get("CEREBRAS_MODEL") or "llama-3.3-70b", 10, 14000),
 ]
 _last = {}
-_dead = set()  # providers whose key is missing, wrong or out of quota in this run
+_dead = set()  # providers whose key is wrong (401/403) or still limited after retries (429) in this run
 
 
 def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotonic):
@@ -49,6 +49,8 @@ def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotoni
             if e.status in (0, 429, 500, 502, 503, 504) and attempt < 2:
                 sleep(15 * (attempt + 1))  # rate limit or a hiccup: a bit later
                 continue
+            if e.status == 429:  # still limited after two waits: quota gone for now, the next provider for the rest
+                _dead.add(name)
             return None
         try:
             out = gemini.parse_answer(raw["choices"][0]["message"]["content"])

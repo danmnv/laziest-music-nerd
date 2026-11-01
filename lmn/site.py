@@ -223,7 +223,7 @@ def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None):
     c = color(r.get("score"), r.get("not_good"), r.get("classic"))
     a = r.get("artist") or {}
     ai = r.get("ai") or {}
-    if brief and not ai.get("brief"):  # the card went out without one (seeded, or Gemini was out of quota): the archive's
+    if brief and brief.get("brief") and not ai.get("brief"):  # the card went out without one (seeded, or Gemini was out of quota): the archive's
         ai = {**ai, "brief": brief.get("brief"), "about": brief.get("about"), "who": ai.get("who") or brief.get("who"), "moods": ai.get("moods") or brief.get("moods")}
     rows = []
     if ai.get("who"):

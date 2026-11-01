@@ -3,7 +3,8 @@ written by a free model (lmn/llm.py: Mistral, then Groq, then Cerebras) from the
 and BRIEFS_MINUTES of work; the rest next run.
 
 Writes data/briefs.json: {review id: {"brief", "about", "who", "moods", "m": model}}. Skipped: guest reviews (not Fantano's
-opinion), single-song reviews, reviews whose card already has a Gemini brief, and posts without a text.
+opinion), single-song reviews, reviews whose card already has a Gemini brief; posts without a text are kept as
+{"skip": ...}, reviews no model answered for as {"fail": n} (left alone after FAIL_MAX runs).
 
 Run: python -m lmn.briefs (workflow «Брифы для архива»). BRIEFS_COMPARE=1 writes nothing and instead puts two Mistral
 models (and Groq, Cerebras when their keys are set) side by side on 10 reviews into the run's summary, to choose the model."""
@@ -18,6 +19,7 @@ from . import llm, tnd
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 BATCH = 15
 MIN_TEXT = 500
+FAIL_MAX = 2  # runs in which no model gave a brief for this review: then it is left alone
 GIVE_UP = 5  # failures in a row: the key, the plan or the service is wrong, no use going on
 COMPARE = [("mistral", "mistral-small-latest"), ("mistral", "mistral-medium-latest"), ("groq", None), ("cerebras", None)]
 
@@ -37,9 +39,13 @@ def texts(items):
             got = tnd.fetch_texts([a["id"] for a in chunk])
         except Exception as e:
             print(f"  ! TND texts: {e}", file=sys.stderr)
-            got = {}
+            got = None  # unknown, not "no text": these are tried again next run
         for a in chunk:
-            yield a, got.get(a["id"]) or ""
+            yield a, (None if got is None else got.get(a["id"]) or "")
+
+
+def finished(v):
+    return bool(v.get("brief") or v.get("skip") or v.get("fail", 0) >= FAIL_MAX)
 
 
 def entry(out):
@@ -85,16 +91,22 @@ def run():
     path = DATA / "briefs.json"
     data = json.loads(path.read_text()) if path.exists() else {}
     limit = int(os.environ.get("BRIEFS_LIMIT", "300"))
-    todo = targets(archive, reviews, set(data))
-    print(f"briefs: {len(data)} done, {len(todo)} to do, this run up to {limit}")
-    made = failed = in_row = 0
+    todo = targets(archive, reviews, {k for k, v in data.items() if finished(v)})
+    print(f"briefs: {sum(1 for v in data.values() if v.get('brief'))} done, {len(todo)} to do, this run up to {limit}")
+    made = failed = in_row = tried = 0
     deadline = time.monotonic() + 60 * float(os.environ.get("BRIEFS_MINUTES", "100"))
-    for a, text in texts(todo[:limit]):
+    for a, text in texts(todo):  # the whole list, lazily: skipped ones don't use up the limit
+        if tried >= limit:
+            break
         if time.monotonic() > deadline:  # stop and save before the job's time runs out; the rest next run
             print("briefs: time is up for this run")
             break
-        if len(text) < MIN_TEXT:
+        if text is None:
             continue
+        if len(text) < MIN_TEXT:
+            data[a["id"]] = {"skip": "no text" if not text else "short"}  # remembered, so it isn't fetched every run
+            continue
+        tried += 1
         out = llm.summarize(f"{a['artist_name']} - {a['album']}", text)
         if out and (out.get("brief") or "").strip():
             data[a["id"]] = entry(out)
@@ -103,13 +115,14 @@ def run():
             if made % 25 == 0:
                 save(path, data)  # a timeout later in the run keeps what is done
         else:
+            data[a["id"]] = {"fail": (data.get(a["id"]) or {}).get("fail", 0) + 1}  # given up after FAIL_MAX runs
             failed += 1
             in_row += 1
             if in_row >= GIVE_UP:
                 print(f"::warning::no model answered {GIVE_UP} times in a row, stopping")
                 break
     save(path, data)
-    print(f"briefs: made {made}, failed {failed}, total {len(data)}")
+    print(f"briefs: made {made}, failed {failed}, total {sum(1 for v in data.values() if v.get('brief'))}")
 
 
 if __name__ == "__main__":
