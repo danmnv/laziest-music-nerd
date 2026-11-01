@@ -332,10 +332,22 @@ test("a reviewed album: Fantano's line, favourites with a player on the site, n-
   assert.ok(btns.some((b) => b.text === "▶ Любимые треки" && b.url === "https://site/r/p.html#fav"));
   assert.ok(!btns.some((b) => /Отрывки/.test(b.text)));
   calls = [];
-  await press(OWNER, "mq:k");
+  await press(OWNER, "mq:p");  // art rock, no AI guess: the genre's four, then «Другие варианты»
   const m = calls.find((x) => x.method === "sendMessage");
-  assert.equal(m.text, "Когда лучше слушать <b>Radiohead — Kid A</b>?");
-  assert.equal(m.reply_markup.inline_keyboard[0][0].callback_data, "vo:k:0");
+  assert.equal(m.text, "Когда лучше слушать <b>Radiohead — A Moon Shaped Pool</b>?");
+  assert.deepEqual(m.reply_markup.inline_keyboard.map((row) => row.map((b) => b.text)),
+    [["в наушниках, вдумчиво", "ночью"], ["когда злишься", "в дорогу"], ["Другие варианты"]]);
+  assert.equal(m.reply_markup.inline_keyboard[0][0].callback_data, "vo:p:10");
+  calls = [];
+  await press(OWNER, "ma:p");
+  const all = calls.find((x) => x.method === "editMessageText");
+  assert.equal(all.reply_markup.inline_keyboard.flat().length, 14);
+  await press(OWNER, "vo:p:4");
+  calls = [];
+  await press(OWNER, "mq:k");  // the archive brief's guess comes first, the genre's fill the rest
+  assert.deepEqual(calls.find((x) => x.method === "sendMessage").reply_markup.inline_keyboard[0].map((b) => b.text),
+    ["для работы за столом", "в наушниках, вдумчиво"]);
+  assert.ok(db.prepare("SELECT 1 FROM mood_votes WHERE review_id='p' AND mood='в дорогу'").get());
   await press(OWNER, "m:k:later");
   calls = [];
   await say(OWNER, "📌 Отложенные");

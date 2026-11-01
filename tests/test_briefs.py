@@ -22,6 +22,12 @@ class ParseAnswer(unittest.TestCase):
         self.assertTrue(out["about"].endswith("."))
         self.assertEqual(out["moods"], ["для работы за столом"])
 
+    def test_moods_are_the_same_list_as_the_bots(self):
+        import re
+        js = (Path(__file__).parent.parent / "worker/src/index.js").read_text()
+        block = re.search(r"const MOODS = \[(.*?)\];", js, re.S).group(1)
+        self.assertEqual(re.findall(r'"([^"]+)"', block), gemini.MOODS)
+
 
 class Providers(unittest.TestCase):
     def setUp(self):

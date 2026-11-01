@@ -34,7 +34,7 @@ def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotoni
     if not key or not text:
         return None
     model = model or _picked.get(name) or default
-    prompt = gemini.PROMPT.format(source=gemini.SOURCE_TEXT, moods=json.dumps(gemini.MOODS, ensure_ascii=False),
+    prompt = gemini.PROMPT.format(source=gemini.SOURCE_TEXT, moods=json.dumps(gemini.AI_MOODS, ensure_ascii=False),
                                   title=title, text="\nТекст обзора:\n" + text[:max_text])
     body = {"model": model, "messages": [{"role": "user", "content": prompt}],
             "response_format": {"type": "json_object"}, "temperature": 0.4}
