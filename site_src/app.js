@@ -69,32 +69,38 @@
   const list = document.getElementById("catalog");
   if (!list) return;
   const q = document.getElementById("q"), fs = document.getElementById("fscore"), fg = document.getElementById("fgenre"),
-    fy = document.getElementById("fyear"), fh = document.getElementById("fhide"), more = document.getElementById("more");
+    fy = document.getElementById("fyear"), fh = document.getElementById("fhide"), fo = document.getElementById("fsort"),
+    more = document.getElementById("more");
   let all = [], shown = 50;
   const colorOf = (x) => x.ng ? "red" : x.cl ? "green" : x.s == null ? "none" : x.s >= 8 ? "green" : x.s >= 5 ? "neutral" : "red";
   const labelOf = (x) => x.ng ? "NOT GOOD" : x.cl ? "CLASSIC" : x.s == null ? "?" : x.s;
+  // As in the bot: every word must appear in the artist or album, ignoring case, accents and punctuation.
+  const fold = (s) => String(s).normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/&/g, "and").replace(/[^\p{L}\p{N}]+/gu, "");
+  const rank = (x) => x.ng ? 0 : x.cl ? 11 : x.s == null ? -1 : x.s;
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   function render() {
-    const text = q.value.trim().toLowerCase(), sc = fs.value, g = fg.value, y = fy.value, hide = fh.checked && token;
+    const words = q.value.split(/\s+/).map(fold).filter(Boolean), sc = fs.value, g = fg.value, y = fy.value, hide = fh.checked && token;
     const rows = all.filter((x) =>
-      (!text || (x.a + " " + x.t).toLowerCase().includes(text)) &&
+      (!words.length || words.every((w) => x.f.includes(w))) &&
       (!sc || (sc === "red" ? colorOf(x) === "red" : (x.s != null && x.s >= Number(sc)) || (x.cl && Number(sc) <= 10))) &&
       (!g || x.g.includes(g)) && (!y || x.d.startsWith(y)) &&
       (!hide || !(marks[x.i] && marks[x.i].status === "done")));
+    if (fo.value === "score") rows.sort((a, b) => rank(b) - rank(a) || b.d.localeCompare(a.d));
     list.innerHTML = rows.slice(0, shown).map((x) =>
-      `<li data-id="${esc(x.i)}"><span class="score ${colorOf(x)}">${labelOf(x)}</span> <a href="${x.p ? root + "r/" + esc(x.i) + ".html" : esc(x.u)}">${esc(x.a)} — ${esc(x.t)}</a>` +
+      `<li data-id="${esc(x.i)}"><span class="score ${colorOf(x)}">${labelOf(x)}</span> <a href="${root}a/${esc(x.k)}.html">${esc(x.a)}</a> — <a href="${root}r/${esc(x.i)}.html">${esc(x.t)}</a>` +
       `<span class="muted"> ${esc([x.g[0], x.d.slice(0, 4), x.gu ? "гостевой" : ""].filter(Boolean).join(" · "))}</span><span class="st">${marks[x.i] && marks[x.i].status ? ICON[marks[x.i].status] : ""}</span></li>`).join("") || "<li>Ничего не нашлось.</li>";
     more.hidden = rows.length <= shown;
   }
   fetch(root + "catalog.json").then((r) => r.json()).then((d) => {
     all = d.filter((x) => x.a);
+    all.forEach((x) => { x.f = fold(x.a) + "|" + fold(x.t); });
     const genres = {}; all.forEach((x) => x.g.forEach((g) => genres[g] = (genres[g] || 0) + 1));
     Object.entries(genres).filter(([, n]) => n >= 5).sort((a, b) => b[1] - a[1]).slice(0, 150)
       .forEach(([g]) => fg.insertAdjacentHTML("beforeend", `<option>${esc(g)}</option>`));
     [...new Set(all.map((x) => x.d.slice(0, 4)))].sort().reverse().forEach((yr) => fy.insertAdjacentHTML("beforeend", `<option>${yr}</option>`));
     render();
   });
-  [q, fs, fg, fy, fh].forEach((el) => el.addEventListener("input", () => { shown = 50; render(); }));
+  [q, fs, fg, fy, fh, fo].forEach((el) => el.addEventListener("input", () => { shown = 50; render(); }));
   more.onclick = () => { shown += 100; render(); };
   loadMarks().then(render);
 })();
