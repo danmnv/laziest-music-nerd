@@ -40,12 +40,6 @@ jobs:
           TELEGRAM_CHANNEL: ${{ secrets.TELEGRAM_CHANNEL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-      - name: Temporary live check (artist dossier from Wikipedia)
-        run: mkdir -p /tmp/dossier && cp data/reviews.json /tmp/dossier/ && python -m lmn.dossier && python -c "import json; d=json.load(open('/tmp/dossier/artists.json')); [print(k[:8], v.get('lang'), v.get('title'), '|', (v.get('extract') or '')[:60], '|', v.get('members'), v.get('past_members')) for k, v in list(d.items())[:12]]"
-        continue-on-error: true
-        env:
-          DATA_DIR: /tmp/dossier
-          DOSSIER_LIMIT: "12"
       - run: |
           mkdir -p /tmp/data && echo '{"seeded": true}' > /tmp/data/state.json
           python -m lmn.check

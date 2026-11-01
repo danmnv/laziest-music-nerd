@@ -71,7 +71,7 @@ def members(text):
     prm = params(box)
     cur = next((member_list(prm[k]) for k in MEMBERS if prm.get(k)), [])
     past = next((member_list(prm[k]) for k in PAST if prm.get(k)), [])
-    return cur, past
+    return cur, [m for m in past if m not in cur]  # some articles list a member in both
 
 
 def first_paragraph(extract):
