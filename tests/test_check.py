@@ -71,7 +71,7 @@ class HourlyRunTest(unittest.TestCase):
         check.main()
 
     def cards(self):
-        return [t for t in self.tg.sent if "Свежие обзоры" not in t]
+        return [t for t in self.tg.sent if "Последние 30 обзоров" not in t]
 
     def seed(self, n=2):
         self.posts = [tnd_post(i) for i in range(n)]

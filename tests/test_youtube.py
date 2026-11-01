@@ -197,7 +197,7 @@ class HourlyRunWithYouTubeTest(unittest.TestCase):
             self.addCleanup(p.stop)
 
     def cards(self):
-        return [t for t in self.tg.sent if "Свежие обзоры" not in t]
+        return [t for t in self.tg.sent if "Последние 30 обзоров" not in t]
 
     def test_youtube_review_is_posted_once_and_linked_when_the_site_catches_up(self):
         now = datetime.now(timezone.utc)

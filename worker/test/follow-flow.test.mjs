@@ -313,7 +313,8 @@ test("an album without a review can be put off: it shows in «📌 Отложе�
   const card = calls.find((x) => x.method === "sendPhoto");
   const btns = card.reply_markup.inline_keyboard;
   assert.deepEqual(btns.find((r) => r[0].callback_data === `m:${BENDS}:later`).map((b) => b.text), ["• Отложить", "✓ Слушал", "✗ Не моё"]);
-  assert.ok(btns.flat().some((b) => b.text === "🔎 Google"));
+  assert.ok(btns.flat().some((b) => b.text === "🔎 Bandcamp" && b.url === "https://bandcamp.com/search?q=Radiohead%20The%20Bends&item_type=a"));
+  assert.ok(btns.filter((row) => row[0].url).every((row) => row.length <= 2)); // three links in a row get cut on a phone
   await press(OWNER, `m:${BENDS}:later`);
   calls = [];
   await say(OWNER, "📌 Отложенные");
@@ -394,4 +395,45 @@ test("a button press is answered before the slow follow-ups (similar albums, a f
   await press(OWNER, "a:k");
   assert.equal(calls[0].method, "answerCallbackQuery");
   assert.equal(answers().length, 1);
+});
+
+test("the pinned list in a private chat holds only what was put off, each a link that opens its card there", async () => {
+  db.prepare("INSERT INTO users (user_id, started_at, dm_pinned_id) VALUES (?, ?, ?)").run(OTHER, "2026-11-01", 900);
+  await press(OTHER, "m:k:later");
+  await press(OTHER, `mb:${BENDS}`); // its card first: an album without a review is known by its card
+  await press(OTHER, `m:${BENDS}:later`);
+  const pin = calls.filter((c) => c.method === "editMessageText" && c.chat_id === OTHER && c.message_id === 900).pop();
+  assert.equal(pin.text.split("\n")[0], "<b>Отложено</b>");
+  assert.match(pin.text, /🟢 10\/10 · <a href="https:\/\/t\.me\/bot\?start=a_k">Radiohead — Kid A<\/a>/);
+  assert.ok(pin.text.includes(`<a href="https://t.me/bot?start=mb_${BENDS}">Radiohead — The Bends</a>`));
+  assert.ok(pin.text.indexOf("The Bends") < pin.text.indexOf("Kid A")); // the last put off first
+  await press(OTHER, "m:k:later"); // pressed again: no longer put off
+  await press(OTHER, `m:${BENDS}:done`);
+  const empty = calls.filter((c) => c.method === "editMessageText" && c.chat_id === OTHER).pop();
+  assert.match(empty.text, /Отложенных пока нет/);
+});
+
+test("a link from a pinned list: the card in the private chat, the «/start» it sent removed", async () => {
+  calls = [];
+  await tgUpdate({ message: { chat: { type: "private" }, from: { id: OWNER }, message_id: 41, text: "/start a_k" } });
+  assert.deepEqual(calls.filter((c) => c.method === "deleteMessage").map((c) => [c.chat_id, c.message_id]), [[OWNER, 41]]);
+  const shown = calls.find((c) => c.method === "sendPhoto" || (c.method === "sendMessage" && c.text.includes("Kid A")));
+  assert.ok((shown.caption || shown.text).includes("Radiohead — Kid A"));
+  assert.equal(shown.chat_id, OWNER);
+  // someone new (tapped in the channel): greeted, then the card; nothing to delete
+  calls = [];
+  await tgUpdate({ message: { chat: { type: "private" }, from: { id: 3 }, message_id: 7, text: `/start mb_${BENDS}` } });
+  assert.equal(calls.filter((c) => c.method === "deleteMessage").length, 0);
+  assert.match(calls[0].text, /^Привет!/);
+  assert.ok(calls.some((c) => c.method === "sendPhoto" && c.chat_id === 3 && c.caption.includes("The Bends")));
+});
+
+test("start parameters: only a card's own kinds and safe characters", async () => {
+  const { openFromStart, startLink } = await import("../src/links.mjs");
+  assert.equal(openFromStart("/start a_6ae16e7060a520b7b082e3e1"), "a:6ae16e7060a520b7b082e3e1");
+  assert.equal(openFromStart("/start dz_302127"), "dz:302127");
+  assert.equal(openFromStart("/start follow_k"), null);
+  assert.equal(openFromStart("/start a_x y"), null);
+  assert.equal(openFromStart("/start"), null);
+  assert.equal(startLink({ BOT_USERNAME: "b" }, "a:YGFqOLufncA"), "https://t.me/b?start=a_YGFqOLufncA");
 });

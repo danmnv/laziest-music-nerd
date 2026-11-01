@@ -145,4 +145,4 @@ class Notes(unittest.TestCase):
         self.assertEqual(html_.count("widget.deezer.com/widget/auto/track/"), 1)
         self.assertIn('src="https://widget.deezer.com/widget/auto/track/111"', html_)
         self.assertIn('src="https://embed.music.apple.com/us/album/x/123?i=456"', html_)
-        self.assertIn('<li><span class="trk">ALIEN</span></li>', html_)
+        self.assertIn('<li><span class="trk">Alien</span></li>', html_)

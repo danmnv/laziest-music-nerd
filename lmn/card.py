@@ -1,4 +1,4 @@
-"""Channel card (photo caption + buttons) and the pinned 60-day list."""
+"""Channel card (photo caption + buttons) and the channel's pinned list of the last 30 reviews."""
 import html
 import os
 import re
@@ -11,6 +11,11 @@ CAPTION_LIMIT = 1024
 MESSAGE_LIMIT = 4096
 SITE_URL = os.environ.get("SITE_URL", "https://danmnv.github.io/laziest-music-nerd")
 SITE_LIVE = os.environ.get("SITE_LIVE") == "1"  # until the site is up, list links go to the TND review
+# With the Worker up, a title in the pinned list opens the album's card in the private chat with the bot
+# (t.me/<bot>?start=a_<id>, worker/src/index.js openFromStart), not the site: a card can't go to the channel.
+WORKER_LIVE = os.environ.get("WORKER_LIVE") == "1"
+BOT_USERNAME = os.environ.get("BOT_USERNAME", "laziest_music_nerd_bot")
+LIST_SIZE = 30
 TYPE_RU = {"ep": "EP", "live": "live", "mixtape": "mixtape", "compilation": "сборник", "single": "сингл", "soundtrack": "саундтрек"}
 
 
@@ -100,7 +105,8 @@ def tracklist(r, limit=None):
 
 
 def _caption(r, ai, limit, drop=()):
-    lines = [f"<b>{e(r['artist_name'])} — {e(r['album'])}</b>"]
+    name = f"{e(r['artist_name'])} — {e(r['album'])}"
+    lines = [f'<b><a href="{page_url(r)}">{name}</a></b>' if SITE_LIVE else f"<b>{name}</b>"]  # the page on the site
     genres = ", ".join(r.get("genres", [])[:4])
     kind = TYPE_RU.get(r.get("type"))
     second = f"{EMOJI[color(r.get('score'), r.get('not_good'), r.get('classic'))]} {score_text(r)}"
@@ -223,12 +229,16 @@ def page_url(r):
     return f"{SITE_URL}/r/{r['id']}.html" if SITE_LIVE else r["url"]
 
 
+def list_url(r):
+    return f"https://t.me/{BOT_USERNAME}?start=a_{r['id']}" if WORKER_LIVE else page_url(r)
+
+
 STATUS = {"done": " ✓", "later": " •", "nope": " ✗"}
 
 
 def list_line(r, status=None):
     parts = [f"{EMOJI[color(r.get('score'), r.get('not_good'), r.get('classic'))]} {label(r.get('score'), r.get('not_good'), r.get('classic'))}",
-             f'<a href="{page_url(r)}">{e(r["artist_name"])} — {e(r["album"])}</a>']
+             f'<a href="{list_url(r)}">{e(r["artist_name"])} — {e(r["album"])}</a>']
     if r.get("genres"):
         parts.append(e(r["genres"][0]))
     if r.get("type") in TYPE_RU:
@@ -245,16 +255,23 @@ def recent(reviews, days=60, now=None):
     return sorted(rs, key=lambda r: datetime.fromisoformat(r["published"]), reverse=True)  # mixed "Z" and "-04:00" dates
 
 
-LIST_HEAD = "<b>Свежие обзоры Фантано за 60 дней</b>\n\n"
+LIST_HEAD = "<b>Последние 30 обзоров Фантано</b>\n\n"  # the same in worker/src/index.js
 
 
 def list_tail():
-    return f'\n\n<a href="{SITE_URL}/">Полный список на сайте</a>' if SITE_LIVE else ""
+    """Under the channel's pinned list: where the rest lives (the same in worker/src/index.js renderList)."""
+    return (f'\n\n<a href="https://t.me/{BOT_USERNAME}">Бот</a>: поиск по архиву, отложенное, напоминания'
+            + (f' · <a href="{SITE_URL}/">сайт</a>' if SITE_LIVE else ""))
+
+
+def latest(reviews, n=LIST_SIZE):
+    return sorted(reviews, key=lambda r: datetime.fromisoformat(r["published"]), reverse=True)[:n]  # mixed "Z" and "-04:00"
 
 
 def list_items(reviews, now=None):
-    """Pre-rendered lines without statuses; the Worker appends each person's status itself."""
-    return [{"id": r["id"], "line": list_line(r)} for r in recent(reviews, now=now)]
+    """The channel's pinned list: the last LIST_SIZE reviews, pre-rendered lines without statuses (the Worker appends
+    the owner's when it edits the list after a mark)."""
+    return [{"id": r["id"], "line": list_line(r)} for r in latest(reviews)]
 
 
 def render_list(items, statuses=None):

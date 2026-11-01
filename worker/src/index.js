@@ -7,10 +7,12 @@ import { nameKey, followMatches } from "./follow.mjs";
 import { answerSearch, artistReviews, badge } from "./search.mjs";
 import { criticsText } from "./critics.mjs";
 import { wikiCritics } from "./wiki.mjs";
+import { startLink, openFromStart } from "./links.mjs";
 
 const STATUS_LABEL = { later: "• отложено", done: "✓ прослушано", nope: "✗ не понравилось" };
 const STATUS_ICON = { later: " •", done: " ✓", nope: " ✗" };
-const LIST_HEAD = "<b>Свежие обзоры Фантано за 60 дней</b>\n\n";
+const LIST_HEAD = "<b>Последние 30 обзоров Фантано</b>\n\n"; // the channel's pinned list (lmn/card.py LIST_HEAD)
+const LATER_HEAD = "<b>Отложено</b>\n\n"; // the pinned list in a private chat: only that person's «Отложить»
 const MESSAGE_LIMIT = 4096;
 // When to listen. The order is fixed: buttons carry the index (old messages too), votes store the words.
 // The same list is lmn/gemini.py MOODS (a test keeps them equal).
@@ -72,10 +74,9 @@ export default {
         // Called by GitHub Actions after a new review: refresh every pinned list in private chats.
         if (req.headers.get("Authorization") !== `Bearer ${env.ACTIONS_SECRET}`) return new Response("forbidden", { status: 403 });
         const body = await req.json().catch(() => ({}));
+        // The pinned lists in private chats hold each person's «отложено» now, which a new review doesn't change.
         if (Array.isArray(body.items)) await setSetting(env, "list_items", JSON.stringify(body.items));
-        const { results } = await env.DB.prepare("SELECT user_id FROM users WHERE dm_pinned_id IS NOT NULL").all();
-        ctx.waitUntil((async () => { for (const u of results) await refreshDmList(env, u.user_id, false); })());
-        return json({ ok: true, users: results.length });
+        return json({ ok: true });
       }
       if (url.pathname === "/api/new-reviews" && req.method === "POST") {
         // Called by GitHub Actions right after cards are posted: remember each card's artist, message the followers.
@@ -104,7 +105,7 @@ export default {
 
   async scheduled(event, env, ctx) {
     if (event.cron === "0 7 * * SUN") ctx.waitUntil(sendDigest(env));
-    else ctx.waitUntil(sendReminders(env));
+    else ctx.waitUntil((async () => { await sendReminders(env); await migrateDmPins(env); })());
   },
 };
 
@@ -140,6 +141,15 @@ async function onUpdate(u, env) {
   }
   if (text === "/random" || text === RANDOM_BUTTON) return sendRandom(env, uid);
   if (text === "/later" || text === LATER_BUTTON) return sendLater(env, uid);
+  const open = openFromStart(text);
+  if (open) {
+    // an album tapped in a pinned list (the channel's or this chat's): its card here. Telegram sent "/start …" for the
+    // tap; it is removed so the chat holds only cards.
+    const known = await env.DB.prepare("SELECT 1 FROM users WHERE user_id=?").bind(uid).first();
+    if (!known) await welcome(env, uid);
+    else await tg(env, "deleteMessage", { chat_id: uid, message_id: m.message_id });
+    return openCard(env, uid, open);
+  }
   if (text.startsWith("/start")) return welcome(env, uid);
   if (text === "/channel_marks_on" || text === "/channel_marks_off") {
     if (!isOwner(env, uid)) return;
@@ -153,16 +163,21 @@ async function onUpdate(u, env) {
 
 async function welcome(env, uid) {
   await env.DB.prepare("INSERT OR IGNORE INTO users (user_id, started_at) VALUES (?, ?)").bind(uid, now()).run();
+  const channel = String(env.CHANNEL || "").replace(/^@/, "");
   await tg(env, "sendMessage", {
     chat_id: uid,
     parse_mode: "HTML",
+    link_preview_options: { is_disabled: true },
     text:
-      "Привет! Я присылаю карточки новых обзоров Anthony Fantano в канал " + env.CHANNEL + ".\n\n" +
-      "Кнопки «Отложить», «Слушал», «Не моё» под карточками видишь только ты. " +
-      "Ниже — закреплённый список свежих обзоров с твоими отметками, а всё отложенное — кнопка «" + LATER_BUTTON + "».\n\n" +
-      "Кнопка «" + RANDOM_BUTTON + "» внизу выдаёт альбом с оценкой от 8, который ты ещё не отмечал(а).\n\n" +
-      "Поиск: просто напиши мне артиста или альбом — найду обзоры Фантано с 2010 года.\n\n" +
-      "«🔔 Следить за артистом» под карточкой: о новом обзоре этого артиста напишу сюда. Список — кнопка «" + FOLLOWS_BUTTON + "».\n\n" +
+      `Привет! Это бот канала <a href="https://t.me/${channel}">@${channel}</a> о музыкальных обзорах Anthony Fantano.\n\n` +
+      "<b>В канале</b> выходят карточки новых обзоров. В закреплённом там 30 последних: нажми на альбом, и я пришлю его карточку сюда.\n\n" +
+      "<b>Здесь</b> всё твоё личное:\n" +
+      "• <b>Поиск.</b> Напиши артиста или альбом, найду обзоры Фантано с 2010 года и альбомы, которые он не обозревал.\n" +
+      "• <b>Отложенное.</b> «• Отложить» под карточкой, в канале или здесь, и альбом попадёт в закреплённое сообщение этого чата. Через 3 недели напомню.\n" +
+      "• <b>Отметки.</b> «✓ Слушал», «✗ Не моё»: кнопки видят все, твои отметки только ты. На сайте они видны после входа через Telegram.\n" +
+      "• <b>Артисты.</b> «🔔 Следить» под карточкой: о новом обзоре артиста напишу сюда. Список — кнопка «" + FOLLOWS_BUTTON + "».\n" +
+      "• <b>Случайный.</b> «" + RANDOM_BUTTON + "»: альбом с оценкой от 8, который ты ещё не отмечал(а).\n" +
+      "• <b>Лучшее.</b> Раз в две недели по воскресеньям пришлю 8+ за эти две недели.\n\n" +
       "Неофициальный фан-проект. Не связан с Anthony Fantano и The Needle Drop.",
     reply_markup: MENU,
   });
@@ -299,6 +314,15 @@ async function publicStats(env) {
 
 // ---------- pinned lists ----------
 
+async function openCard(env, uid, open) {
+  const [kind, id] = [open.slice(0, open.indexOf(":")), open.slice(open.indexOf(":") + 1)];
+  if (kind === "dz") return sendDeezerAlbum(env, uid, id);
+  if (kind === "mb") return sendMbAlbum(env, uid, id, null);
+  const a = (await archive(env)).find((x) => x.id === id) || (await reviews(env)).find((x) => x.id === id);
+  if (a) return sendAlbum(env, uid, a, "");
+  return tg(env, "sendMessage", { chat_id: uid, text: "Не нашёл этот альбом." });
+}
+
 async function listItems(env) {
   // GitHub Actions pushes the fresh list here after each new review; the repo copy is only a fallback.
   const cached = await getSetting(env, "list_items");
@@ -319,7 +343,8 @@ function tgLen(html) {
 }
 
 function renderList(env, items, statuses) {
-  const tail = env.SITE_LIVE === "1" ? `\n\n<a href="${env.SITE_URL}/">Полный список на сайте</a>` : "";
+  const tail = `\n\n<a href="https://t.me/${env.BOT_USERNAME}">Бот</a>: поиск по архиву, отложенное, напоминания` +
+    (env.SITE_LIVE === "1" ? ` · <a href="${env.SITE_URL}/">сайт</a>` : ""); // the same in lmn/card.py list_tail
   let lines = items.map((i) => i.line + (STATUS_ICON[statuses[i.id]] || ""));
   while (lines.length && tgLen(LIST_HEAD + lines.join("\n") + tail) > MESSAGE_LIMIT) lines.pop();
   return LIST_HEAD + (lines.length ? lines.join("\n") : "Пока пусто.") + tail;
@@ -328,7 +353,7 @@ function renderList(env, items, statuses) {
 async function refreshDmList(env, uid, createIfMissing) {
   const user = await env.DB.prepare("SELECT dm_pinned_id FROM users WHERE user_id=?").bind(uid).first();
   if (!user) return; // the bot can't write to someone who never pressed /start
-  const text = renderList(env, await listItems(env), statusMap(await userMarks(env, uid)));
+  const text = await laterList(env, uid);
   if (user.dm_pinned_id) {
     const d = await tg(env, "editMessageText", { chat_id: uid, message_id: user.dm_pinned_id, text, parse_mode: "HTML", link_preview_options: { is_disabled: true } });
     if (d.ok || String(d.description || "").includes("not modified") || !createIfMissing) return;
@@ -338,6 +363,23 @@ async function refreshDmList(env, uid, createIfMissing) {
     await tg(env, "pinChatMessage", { chat_id: uid, message_id: d.result.message_id, disable_notification: true });
     await env.DB.prepare("UPDATE users SET dm_pinned_id=? WHERE user_id=?").bind(d.result.message_id, uid).run();
   }
+}
+
+// The pinned list in a private chat: what this person put off, last first, each a link to its card.
+async function laterList(env, uid) {
+  const { results } = await env.DB.prepare("SELECT review_id FROM marks WHERE user_id=? AND status='later' ORDER BY later_at DESC").bind(uid).all();
+  const names = results.length ? await markedNames(env, results.map((r) => r.review_id)) : {};
+  const items = results.map((r) => names[r.review_id]).filter(Boolean);
+  if (!items.length) return LATER_HEAD + "Отложенных пока нет. Нажми «• Отложить» под карточкой, и альбом появится здесь.";
+  return renderLater(env, items);
+}
+
+function renderLater(env, items) {
+  const lines = items.map((x) => `${x.badge ? x.badge + " · " : ""}<a href="${startLink(env, x.open)}">${esc(x.artist_name)} — ${esc(x.album)}</a>`);
+  let n = lines.length;
+  const tail = (k) => (k < lines.length ? `\n\nЕщё ${lines.length - k} — кнопка «${LATER_BUTTON}»` : "");
+  while (n > 1 && tgLen(LATER_HEAD + lines.slice(0, n).join("\n") + tail(n)) > MESSAGE_LIMIT) n--;
+  return LATER_HEAD + lines.slice(0, n).join("\n") + tail(n);
 }
 
 async function refreshOwnerLists(env) {
@@ -564,9 +606,9 @@ async function sendUnreviewed(env, uid, x) {
   const known = arch.find((a) => nameKey(a.artist_name) === k); // any review of the artist: follow and their list work through it
   const google = { text: "🔎 Google", url: `https://www.google.com/search?q=${q}` };
   const rows = [
-    [{ text: "🔎 YouTube Music", url: `https://music.youtube.com/search?q=${q}` }, x.link ? { text: "Все платформы", url: `https://album.link/${x.link}` } : google],
+    [x.link ? { text: "Все платформы", url: `https://album.link/${x.link}` } : google, bandcampButton({}, x.artist, x.title)],
+    [{ text: "🔎 YouTube Music", url: `https://music.youtube.com/search?q=${q}` }, aoty(x.artist, x.title)],
   ];
-  rows.push(x.link ? [google, aoty(x.artist, x.title)] : [aoty(x.artist, x.title)]);
   if (x.key) {
     // remembered so that "📌 Отложенные", the reminder and "▶ Отрывки" know what this ID is
     await env.DB.prepare("INSERT INTO unreviewed (id, artist_name, album, year) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET artist_name=excluded.artist_name, album=excluded.album, year=excluded.year")
@@ -583,6 +625,14 @@ async function sendUnreviewed(env, uid, x) {
 }
 
 // Critics' and listeners' scores on Album of the Year: a link to its search only, nothing is fetched from AOTY.
+// The album's Bandcamp page when the card found one (new reviews), else Bandcamp's search for it: there is no
+// Bandcamp API, and its search page can't be read from a script (lmn/links.py).
+function bandcampButton(links, artist, album) {
+  const bc = links && links.bandcamp;
+  if (bc && !bc.includes("bandcamp.com/search")) return { text: "Bandcamp", url: bc };
+  return { text: "🔎 Bandcamp", url: `https://bandcamp.com/search?q=${encodeURIComponent(`${artist} ${album}`)}&item_type=a` };
+}
+
 const aoty = (artist, album) => ({ text: "🔎 AOTY", url: `https://www.albumoftheyear.org/search/?q=${encodeURIComponent(`${artist} ${album}`)}` });
 
 // A full card for one review, as in the channel: cover, score, genres, length, links, marks and "🔔".
@@ -622,15 +672,18 @@ async function sendAlbum(env, uid, a, intro) {
     moods.length ? `<b>Когда слушать:</b> ${esc(moods.join(" / "))} <i>(догадка ИИ, поправь кнопками)</i>` : "",
   ].filter(Boolean).map((l) => "\n" + l).join("");
   // a blank line between the score line and the words, so they don't read as one block
-  const text = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}${words ? "\n" + words : ""}${criticsText(rt)}`;
+  const text = (intro ? intro + "\n\n" : "") + `<b>${titleLink(env, r)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}${words ? "\n" + words : ""}${criticsText(rt)}`;
   const q = encodeURIComponent(`${r.artist_name} ${r.album}`);
   const allServices = links.songlink || (dz && dz.link ? `https://album.link/${dz.link}` : null);
+  // two buttons a row: three get cut to "Все пл…" on a phone
   const reply_markup = { inline_keyboard: [
     [
       r.video_id ? { text: "▶ Видеообзор", url: `https://youtu.be/${r.video_id}` } : { text: "Обзор", url: r.url },
-      links.youtube_album ? { text: "YouTube (альбом)", url: links.youtube_album } : { text: "🔎 YouTube Music", url: `https://music.youtube.com/search?q=${q}` },
+      allServices ? { text: "Все платформы", url: allServices } : { text: "🔎 Google", url: `https://www.google.com/search?q=${q}` },
     ],
-    [...(allServices ? [{ text: "Все платформы", url: allServices }] : []), { text: "🔎 Google", url: `https://www.google.com/search?q=${q}` }, aoty(r.artist_name, r.album)],
+    [bandcampButton(links, r.artist_name, r.album),
+      links.youtube_album ? { text: "YouTube (альбом)", url: links.youtube_album } : { text: "🔎 YouTube Music", url: `https://music.youtube.com/search?q=${q}` }],
+    [aoty(r.artist_name, r.album)],
     MARK_ROW(r.id),
     [{ text: "🔔 Следить", callback_data: `f:${r.id}` }, { text: "📚 Все обзоры", callback_data: `ar:${r.id}` }],
     // the AI's mood guess gets the channel card's vote (да / нет, «другое» asks all four); without one, a button asks
@@ -645,6 +698,12 @@ async function sendAlbum(env, uid, a, intro) {
     if (d.ok) return d;
   }
   return tg(env, "sendMessage", { chat_id: uid, text, parse_mode: "HTML", reply_markup, link_preview_options: { is_disabled: true } });
+}
+
+// "Artist — Album", a link to the album's page on the site when the site is up.
+function titleLink(env, r) {
+  const name = `${esc(r.artist_name)} — ${esc(r.album)}`;
+  return env.SITE_URL && env.SITE_LIVE === "1" ? `<a href="${env.SITE_URL}/r/${encodeURIComponent(r.id)}.html">${name}</a>` : name;
 }
 
 // Critic scores and charts for a review, from the site's rt/<id>.json (built from data/ratings.json; source:
@@ -875,8 +934,8 @@ async function markedNames(env, ids) {
   const out = {};
   if (!ids.length) return out;
   const want = new Set(ids);
-  for (const a of await archive(env)) if (want.has(a.id)) out[a.id] = { artist_name: a.artist_name, album: a.album, open: `a:${a.id}` };
-  for (const r of await reviews(env)) if (want.has(r.id) && !out[r.id]) out[r.id] = { artist_name: r.artist_name, album: r.album, open: `a:${r.id}` };
+  for (const a of await archive(env)) if (want.has(a.id)) out[a.id] = { artist_name: a.artist_name, album: a.album, open: `a:${a.id}`, badge: badge(a) };
+  for (const r of await reviews(env)) if (want.has(r.id) && !out[r.id]) out[r.id] = { artist_name: r.artist_name, album: r.album, open: `a:${r.id}`, badge: badge(r) };
   const rest = ids.filter((id) => !out[id]);
   for (let i = 0; i < rest.length; i += 50) {
     const part = rest.slice(i, i + 50);
@@ -902,6 +961,17 @@ async function sendLater(env, uid) {
 }
 
 // ---------- reminders (daily cron) ----------
+
+// Until 2026-11-01 the pinned message in a private chat was the 60-day list. The daily cron turns a few of them a day
+// into the «отложено» list (a person's own mark or /start does it at once); a cursor in settings remembers the last one.
+async function migrateDmPins(env, perRun = 10) {
+  const after = Number((await getSetting(env, "dm_pins_v2_after")) || 0);
+  if (after < 0) return; // all done
+  const { results } = await env.DB.prepare("SELECT user_id FROM users WHERE dm_pinned_id IS NOT NULL AND user_id > ? ORDER BY user_id LIMIT ?")
+    .bind(after, perRun).all();
+  for (const u of results) await refreshDmList(env, u.user_id, false);
+  await setSetting(env, "dm_pins_v2_after", String(results.length < perRun ? -1 : results[results.length - 1].user_id));
+}
 
 async function sendReminders(env) {
   const cutoff = new Date(Date.now() - 21 * 864e5).toISOString();

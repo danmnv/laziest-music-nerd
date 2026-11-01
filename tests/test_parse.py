@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 from datetime import datetime, timezone
 
 from lmn import card, tnd
@@ -70,9 +71,19 @@ class ParseTest(unittest.TestCase):
         self.assertEqual([b["text"] for b in kb[0]], ["🔎 Bandcamp", "🔎 YouTube Music"])
         self.assertEqual(kb[1][0], {"text": "🔎 Google", "url": "https://www.google.com/search?q=Fontaines+D.C.+Dopamine+Chamber"})
         self.assertTrue(all(len(b["callback_data"].encode()) <= 64 for row in kb for b in row if "callback_data" in b))
-        txt = card.pinned_text([r], now=datetime(2026, 10, 31, tzinfo=timezone.utc))
+        txt = card.pinned_text([r])
         self.assertIn("Dopamine Chamber", txt)
-        self.assertNotIn("Dopamine Chamber", card.pinned_text([r], now=datetime(2027, 1, 31, tzinfo=timezone.utc)))
+        newer = [dict(r, id=f"n{i}", album=f"Newer {i}", published=f"2027-01-{i + 1:02d}T10:00:00Z") for i in range(30)]
+        txt = card.pinned_text([r] + newer)
+        self.assertNotIn("Dopamine Chamber", txt)  # the 31st from the top is gone
+        self.assertEqual(txt.count("Newer "), 30)
+        self.assertIn('<a href="https://t.me/laziest_music_nerd_bot">Бот</a>: поиск по архиву', txt)
+        self.assertTrue(txt.startswith("<b>Последние 30 обзоров Фантано</b>"))
+        self.assertLess(txt.index("Newer 29"), txt.index("Newer 0"))
+        with mock.patch.object(card, "WORKER_LIVE", True), mock.patch.object(card, "BOT_USERNAME", "bot"):
+            self.assertIn(f'<a href="https://t.me/bot?start=a_{r["id"]}">Fontaines D.C. — Dopamine Chamber</a>', card.list_line(r))
+        with mock.patch.object(card, "SITE_LIVE", True):
+            self.assertIn(f'<b><a href="{card.SITE_URL}/r/{r["id"]}.html">Fontaines D.C. — Dopamine Chamber</a></b>', card.caption(r))
 
     def test_person_begin_is_not_activity(self):
         r = {"previous": [{"album": "X", "score": None}], "previous_unsure": 0, "artist": {"type": "Person", "begin": "1996"}}
