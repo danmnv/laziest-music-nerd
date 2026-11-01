@@ -47,8 +47,9 @@ class SiteTest(unittest.TestCase):
     def test_archive_card_video_from_notes(self):
         a = {"id": "k", "url": "https://theneedledrop.com/x", "published": "2022-08-18", "artist_name": "Black Thought & Danger Mouse",
              "album": "Cheat Codes", "score": 8, "genres": []}
-        html_ = site.archive_page(a, [a], note={"video_id": "UeSwqepnAX0", "blurb": "b", "fav": []})
+        html_ = site.archive_page(a, [a], note={"video_id": "UeSwqepnAX0", "blurb": "b", "fav": [], "bc": "https://x.bandcamp.com/album/y"})
         self.assertIn('<a class="btn" href="https://youtu.be/UeSwqepnAX0">▶ Видеообзор</a>', html_)
+        self.assertIn('<a class="btn" href="https://x.bandcamp.com/album/y">Bandcamp</a>', html_)  # Fantano's "Listen:" link
         self.assertIn('>Текст обзора на TND</a>', html_)
 
     def test_pages_for_the_whole_archive_and_artists(self):

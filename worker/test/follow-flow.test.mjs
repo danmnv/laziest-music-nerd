@@ -52,7 +52,7 @@ beforeEach(() => {
     if (String(url).endsWith("reviews.json")) return new Response(JSON.stringify([{ id: "old1", artist_name: "Shame", artist: { mbid: "S" } }, { id: "rk", artist_name: "Radiohead", artist: { mbid: "R" } }]));
     if (String(url).endsWith("archive.json")) return new Response(JSON.stringify(ARCHIVE));
     if (String(url) === "https://site/rt/k.json") {
-      return new Response(JSON.stringify({ crit: ["Metacritic 91", "Pitchfork 10/10"], sales: ["US #1", "UK #1"], wp_url: "https://en.wikipedia.org/wiki/Kid_A", video_id: "kidavideo01",
+      return new Response(JSON.stringify({ crit: ["Metacritic 91", "Pitchfork 10/10"], sales: ["US #1", "UK #1"], wp_url: "https://en.wikipedia.org/wiki/Kid_A", video_id: "kidavideo01", bc: "https://radiohead.bandcamp.com/album/kid-a",
         brief: "Radiohead уходят в электронику.", blurb: "Not shown when there is a brief.", moods: ["для работы за столом", "не то"] }));
     }
     if (String(url) === "https://site/wtb.json") return new Response(JSON.stringify([{ artist: "Radiohead", video_id: "uu8sC7YDOZg", date: "2017-04-17" }]));
@@ -235,6 +235,7 @@ test("one hit is sent as a full card: cover, length, all services, marks and fol
   assert.ok(btns.some((b) => b.text === "Все платформы" && b.url === "https://album.link/https://www.deezer.com/album/9"));
   // the archive has no video id for it, the site's per-review file has (from the video's page)
   assert.deepEqual(c.reply_markup.inline_keyboard[0][0], { text: "▶ Видеообзор", url: "https://youtu.be/kidavideo01" });
+  assert.ok(btns.some((b) => b.text === "Bandcamp" && b.url === "https://radiohead.bandcamp.com/album/kid-a")); // Fantano's "Listen:" link
   // the archive brief's mood guess: the channel card's vote, «другое» opens all four
   assert.match(c.caption, /\n<b>Когда слушать:<\/b> для работы за столом <i>\(догадка ИИ, поправь кнопками\)<\/i>/);
   assert.ok(btns.some((b) => b.text === "для работы за столом: да" && b.callback_data === "v:k:0:y"));

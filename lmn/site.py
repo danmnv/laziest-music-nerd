@@ -232,6 +232,8 @@ def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, 
     album = album or {}
     if album.get("dz"):
         btns.append(("Все платформы", f"https://album.link/https://www.deezer.com/album/{int(album['dz'])}"))
+    if (note or {}).get("bc"):  # Fantano's own "Listen:" link (lmn/notes.py)
+        btns.append(("Bandcamp", note["bc"]))
     btns += search_buttons(a["artist_name"], a["album"])
     year = album.get("y") if (album.get("y") or "9999") <= a["published"][:4] else None  # Deezer may only have a later reissue
     by_date = sorted(artist_reviews, key=lambda x: x["published"])
@@ -331,6 +333,9 @@ def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None, artis
     rows += notes_rows({"blurb": None if ai.get("brief") else (note or {}).get("blurb")}, r["id"])
     rows += lists_rows(lists)
     rows += critics_rows(rt, r)
+    bc = (r.get("links") or {}).get("bandcamp") or ""
+    if (note or {}).get("bc") and (not bc or "bandcamp.com/search" in bc):
+        r = dict(r, links={**(r.get("links") or {}), "bandcamp": note["bc"]})
     top, alls = card.link_rows(r)
     btns = "".join(f'<a class="btn" href="{e(u)}">{e(n)}</a>' for n, u in top + alls + [
         ("Текст обзора на TND", r.get("tnd_url") or (r["url"] if "theneedledrop.com" in r["url"] else None)),
@@ -415,6 +420,7 @@ def build():
                  **({"lists": li[:4]} if li else {}), **({"blurb": nt["blurb"]} if nt.get("blurb") else {}),
                  **({"brief": bf} if bf else {}), **({"moods": bm} if bm else {}),
                  **({"video_id": nt["video_id"]} if nt.get("video_id") and not a.get("video_id") else {}),
+                 **({"bc": nt["bc"]} if nt.get("bc") else {}),
                  **({"fav": [track_name(f["t"], fav_titles(a, albums.get(a["id"]))) for f in nt["fav"]], "fav_play": any(f.get("dz") or f.get("am") for f in nt["fav"])} if nt.get("fav") else {})},
                 ensure_ascii=False))
     for k, items in by_artist.items():
