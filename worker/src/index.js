@@ -16,20 +16,24 @@ const MESSAGE_LIMIT = 4096;
 // The same list is lmn/gemini.py MOODS (a test keeps them equal).
 const MOODS = ["для тренировки", "для настроения", "для работы за столом", "для тусовки", "в дорогу", "на прогулку", "ночью",
   "перед сном", "когда грустно", "когда злишься", "в наушниках, вдумчиво", "фоном", "для романтики", "для бодрости"];
-// Genre words (a part of a genre tag) → the situations they suggest, best first. For albums with no AI guess.
+// Genre words → the situations they suggest, best first. For albums with no AI guess. A word matches at the start of
+// a word in the tag ("metalcore", "rapper", "gothic"), not inside one: TND tags hold artist names too ("macklemore",
+// "brockhampton"). The first group a tag matches wins, so the more specific groups come first.
 const GENRE_MOODS = [
   [["shoegaze", "dream pop", "post-rock", "post-punk", "darkwave", "goth", "trip hop"], ["ночью", "на прогулку", "в наушниках, вдумчиво", "когда грустно"]],
-  [["metal", "hardcore", "punk", "grind", "thrash", "industrial", "sludge", "crust"], ["для тренировки", "когда злишься", "в дорогу", "для бодрости"]],
-  [["ambient", "drone", "new age", "classical", "minimal"], ["перед сном", "для работы за столом", "фоном", "в наушниках, вдумчиво"]],
   [["hip hop", "rap", "trap", "drill", "grime", "boom bap"], ["в дорогу", "для тренировки", "для тусовки", "для бодрости"]],
-  [["dance", "house", "techno", "disco", "edm", "electropop", "synthpop", "club", "hyperpop", "funk"], ["для тусовки", "для бодрости", "для тренировки", "в дорогу"]],
+  [["dance", "house", "techno", "disco", "edm", "electropop", "synthpop", "club", "hyperpop", "funk", "microhouse"], ["для тусовки", "для бодрости", "для тренировки", "в дорогу"]],
+  [["metal", "hardcore", "punk", "grind", "thrash", "industrial", "sludge", "crust", "synthpunk"], ["для тренировки", "когда злишься", "в дорогу", "для бодрости"]],
+  [["ambient", "drone", "new age", "classical", "minimal"], ["перед сном", "для работы за столом", "фоном", "в наушниках, вдумчиво"]],
   [["electronic", "idm", "glitch"], ["в наушниках, вдумчиво", "для работы за столом", "ночью", "для тусовки"]],
   [["r&b", "soul", "neo-soul", "quiet storm"], ["для романтики", "ночью", "фоном", "на прогулку"]],
   [["folk", "singer-songwriter", "country", "slowcore", "sadcore", "emo", "acoustic", "chamber"], ["когда грустно", "на прогулку", "перед сном", "в наушниках, вдумчиво"]],
   [["jazz", "lounge", "bossa"], ["для работы за столом", "ночью", "фоном", "для романтики"]],
-  [["experimental", "noise", "avant", "art ", "psychedelic", "progressive"], ["в наушниках, вдумчиво", "ночью", "когда злишься", "в дорогу"]],
+  [["experimental", "noise", "avant", "art ", "psychedelic", "progressive", "krautrock"], ["в наушниках, вдумчиво", "ночью", "когда злишься", "в дорогу"]],
   [["rock", "indie", "grunge", "garage", "pop"], ["в дорогу", "на прогулку", "для бодрости", "для тусовки"]],
 ];
+const GENRE_RES = GENRE_MOODS.map(([words, moods]) =>
+  [new RegExp(`[\\s-](${words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`), moods]);
 const DEFAULT_MOODS = ["на прогулку", "в дорогу", "в наушниках, вдумчиво", "фоном"];
 const RANDOM_BUTTON = "🎲 Случайный из архива";
 const FOLLOWS_BUTTON = "🔔 Мои артисты";
@@ -753,8 +757,8 @@ function genreMoods(r, ai = []) {
   const score = new Map();
   (r.genres || []).forEach((g, gi) => {
     const tag = ` ${String(g).toLowerCase()} `;
-    for (const [words, moods] of GENRE_MOODS) {
-      if (!words.some((w) => tag.includes(w))) continue;
+    for (const [re, moods] of GENRE_RES) {
+      if (!re.test(tag)) continue;
       moods.forEach((m, mi) => score.set(m, (score.get(m) || 0) + (4 - mi) / (gi + 1)));
       break;  // the first group a tag matches: "art pop" is art, not pop
     }
