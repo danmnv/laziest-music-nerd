@@ -30,6 +30,9 @@ h2{font-size:18px;text-transform:uppercase;letter-spacing:.04em;margin:40px 0 12
 .logo{display:flex;align-items:center;gap:10px;color:var(--fg);text-decoration:none;font-family:var(--display);font-weight:800;font-size:15px;white-space:nowrap}
 .logo img{display:block;border-radius:8px}
 .logo b{font-weight:600;color:var(--muted)}
+.logo .short{display:none}
+#login{flex:none;margin-left:auto}
+.bar{flex-wrap:wrap;row-gap:6px}
 .top nav{display:flex;gap:4px;margin-left:auto}
 .top nav a{color:var(--fg);text-decoration:none;font-weight:500;font-size:15px;padding:6px 10px;border-radius:999px}
 .top nav a:hover{background:var(--soft)}
@@ -121,6 +124,15 @@ footer .links a{color:var(--fg)}
 .release dd ul{margin:2px 0;padding-left:1.1em}
 .release h2{font-size:15px;margin:32px 0 6px}
 .release .avg:empty{display:none}
+.votes{margin-top:6px}
+.votes p{margin:0 0 4px}
+.release .votes ul{list-style:none;margin:0;padding:0;max-width:520px;display:grid;grid-template-columns:minmax(6em,max-content) minmax(60px,1fr) auto;gap:6px 12px;align-items:center}
+.votes li{display:contents}
+.votes .vbar{height:8px;border-radius:999px;background:var(--soft);overflow:hidden}
+.votes .vbar i{display:block;height:100%;border-radius:inherit;background:var(--accent)}
+.votes .vn{font-variant-numeric:tabular-nums;white-space:nowrap}
+.release q{font-style:italic;quotes:"«" "»"}
+.release iframe.dz{display:block;width:100%;max-width:560px;border:0;border-radius:var(--radius);margin:10px 0 0;background:var(--soft)}
 .contested{display:inline-block;padding:1px 8px;border-radius:6px;background:color-mix(in srgb,var(--neutral) 22%,transparent);font-weight:500}
 .dossier{display:block}
 .mine{margin:8px 0 0;padding:16px;border:1px solid var(--line);border-radius:var(--radius);background:var(--card)}
@@ -139,6 +151,7 @@ footer .links a{color:var(--fg)}
 @media (max-width:640px){
   .bar{gap:8px;padding:8px 12px}
   .logo{font-size:13px;gap:8px}
+  .top nav{gap:0}
   .logo img{width:24px;height:24px}
   .top nav a{padding:6px 8px;font-size:14px}
   .selects{grid-template-columns:1fr 1fr}
@@ -147,3 +160,4 @@ footer .links a{color:var(--fg)}
   .rows li > .score{font-size:14px}
   .release .cover{max-width:none}
 }
+@media (max-width:480px){.logo .full{display:none}.logo .short{display:inline}.top nav .fresh{display:none}}

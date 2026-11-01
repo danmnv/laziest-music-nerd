@@ -43,8 +43,8 @@ def page(title, body, depth=0):
 <link rel="icon" href="{up}icon.svg"><link rel="apple-touch-icon" href="{up}apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="LMN"></head>
 <body><header class="top"><div class="bar">
-<a class="logo" href="{up}index.html"><img src="{up}icon.svg" alt="" width="28" height="28"><span>Laziest<b> Music Nerd</b></span></a>
-<nav><a href="{up}index.html#fresh">Свежее</a><a href="{up}index.html#catalog-h">Каталог</a><a class="find" href="{up}index.html#search" aria-label="Поиск"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="7.5" cy="7.5" r="5.5"/><path d="m12 12 4.5 4.5"/></svg></a></nav>
+<a class="logo" href="{up}index.html"><img src="{up}icon.svg" alt="" width="28" height="28"><span class="full">Laziest<b> Music Nerd</b></span><span class="short">LMN</span></a>
+<nav><a class="fresh" href="{up}index.html#fresh">Свежее</a><a href="{up}index.html#catalog-h">Каталог</a><a class="find" href="{up}index.html#search" aria-label="Поиск"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="7.5" cy="7.5" r="5.5"/><path d="m12 12 4.5 4.5"/></svg></a></nav>
 <span id="login"></span></div></header>
 <main>{body}</main>
 <footer><p class="links"><a href="https://t.me/{CHANNEL}">Канал в Telegram</a><a href="https://t.me/{BOT}">Бот</a><a href="https://www.youtube.com/@theneedledrop">The Needle Drop</a></p>
