@@ -197,8 +197,8 @@ def buttons(r, with_callbacks=False):
         sid = r["id"]
         rows.append([
             {"text": "• Отложить", "callback_data": f"m:{sid}:later"},
-            {"text": "✓ Прослушано", "callback_data": f"m:{sid}:done"},
-            {"text": "✗ Не понравилось", "callback_data": f"m:{sid}:nope"},
+            {"text": "✓ Слушал", "callback_data": f"m:{sid}:done"},
+            {"text": "✗ Не моё", "callback_data": f"m:{sid}:nope"},
         ])
         rows.append([{"text": "🔔 Следить за артистом", "callback_data": f"f:{sid}"}])
         moods = (r.get("ai") or {}).get("moods", [])

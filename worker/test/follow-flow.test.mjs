@@ -85,6 +85,17 @@ beforeEach(() => {
         { id: 22, title: "OK Computer OKNOTOK 1997 2017", release_date: "2017-06-23", record_type: "album" },
         { id: 23, title: "Creep", release_date: "1992-09-21", record_type: "single" }] }));
     }
+    if (String(url).startsWith("https://api.deezer.com/album/9/tracks")) {
+      return new Response(JSON.stringify({ data: [
+        { title: "Everything in Its Right Place", rank: 700, preview: "https://cdn/p1.mp3", artist: { name: "Radiohead" } },
+        { title: "Kid A", rank: 500, preview: "https://cdn/p2.mp3", artist: { name: "Radiohead" } },
+        { title: "Idioteque", rank: 900, preview: "https://cdn/p3.mp3", artist: { name: "Radiohead" } },
+        { title: "Motion Picture Soundtrack", rank: 100, preview: "https://cdn/p4.mp3", artist: { name: "Radiohead" } },
+        { title: "No Preview", rank: 999, preview: "", artist: { name: "Radiohead" } }] }));
+    }
+    if (String(url).startsWith("https://api.deezer.com/album/20/tracks")) {
+      return new Response(JSON.stringify({ data: [{ title: "Fake Plastic Trees", rank: 800, preview: "https://cdn/b1.mp3", artist: { name: "Radiohead" } }] }));
+    }
     if (String(url).startsWith("https://api.deezer.com/album/20")) {
       return new Response(JSON.stringify({ id: 20, title: "The Bends", artist: { name: "Radiohead" }, release_date: "1995-03-13", nb_tracks: 12,
         duration: 2928, record_type: "album", genres: { data: [{ name: "Alternative" }] }, cover_xl: "https://cdn/bends.jpg", link: "https://www.deezer.com/album/20" }));
@@ -280,6 +291,58 @@ test("when MusicBrainz is down, the list comes from Deezer: albums only, the fir
   calls = [];
   await press(OWNER, "dz:20");
   assert.match(calls.find((x) => x.method === "sendPhoto").caption, /^<b>Radiohead — The Bends<\/b> \(1995\)/);
+});
+
+test("an album without a review can be put off: it shows in «📌 Отложенные», previews come from Deezer", async () => {
+  await press(OWNER, `mb:${BENDS}`);
+  const card = calls.find((x) => x.method === "sendPhoto");
+  const btns = card.reply_markup.inline_keyboard;
+  assert.deepEqual(btns.find((r) => r[0].callback_data === `m:${BENDS}:later`).map((b) => b.text), ["• Отложить", "✓ Слушал", "✗ Не моё"]);
+  assert.ok(btns.flat().some((b) => b.text === "🔎 Google"));
+  await press(OWNER, `m:${BENDS}:later`);
+  calls = [];
+  await say(OWNER, "📌 Отложенные");
+  const list = calls.find((c) => c.method === "sendMessage");
+  assert.match(list.text, /^Отложено: 1\./);
+  assert.deepEqual(list.reply_markup.inline_keyboard, [[{ text: "• Radiohead — The Bends", callback_data: `mb:${BENDS}` }]]);
+  calls = [];
+  await press(OWNER, `pv:${BENDS}`); // one track: a single audio
+  const a = calls.find((c) => c.method === "sendAudio");
+  assert.equal(a.audio, "https://cdn/b1.mp3");
+  assert.equal(a.title, "Fake Plastic Trees");
+});
+
+test("a reviewed album: previews (most played first), «Когда слушать?», and a put-off one in the list", async () => {
+  await press(OWNER, "a:k");
+  const btns = calls.find((x) => x.method === "sendPhoto").reply_markup.inline_keyboard.flat();
+  assert.ok(btns.some((b) => b.text === "🔔 Следить") && btns.some((b) => b.text === "📚 Все обзоры"));
+  calls = [];
+  await press(OWNER, "pv:k");
+  const g = calls.find((c) => c.method === "sendMediaGroup");
+  assert.deepEqual(g.media.map((m) => m.media), ["https://cdn/p3.mp3", "https://cdn/p1.mp3", "https://cdn/p2.mp3"]);
+  assert.equal(g.media[2].caption, "Radiohead — Kid A: отрывки по 30 секунд из Deezer");
+  calls = [];
+  await press(OWNER, "mq:k");
+  const m = calls.find((c) => c.method === "sendMessage");
+  assert.equal(m.text, "Когда лучше слушать <b>Radiohead — Kid A</b>?");
+  assert.equal(m.reply_markup.inline_keyboard[0][0].callback_data, "vo:k:0");
+  await press(OWNER, "m:k:later");
+  calls = [];
+  await say(OWNER, "📌 Отложенные");
+  assert.deepEqual(calls.find((c) => c.method === "sendMessage").reply_markup.inline_keyboard, [[{ text: "• Radiohead — Kid A", callback_data: "a:k" }]]);
+});
+
+test("the 21-day reminder covers albums put off from the archive and without a review", async () => {
+  await press(OWNER, `mb:${BENDS}`);
+  await press(OWNER, `m:${BENDS}:later`);
+  db.prepare("UPDATE marks SET later_at='2026-01-01T00:00:00Z'").run();
+  calls = [];
+  await worker.scheduled({ cron: "0 9 * * *", scheduledTime: Date.UTC(2026, 10, 3, 9) }, env, { waitUntil: (p) => p });
+  await new Promise((r) => setTimeout(r, 50));
+  const m = calls.find((c) => c.method === "sendMessage" && /Три недели назад/.test(c.text));
+  assert.ok(m, "a reminder was sent");
+  assert.match(m.text, /<b>Radiohead — The Bends<\/b>/);
+  assert.deepEqual(m.reply_markup.inline_keyboard[0], [{ text: "✓ Слушал", callback_data: `m:${BENDS}:done` }, { text: "Открыть", callback_data: `mb:${BENDS}` }]);
 });
 
 test("a search without a review offers what Deezer has", async () => {
