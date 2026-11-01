@@ -123,10 +123,11 @@ class DeezerTrack(unittest.TestCase):
         archive = [{"id": "nat", "artist_name": "The National", "album": "First Two Pages of Frankenstein"}]
         ups = [{"id": "cuAbVa3NM5I", "title": "The National - First Two Pages of Frankenstein ALBUM REVIEW", "desc": DESC}]
         old = {"nat": {"fav": [{"t": "EUCALYPTUS", "dz": None}, {"t": "TROPIC MORNING NEWS", "dz": 0}]}}
-        with mock.patch.object(notes, "deezer_track", return_value=7) as dz, mock.patch.object(notes.time, "sleep"):
+        with mock.patch.object(notes, "deezer_track", return_value=7) as dz, mock.patch.object(notes.time, "sleep"), \
+                mock.patch.object(notes, "apple_track", return_value=0):  # never the network
             out = notes.build(ups, archive, old)
         self.assertEqual(dz.call_count, 1)
-        self.assertEqual(out["nat"]["fav"], [{"t": "EUCALYPTUS", "dz": 7}, {"t": "TROPIC MORNING NEWS", "dz": 0}])
+        self.assertEqual(out["nat"]["fav"], [{"t": "EUCALYPTUS", "dz": 7}, {"t": "TROPIC MORNING NEWS", "dz": 0, "am": 0}])
 
 
 if __name__ == "__main__":

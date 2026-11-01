@@ -148,8 +148,8 @@ def run():
     ups = all_uploads()
     npath = DATA / "notes.json"
     old_notes = json.loads(npath.read_text()) if npath.exists() else {}
-    # no new lookups after 28 minutes: the step's limit is 40, and the lists and the save come after
-    deadline = time.monotonic() + 60 * float(os.environ.get("LOOKUP_MINUTES", "28"))
+    # no new lookups after 22 minutes: the step's limit is 40, and up to 3 Gemini videos (~4 min each) come after
+    deadline = time.monotonic() + 60 * float(os.environ.get("LOOKUP_MINUTES", "22"))
     nt = notes.build(ups, archive, old_notes, int(os.environ.get("NOTES_DEEZER_LIMIT", "1500")),
                      int(os.environ.get("NOTES_APPLE_LIMIT", "200")), deadline)
     npath.write_text("{\n" + ",\n".join(json.dumps(k) + ": " + json.dumps(nt[k], ensure_ascii=False, separators=(",", ":"))
