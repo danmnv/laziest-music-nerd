@@ -161,7 +161,22 @@ def artist_page(name, items):
     return page(name, body, depth=1)
 
 
-def release_page(r, rt=None):
+def dossier_rows(d):
+    """Rows from data/artists.json (lmn/dossier.py): the Wikipedia paragraph and the band's members."""
+    if not d or not d.get("title"):
+        return []
+    rows = []
+    src = f' <a class="muted" href="{e(d["url"])}">Википедия</a>'
+    if d.get("extract"):
+        rows.append(("Об артисте", f'<span class="dossier">{e(d["extract"])}</span>{src}'))
+    if d.get("members"):
+        rows.append(("Состав", f'<span class="dossier">{e(", ".join(d["members"]))}</span>'))
+    if d.get("past_members"):
+        rows.append(("Бывшие участники", f'<span class="dossier">{e(", ".join(d["past_members"]))}</span>'))
+    return rows
+
+
+def release_page(r, rt=None, wiki=None):
     c = color(r.get("score"), r.get("not_good"), r.get("classic"))
     a = r.get("artist") or {}
     ai = r.get("ai") or {}
@@ -186,6 +201,7 @@ def release_page(r, rt=None):
         dossier.append("также: " + ", ".join(a["aliases"]))
     if dossier:
         rows.append(("Досье", e(" · ".join(dossier))))
+    rows += dossier_rows(wiki)
     if r.get("tracks"):
         rows.append(("Треклист", "<ol>" + "".join(f"<li>{line.split('. ', 1)[1]}</li>" for line in card.tracklist(r)) + "</ol>"
                      + ('<span class="muted">★ — выделил Фантано</span>' if (r.get("ai") or {}).get("best_tracks") else "")))
@@ -247,10 +263,11 @@ def build():
         items.sort(key=lambda x: x["published"], reverse=True)
     enriched = {r["id"] for r in reviews}
     ratings = load("ratings.json", {})
+    artists = load("artists.json", {})
     (OUT / "rt").mkdir(exist_ok=True)
     for a in by_id.values():
         rt = ratings.get(a["id"])
-        html_ = release_page(a, rt) if a["id"] in enriched else archive_page(a, by_artist[slug(a["artist_name"])], rt)
+        html_ = release_page(a, rt, artists.get((a.get("artist") or {}).get("mbid") or "")) if a["id"] in enriched else archive_page(a, by_artist[slug(a["artist_name"])], rt)
         (OUT / "r" / f"{a['id']}.html").write_text(html_)
         crit, sales = critics_parts(rt)
         if crit or sales:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json

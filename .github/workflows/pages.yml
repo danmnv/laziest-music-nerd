@@ -4,7 +4,7 @@ on:
     branches: [main]
     paths: [site_src/**, lmn/**, .github/workflows/pages.yml]
   workflow_run:
-    workflows: ["Проверка новых обзоров", "Оценки критиков из Википедии"]
+    workflows: ["Проверка новых обзоров", "Оценки критиков из Википедии", "Досье артистов"]
     types: [completed]
   workflow_dispatch:
 

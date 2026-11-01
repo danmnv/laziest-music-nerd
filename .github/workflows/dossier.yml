@@ -1,0 +1,37 @@
+name: Досье артистов
+on:
+  schedule:
+    - cron: "11 4 * * *"   # раз в день; каждого артиста — раз в 30 дней
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dossier
+  cancel-in-progress: false
+
+jobs:
+  dossier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Собрать досье из Википедии
+        run: python -m lmn.dossier
+      - name: Сохранить
+        run: |
+          git config user.name "laziest-music-nerd-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/artists.json
+          git diff --cached --quiet && exit 0
+          git commit -q -m "data: досье артистов"
+          for i in 1 2 3 4; do  # the hourly check may have pushed meanwhile
+            git pull --rebase -q origin main && git push -q origin HEAD:main && exit 0
+            git rebase --abort 2>/dev/null || true
+            sleep $((i * 5))
+          done
+          echo "::error::Не смог сохранить досье в main"; exit 1
