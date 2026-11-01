@@ -79,7 +79,34 @@ def search_buttons(artist, album):
     return [("🔎 YouTube Music", f"https://music.youtube.com/search?q={q}"), ("🔎 Google", f"https://www.google.com/search?q={q}")]
 
 
-def archive_page(a, artist_reviews):
+def critics_parts(rt):
+    """Critic scores and chart/sales facts from data/ratings.json (the ratings workflow; source: the album's
+    Wikipedia article). Two lists of short strings; both empty when there's no article."""
+    if not rt or not rt.get("wp"):
+        return [], []
+    crit = []
+    if rt.get("metacritic") is not None:
+        crit.append(f"Metacritic {rt['metacritic']}")
+    if rt.get("adm") is not None:
+        crit.append(f"AnyDecentMusic {rt['adm']:g}")
+    crit += [f"{c['outlet']} {c['score']}" for c in (rt.get("critics") or [])[:5] if c.get("outlet") and c.get("score")]
+    sales = [f"{k} #{v}" for k, v in (rt.get("charts") or {}).items() if v]
+    sales += [f"{c['region']} {c['award']}" for c in rt.get("certs") or [] if c.get("region") and c.get("award")]
+    return crit, sales
+
+
+def critics_rows(rt):
+    crit, sales = critics_parts(rt)
+    src = f' <a class="muted" href="{e(rt["wp_url"])}">по данным Википедии</a>' if (crit or sales) and rt.get("wp_url") else ""
+    rows = []
+    if crit:
+        rows.append(("Критики", e(" · ".join(crit)) + src))
+    if sales:
+        rows.append(("Чарты и продажи", e(" · ".join(sales)) + src))
+    return rows
+
+
+def archive_page(a, artist_reviews, rt=None):
     """A release page for a review the bot never posted a card for: what the archive knows, the artist's other
     reviews, and the reader's marks."""
     review = f"https://youtu.be/{a['video_id']}" if a.get("video_id") else a["url"]
@@ -91,9 +118,12 @@ def archive_page(a, artist_reviews):
                                     "гостевой обзор" if a.get("guest") else None] if x)
     others = [x for x in artist_reviews if x["id"] != a["id"]]
     hist = (f'<h2>Фантано об этом артисте</h2>{history_list(artist_reviews, a["id"], 1)}' if others else "")
+    rows = critics_rows(rt)
+    dl = f"<dl>{''.join(f'<dt>{k}</dt><dd>{v}</dd>' for k, v in rows)}</dl>" if rows else ""
     body = f"""<article class="release" data-id="{e(a['id'])}">
 <h1><a href="../a/{slug(a['artist_name'])}.html">{e(a['artist_name'])}</a> — {e(a['album'])}</h1>
 <p>{score_badge(a)} <span class="muted">{e(meta)}</span></p>
+{dl}
 <p class="btns">{''.join(f'<a class="btn" href="{e(u)}">{e(n)}</a>' for n, u in btns)}</p>
 <div class="mine" hidden></div>
 <p class="avg muted"></p>
@@ -111,7 +141,7 @@ def artist_page(name, items):
     return page(name, body, depth=1)
 
 
-def release_page(r):
+def release_page(r, rt=None):
     c = color(r.get("score"), r.get("not_good"), r.get("classic"))
     a = r.get("artist") or {}
     ai = r.get("ai") or {}
@@ -139,6 +169,7 @@ def release_page(r):
     if r.get("tracks"):
         rows.append(("Треклист", "<ol>" + "".join(f"<li>{line.split('. ', 1)[1]}</li>" for line in card.tracklist(r)) + "</ol>"
                      + ('<span class="muted">★ — выделил Фантано</span>' if (r.get("ai") or {}).get("best_tracks") else "")))
+    rows += critics_rows(rt)
     if r.get("previous"):
         hist = "".join(f'<li><a href="{e(p["url"])}">{e(p["album"])}</a> — {label(p.get("score"), p.get("not_good"), p.get("classic"), "?")} <span class="muted">{e(p["published"][:4])}</span></li>' for p in r["previous"])
         rows.append(("История оценок", f"<ul>{hist}</ul>"))
@@ -195,9 +226,16 @@ def build():
     for items in by_artist.values():
         items.sort(key=lambda x: x["published"], reverse=True)
     enriched = {r["id"] for r in reviews}
+    ratings = load("ratings.json", {})
+    (OUT / "rt").mkdir(exist_ok=True)
     for a in by_id.values():
-        html_ = release_page(a) if a["id"] in enriched else archive_page(a, by_artist[slug(a["artist_name"])])
+        rt = ratings.get(a["id"])
+        html_ = release_page(a, rt) if a["id"] in enriched else archive_page(a, by_artist[slug(a["artist_name"])], rt)
         (OUT / "r" / f"{a['id']}.html").write_text(html_)
+        crit, sales = critics_parts(rt)
+        if crit or sales:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
+            (OUT / "rt" / f"{a['id']}.json").write_text(json.dumps(
+                {"crit": crit[:4], "sales": sales[:4], "wp_url": rt.get("wp_url")}, ensure_ascii=False))
     for k, items in by_artist.items():
         (OUT / "a" / f"{k}.html").write_text(artist_page(items[0]["artist_name"], items))
     cat = sorted((catalog_entry(a) for a in by_id.values()), key=lambda x: x["d"], reverse=True)

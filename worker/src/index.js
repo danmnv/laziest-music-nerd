@@ -339,7 +339,10 @@ async function sendAlbum(env, uid, a, intro) {
   const full = (await reviews(env)).find((x) => x.id === a.id);
   const r = full || a;
   const links = (full && full.links) || {};
-  const dz = (full && full.covers && full.covers.length && full.duration_min) ? null : await deezerAlbum(r.artist_name, r.album);
+  const [dz, rt] = await Promise.all([
+    (full && full.covers && full.covers.length && full.duration_min) ? null : deezerAlbum(r.artist_name, r.album),
+    criticsOf(env, r.id),
+  ]);
   const cover = (full && full.covers && full.covers[0]) || (dz && dz.cover);
   const tracks = (full && full.tracks && full.tracks.length) || (dz && dz.tracks);
   const minutes = (full && full.duration_min) || (dz && dz.minutes);
@@ -353,7 +356,7 @@ async function sendAlbum(env, uid, a, intro) {
     year ? "" : `обзор ${reviewYear}`, // the review year only when the release year is unknown
     r.guest ? "гостевой обзор" : "",
   ].filter(Boolean).join(" · ");
-  const text = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}`;
+  const text = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}${criticsText(rt)}`;
   const q = encodeURIComponent(`${r.artist_name} ${r.album}`);
   const allServices = links.songlink || (dz && dz.link ? `https://album.link/${dz.link}` : null);
   const reply_markup = { inline_keyboard: [
@@ -370,6 +373,26 @@ async function sendAlbum(env, uid, a, intro) {
     if (d.ok) return d;
   }
   return tg(env, "sendMessage", { chat_id: uid, text, parse_mode: "HTML", reply_markup, link_preview_options: { is_disabled: true } });
+}
+
+// Critic scores and charts for a review, from the site's rt/<id>.json (built from data/ratings.json; source:
+// the album's Wikipedia article). null when there is none. One small fetch instead of parsing all ratings.
+async function criticsOf(env, id) {
+  try {
+    const r = await fetch(`${env.SITE_URL}/rt/${encodeURIComponent(id)}.json`, { cf: { cacheTtl: 3600 } });
+    return r.ok ? await r.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function criticsText(rt) {
+  if (!rt) return "";
+  const src = rt.wp_url ? ` (<a href="${esc(rt.wp_url)}">Википедия</a>)` : "";
+  const lines = [];
+  if (rt.crit && rt.crit.length) lines.push(`Критики: ${esc(rt.crit.join(" · "))}${src}`);
+  if (rt.sales && rt.sales.length) lines.push(`Чарты и продажи: ${esc(rt.sales.join(" · "))}${lines.length ? "" : src}`);
+  return lines.length ? "\n" + lines.join("\n") : "";
 }
 
 function albumButtons(items, withArtist) {

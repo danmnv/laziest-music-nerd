@@ -64,5 +64,26 @@ class SiteTest(unittest.TestCase):
             self.assertEqual(cat["o1"]["k"], "swans")
 
 
+class CriticsTest(unittest.TestCase):
+    RT = {"checked": "2026-11-01T00:00:00Z", "wp": "Kid A", "wp_url": "https://en.wikipedia.org/wiki/Kid_A", "metacritic": 80,
+          "adm": None, "critics": [{"outlet": "Pitchfork", "score": "10/10", "s10": 10}, {"outlet": "AllMusic", "score": "4.5/5", "s10": 9}],
+          "charts": {"US": 1, "UK": 1}, "certs": [{"region": "US", "award": "Platinum"}]}
+
+    def test_parts(self):
+        crit, sales = site.critics_parts(self.RT)
+        self.assertEqual(crit, ["Metacritic 80", "Pitchfork 10/10", "AllMusic 4.5/5"])
+        self.assertEqual(sales, ["US #1", "UK #1", "US Platinum"])
+        self.assertEqual(site.critics_parts({"checked": "x", "wp": None}), ([], []))
+        self.assertEqual(site.critics_parts(None), ([], []))
+
+    def test_archive_page_shows_them_with_attribution(self):
+        a = {"id": "k", "url": "https://theneedledrop.com/x", "published": "2020-01-01", "artist_name": "Radiohead", "album": "Kid A",
+             "score": 10, "not_good": False, "classic": False, "genres": []}
+        html_ = site.archive_page(a, [a], self.RT)
+        self.assertIn("<dt>Критики</dt><dd>Metacritic 80 · Pitchfork 10/10 · AllMusic 4.5/5", html_)
+        self.assertIn('href="https://en.wikipedia.org/wiki/Kid_A">по данным Википедии</a>', html_)
+        self.assertNotIn("<dl>", site.archive_page(a, [a]))
+
+
 if __name__ == "__main__":
     unittest.main()
