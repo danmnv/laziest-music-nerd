@@ -133,7 +133,7 @@ def clean(v):
     v = re.sub(r"<ref[^>]*/>", "", v or "")
     v = re.sub(r"<ref.*?</ref>", "", v, flags=re.S)
     v = re.sub(r"<!--.*?-->", "", v, flags=re.S)
-    m = re.search(r"\{\{\s*rating\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)", v, re.I)
+    m = re.search(r"\{\{\s*rating\s*\|\s*(\d+(?:\.\d+)?)\.?\s*\|\s*(\d+(?:\.\d+)?)", v, re.I)
     if m:
         return f"{fmt(float(m.group(1)))}/{fmt(float(m.group(2)))}"
     v = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]*)\]\]", r"\1", v)
@@ -309,6 +309,14 @@ def due(entry, published, now):
     return since >= (90 if entry.get("wp") else 180)
 
 
+def save(path, store):
+    # one review per line: small diffs in the daily commit
+    lines = [json.dumps(k) + ": " + json.dumps(store[k], ensure_ascii=False, separators=(",", ":")) for k in sorted(store)]
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text("{\n" + ",\n".join(lines) + "\n}\n")
+    tmp.replace(path)
+
+
 def run():
     limit = int(os.environ.get("RATINGS_LIMIT", "400"))
     now = datetime.now(timezone.utc)
@@ -338,17 +346,20 @@ def run():
                 continue
             if title:
                 entry.update(wp=title, wp_url=WP_PAGE + urllib.parse.quote(title.replace(" ", "_")), revid=revid)
-                entry.update(summarize(parse(text)))
+                try:
+                    entry.update(summarize(parse(text)))
+                except Exception as ex:  # odd wikitext in one article must not stop the batch
+                    print(f"  ! parse {title}: {ex!r}"[:120], file=sys.stderr)
                 found += 1
         old = store.get(r["id"]) or {}
         if old.get("wp") and not entry["wp"]:
             entry = dict(old, checked=entry["checked"])  # keep what we had; search can miss on a bad day
         store[r["id"]] = entry
         done += 1
+        if done % 100 == 0:  # a timeout or crash later in the batch keeps what was already found
+            save(path, store)
         time.sleep(0.5)
-    # one review per line: small diffs in the daily commit
-    lines = [json.dumps(k) + ": " + json.dumps(store[k], ensure_ascii=False, separators=(",", ":")) for k in sorted(store)]
-    path.write_text("{\n" + ",\n".join(lines) + "\n}\n")
+    save(path, store)
     with_c = sum(1 for e in store.values() if e.get("critics") or e.get("metacritic") is not None)
     print(f"ratings: checked {done}, article found {found}; stored {len(store)}, with critic scores {with_c}")
 
