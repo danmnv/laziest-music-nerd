@@ -5,12 +5,13 @@ import random
 import re
 
 from lmn import yt_archive as ya
+from lmn.tnd import tidy_entry
 
 videos = ya.all_uploads()
 by_id = {v["id"]: v for v in videos}
-archive = json.load(open("data/archive.json"))
+archive = [tidy_entry(a) for a in json.load(open("data/archive.json"))]
 missing = {ya.key(a["artist_name"], a["album"]): a for a in archive
-           if a.get("artist_name") and a.get("album") and a.get("score") is None and not a.get("not_good") and not a.get("classic")}
+           if a.get("artist_name") and a.get("album") and a.get("score") is None and not a.get("not_good") and not a.get("classic") and not a.get("track")}
 hits, old_titles, noverdict, years = [], [], [], {}
 for v in videos:
     ks = [ya.key(a, b) for a, b in ya.title_keys(v["title"])]

@@ -8,7 +8,7 @@ import unicodedata
 import urllib.parse
 from pathlib import Path
 
-from . import card
+from . import card, tnd
 from .colors import color, label
 from .musicbrainz import norm
 
@@ -57,6 +57,8 @@ def slug(name):
 
 
 def score_badge(a):
+    if a.get("track"):
+        return '<span class="score none">трек</span>'
     c = color(a.get("score"), a.get("not_good"), a.get("classic")) or "none"
     return f'<span class="score {c}">{e(card.score_text(a))}</span>'
 
@@ -163,7 +165,8 @@ def release_page(r):
 def catalog_entry(a):
     return {"i": a["id"], "a": a.get("artist_name") or "", "t": a.get("album") or "", "s": a.get("score"),
             "ng": 1 if a.get("not_good") else 0, "cl": 1 if a.get("classic") else 0, "d": a["published"][:10],
-            "g": (a.get("genres") or [])[:4], "k": slug(a.get("artist_name")), "gu": 1 if a.get("guest") else 0}
+            "g": (a.get("genres") or [])[:4], "k": slug(a.get("artist_name")), "gu": 1 if a.get("guest") else 0,
+            **({"tr": 1} if a.get("track") else {})}
 
 
 def recent_item(r):
@@ -177,7 +180,7 @@ def recent_item(r):
 
 def build():
     reviews = load("reviews.json", [])
-    archive = load("archive.json", [])
+    archive = [tnd.tidy_entry(a) for a in load("archive.json", [])]
     if OUT.exists():
         shutil.rmtree(OUT)
     shutil.copytree(SRC, OUT)

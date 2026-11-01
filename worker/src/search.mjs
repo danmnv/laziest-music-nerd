@@ -20,6 +20,7 @@ export function searchArchive(archive, query, limit = 8) {
 
 // "🟢 8/10", "🔴 NOT GOOD", "⚪ без оценки" (the 2010-2014 reviews often have no score in the data).
 export function badge(a) {
+  if (a.track) return "🎵 трек"; // a single-song review: no score to show
   if (a.not_good) return "🔴 NOT GOOD";
   if (a.classic) return "🟢 CLASSIC";
   if (a.score == null) return "⚪ без оценки";

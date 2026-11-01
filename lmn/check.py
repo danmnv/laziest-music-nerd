@@ -200,6 +200,8 @@ def main():
     reviews = load("reviews.json", [])
     state = load("state.json", {})
     archive = load("archive.json", [])
+    for a in archive:  # old entries were saved before tnd.tidy_album existed
+        tnd.tidy_entry(a)
 
     if not archive:
         print("building archive index from TND…")

@@ -37,6 +37,7 @@ test("badges", () => {
   assert.equal(badge({ score: 8 }), "🟢 8/10");
   assert.equal(badge({ score: 5 }), "🟡 5/10");
   assert.equal(badge({ score: 3 }), "🔴 3/10");
+  assert.equal(badge({ score: null, track: true }), "🎵 трек");
   assert.equal(badge({ not_good: true, score: null }), "🔴 NOT GOOD");
   assert.equal(badge({ classic: true }), "🟢 CLASSIC");
   assert.equal(badge({ score: null }), "⚪ без оценки");

@@ -73,7 +73,7 @@
     more = document.getElementById("more");
   let all = [], shown = 50;
   const colorOf = (x) => x.ng ? "red" : x.cl ? "green" : x.s == null ? "none" : x.s >= 8 ? "green" : x.s >= 5 ? "neutral" : "red";
-  const labelOf = (x) => x.ng ? "NOT GOOD" : x.cl ? "CLASSIC" : x.s == null ? "?" : x.s;
+  const labelOf = (x) => x.tr ? "трек" : x.ng ? "NOT GOOD" : x.cl ? "CLASSIC" : x.s == null ? "?" : x.s;
   // As in the bot: every word must appear in the artist or album, ignoring case, accents and punctuation.
   const fold = (s) => String(s).normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/&/g, "and").replace(/[^\p{L}\p{N}]+/gu, "");
   const rank = (x) => x.ng ? 0 : x.cl ? 11 : x.s == null ? -1 : x.s;
