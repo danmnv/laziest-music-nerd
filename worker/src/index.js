@@ -167,11 +167,13 @@ async function onCallback(q, env) {
     if (!user) return tg(env, "answerCallbackQuery", { callback_query_id: q.id, url: `https://t.me/${env.BOT_USERNAME}?start=follow_${parts[1]}` });
     const res = await follow(env, uid, parts[1], true);
     answer = res.text;
+    await answerNow();
     if (res.first) {
       // the first follow: say where the list is, and give people who started the bot earlier the new menu button
       await tg(env, "sendMessage", { chat_id: uid, text: `${res.text}\nСписок и отписка — кнопка «${FOLLOWS_BUTTON}» внизу.`, reply_markup: MENU });
     }
   } else if (parts[0] === "ar") {
+    await answerNow();
     const r = artistReviews(await archive(env), parts[1]);
     if (r.total) await tg(env, "sendMessage", { chat_id: uid, ...artistMessage(r.artist, r.total, r.items, 0) });
   } else if (parts[0] === "a") {
