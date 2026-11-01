@@ -62,6 +62,27 @@ class Providers(unittest.TestCase):
             llm.summarize("A - C", "text", sleep=lambda s: None)
         self.assertEqual(calls, ["api.mistral.ai"] * 3 + ["api.groq.com", "api.groq.com"])
 
+    def test_a_retired_model_is_replaced_from_the_models_list(self):
+        llm._picked.clear()
+        calls = []
+
+        def fake(url, **kw):
+            calls.append((url.split("/")[-1], (kw.get("json_body") or {}).get("model")))
+            if url.endswith("/models"):
+                return {"data": [{"id": "whisper-large-v3"}, {"id": "qwen/qwen3-32b"}]}
+            if kw["json_body"]["model"] == "llama-3.3-70b-versatile":
+                raise http.HttpError(404, '{"error":{"code":"model_not_found"}}', url)
+            return chat(ANSWER)
+
+        with mock.patch.dict(os.environ, {"MISTRAL_API_KEY": "", "GROQ_API_KEY": "g", "CEREBRAS_API_KEY": ""}), \
+                mock.patch.object(http, "get_json", side_effect=fake):
+            out = llm.summarize("A - B", "text", sleep=lambda s: None)
+            self.assertEqual(out["model"], "qwen/qwen3-32b")
+            llm.summarize("A - C", "text", sleep=lambda s: None)
+        self.assertEqual(calls, [("completions", "llama-3.3-70b-versatile"), ("models", None), ("completions", "qwen/qwen3-32b"),
+                                 ("completions", "qwen/qwen3-32b")])
+        llm._picked.clear()
+
     def test_no_keys_no_calls(self):
         with mock.patch.dict(os.environ, {"MISTRAL_API_KEY": "", "GROQ_API_KEY": "", "CEREBRAS_API_KEY": ""}), \
                 mock.patch.object(http, "get_json") as g:

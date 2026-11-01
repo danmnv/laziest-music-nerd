@@ -50,7 +50,7 @@ beforeEach(() => {
     if (String(url).endsWith("archive.json")) return new Response(JSON.stringify(ARCHIVE));
     if (String(url) === "https://site/rt/k.json") {
       return new Response(JSON.stringify({ crit: ["Metacritic 91", "Pitchfork 10/10"], sales: ["US #1", "UK #1"], wp_url: "https://en.wikipedia.org/wiki/Kid_A",
-        brief: "Radiohead уходят в электронику.", blurb: "Not shown when there is a brief." }));
+        brief: "Radiohead уходят в электронику.", blurb: "Not shown when there is a brief.", moods: ["для работы за столом", "не то"] }));
     }
     if (String(url) === "https://site/wtb.json") return new Response(JSON.stringify([{ artist: "Radiohead", video_id: "uu8sC7YDOZg", date: "2017-04-17" }]));
     if (String(url) === "https://site/rt/p.json") {
@@ -225,11 +225,19 @@ test("one hit is sent as a full card: cover, length, all services, marks and fol
   await say(OWNER, "kid a");
   const c = calls.find((x) => x.method === "sendPhoto");
   assert.equal(c.photo, "https://cdn/kida.jpg");
-  assert.match(c.caption, /<b>Radiohead — Kid A<\/b> \(2000\)\n🟢 10\/10 · art rock · 10 треков · 50 мин · 2-й из 2 обзоров артиста\n<b>Бриф:<\/b> Radiohead уходят в электронику\.\n/);
+  assert.match(c.caption, /<b>Radiohead — Kid A<\/b> \(2000\)\n🟢 10\/10 · art rock · 10 треков · 50 мин · 2-й из 2 обзоров артиста\n\n<b>Бриф:<\/b> Radiohead уходят в электронику\.\n/);
   assert.doesNotMatch(c.caption, /Not shown/); // the archive's brief (lmn/briefs.py) replaces Fantano's line
   assert.match(c.caption, /\nКритики: Metacritic 91 · Pitchfork 10\/10 \(<a href="https:\/\/en.wikipedia.org\/wiki\/Kid_A">Википедия<\/a>\)\nЧарты и продажи: US #1 · UK #1$/);
   const btns = c.reply_markup.inline_keyboard.flat();
   assert.ok(btns.some((b) => b.text === "Все платформы" && b.url === "https://album.link/https://www.deezer.com/album/9"));
+  // the archive brief's mood guess: the channel card's vote, «другое» opens all four
+  assert.match(c.caption, /\n<b>Когда слушать:<\/b> для работы за столом <i>\(догадка ИИ, поправь кнопками\)<\/i>/);
+  assert.ok(btns.some((b) => b.text === "для работы за столом: да" && b.callback_data === "v:k:0:y"));
+  assert.ok(btns.some((b) => b.text === "Настроение: другое" && b.callback_data === "mq:k"));
+  assert.ok(!btns.some((b) => b.text === "🕒 Когда слушать?"));
+  await press(OWNER, "v:k:0:y");
+  assert.deepEqual({ ...db.prepare("SELECT review_id, mood, vote FROM mood_votes").get() }, { review_id: "k", mood: "для работы за столом", vote: "y" });
+  assert.ok(btns.some((b) => b.text === "🔎 AOTY" && b.url === "https://www.albumoftheyear.org/search/?q=Radiohead%20Kid%20A"));
   assert.ok(btns.some((b) => b.callback_data === "m:k:done"));
   assert.ok(btns.some((b) => b.callback_data === "f:k"));
   assert.ok(btns.some((b) => b.callback_data === "ar:k"));
@@ -318,7 +326,7 @@ test("a reviewed album: Fantano's line, favourites with a player on the site, n-
   await press(OWNER, "a:p");
   const c = calls.find((x) => x.method === "sendPhoto" || (x.method === "sendMessage" && /Moon/.test(x.text)));
   const text = c.caption || c.text;
-  assert.match(text, /1-й из 2 обзоров артиста\n💬 <i>Radiohead return &amp; shine\.<\/i>\n★ Любимые у Фантано: DAYDREAMING, TRUE LOVE WAITS/);
+  assert.match(text, /1-й из 2 обзоров артиста\n\n💬 <i>Radiohead return &amp; shine\.<\/i>\n★ Любимые у Фантано: DAYDREAMING, TRUE LOVE WAITS/);
   const btns = c.reply_markup.inline_keyboard.flat();
   assert.ok(btns.some((b) => b.text === "🔔 Следить") && btns.some((b) => b.text === "📚 Все обзоры"));
   assert.ok(btns.some((b) => b.text === "▶ Любимые треки" && b.url === "https://site/r/p.html#fav"));

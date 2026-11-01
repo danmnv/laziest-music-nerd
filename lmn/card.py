@@ -174,11 +174,18 @@ def link_rows(r):
         ("YouTube (альбом)", links["youtube_album"]) if links.get("youtube_album") else
         (SEARCH + "YouTube Music", links["ytmusic"]) if links.get("ytmusic") else None,
     ]
+    named = r.get("artist_name") and r.get("album")
     row2 = [
         ("Все платформы", links["songlink"]) if links.get("songlink") else
-        (SEARCH + "Google", google_search(r["artist_name"], r["album"])) if r.get("artist_name") and r.get("album") else None,
+        (SEARCH + "Google", google_search(r["artist_name"], r["album"])) if named else None,
+        # critics' and listeners' scores on Album of the Year: only a link to its search, nothing is fetched from it
+        (SEARCH + "AOTY", aoty_search(r["artist_name"], r["album"])) if named else None,
     ]
     return [b for b in row1 if b], [b for b in row2 if b]
+
+
+def aoty_search(artist, album):
+    return "https://www.albumoftheyear.org/search/?" + urllib.parse.urlencode({"q": f"{artist} {album}"})
 
 
 def google_search(artist, album):

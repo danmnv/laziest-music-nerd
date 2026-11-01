@@ -19,6 +19,11 @@ PROVIDERS = [
     ("cerebras", "https://api.cerebras.ai/v1/chat/completions", "CEREBRAS_API_KEY",
      os.environ.get("CEREBRAS_MODEL") or "llama-3.3-70b", 10, 14000),
 ]
+# when the default model is gone (Groq retires models: llama-3.3-70b-versatile answered 404 model_not_found on
+# 2026-11-01), the first of these the key can use, from the provider's /models list
+PREFER = ["openai/gpt-oss-120b", "moonshotai/kimi-k2-instruct", "qwen/qwen3-32b", "meta-llama/llama-4-maverick-17b-128e-instruct",
+          "gpt-oss-120b", "qwen-3-32b", "llama-3.3-70b"]
+_picked = {}
 _last = {}
 _dead = set()  # providers whose key is wrong (401/403) or still limited after retries (429) in this run
 
@@ -28,7 +33,7 @@ def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotoni
     key = (os.environ.get(var) or "").strip()
     if not key or not text:
         return None
-    model = model or default
+    model = model or _picked.get(name) or default
     prompt = gemini.PROMPT.format(source=gemini.SOURCE_TEXT, moods=json.dumps(gemini.MOODS, ensure_ascii=False),
                                   title=title, text="\nТекст обзора:\n" + text[:max_text])
     body = {"model": model, "messages": [{"role": "user", "content": prompt}],
@@ -46,6 +51,17 @@ def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotoni
             if e.status in (401, 403):
                 _dead.add(name)
                 return None
+            if e.status == 404 and "model" in (e.body or "") and name not in _picked:
+                _picked[name] = pick_model(url, key) or model
+                if _picked[name] != model:
+                    print(f"{name}: using {_picked[name]} instead")
+                    model = body["model"] = _picked[name]
+                    continue
+                _dead.add(name)
+                return None
+            if e.status == 404 and "model" in (e.body or ""):  # the picked model is gone too: no use asking this provider
+                _dead.add(name)
+                return None
             if e.status in (0, 429, 500, 502, 503, 504) and attempt < 2:
                 sleep(15 * (attempt + 1))  # rate limit or a hiccup: a bit later
                 continue
@@ -60,6 +76,21 @@ def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotoni
             print(f"{name} {model}: bad response {e!r}")
             return None
     return None
+
+
+def pick_model(chat_url, key):
+    """A chat model this key can use, from the provider's OpenAI-style /models list, or None."""
+    try:
+        d = http.get_json(chat_url.replace("/chat/completions", "/models"), headers={"Authorization": f"Bearer {key}"}, retries=0)
+    except http.HttpError as e:
+        print(f"models list: HTTP {e.status}")
+        return None
+    ids = [m.get("id") for m in d.get("data", []) if m.get("id")]
+    for p in PREFER:
+        if p in ids:
+            return p
+    chat = [i for i in ids if not any(w in i for w in ("whisper", "guard", "tts", "embed", "audio", "vision"))]
+    return chat[0] if chat else None
 
 
 def available():

@@ -93,7 +93,8 @@ def history_list(items, current_id, depth):
 
 def search_buttons(artist, album):
     q = urllib.parse.quote_plus(f"{artist} {album}")
-    return [("🔎 YouTube Music", f"https://music.youtube.com/search?q={q}"), ("🔎 Google", f"https://www.google.com/search?q={q}")]
+    return [("🔎 YouTube Music", f"https://music.youtube.com/search?q={q}"), ("🔎 Google", f"https://www.google.com/search?q={q}"),
+            ("🔎 Оценки на AOTY", card.aoty_search(artist, album))]
 
 
 def critics_parts(rt):
@@ -330,11 +331,12 @@ def build():
         crit, sales = critics_parts(rt)
         nt = nt or {}
         bf = (a.get("ai") or {}).get("brief") or (br or {}).get("brief")
-        if crit or sales or li or nt or bf:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
+        bm = (br or {}).get("moods") if not (a.get("ai") or {}).get("moods") else None  # the bot's mood vote for archive cards
+        if crit or sales or li or nt or bf or bm:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
             (OUT / "rt" / f"{a['id']}.json").write_text(json.dumps(
                 {"crit": crit[:4], "sales": sales[:4], "wp_url": (rt or {}).get("wp_url"), "contested": contested(a, rt),
                  **({"lists": li[:4]} if li else {}), **({"blurb": nt["blurb"]} if nt.get("blurb") else {}),
-                 **({"brief": bf} if bf else {}),
+                 **({"brief": bf} if bf else {}), **({"moods": bm} if bm else {}),
                  **({"fav": [f["t"] for f in nt["fav"]], "fav_play": any(f.get("dz") for f in nt["fav"])} if nt.get("fav") else {})},
                 ensure_ascii=False))
     for k, items in by_artist.items():

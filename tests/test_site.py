@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from lmn import site, tnd
+from lmn import card, site, tnd
 from lmn.enrich import archive_entry
 from tests.test_parse import post
 
@@ -101,6 +101,15 @@ class CriticsTest(unittest.TestCase):
         bare = site.archive_page(a, [a])  # only the hidden mood row, filled by app.js from visitors' votes
         self.assertIn('<dl><dt class="moods-h" hidden>Когда слушать</dt><dd class="moods" hidden></dd></dl>', bare)
         self.assertNotIn("<dt>", bare)
+
+
+class AotyLink(unittest.TestCase):
+    def test_search_link_on_cards_and_pages(self):
+        r = {"artist_name": "Radiohead", "album": "Kid A", "links": {"songlink": "https://album.link/x"}}
+        top, alls = card.link_rows(r)
+        self.assertEqual(alls[-1], ("🔎 AOTY", "https://www.albumoftheyear.org/search/?q=Radiohead+Kid+A"))
+        self.assertIn(("🔎 Оценки на AOTY", "https://www.albumoftheyear.org/search/?q=Radiohead+Kid+A"),
+                      site.search_buttons("Radiohead", "Kid A"))
 
 
 if __name__ == "__main__":
