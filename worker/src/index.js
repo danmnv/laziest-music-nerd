@@ -199,9 +199,6 @@ async function onCallback(q, env) {
   } else if (parts[0] === "mq") {
     await answerNow();
     await askMood(env, uid, parts[1]);
-  } else if (parts[0] === "pv") {
-    await answerNow();
-    await sendPreviews(env, uid, parts[1]);
   } else if (parts[0] === "dz") {
     await answerNow();
     await sendDeezerAlbum(env, uid, parts[1]);
@@ -551,7 +548,6 @@ async function sendUnreviewed(env, uid, x) {
     rows.push(MARK_ROW(x.key));
   }
   if (known) rows.push([{ text: "🔔 Следить", callback_data: `f:${known.id}` }, { text: "📚 Все обзоры", callback_data: `ar:${known.id}` }]);
-  if (x.key) rows.push([{ text: "▶ Отрывки", callback_data: `pv:${x.key}` }]);
   const reply_markup = { inline_keyboard: rows };
   if (x.cover) {
     const r = await tg(env, "sendPhoto", { chat_id: uid, photo: x.cover, caption: text, parse_mode: "HTML", reply_markup });
@@ -575,6 +571,9 @@ async function sendAlbum(env, uid, a, intro) {
   const minutes = (full && full.duration_min) || (dz && dz.minutes);
   // The release year; Deezer may only have a later reissue, so its year counts only if it isn't after the review.
   const reviewYear = String(r.published).slice(0, 4);
+  const ofArtist = (await archive(env)).filter((x) => nameKey(x.artist_name) === nameKey(r.artist_name))
+    .sort((x, y) => String(x.published).localeCompare(String(y.published)));
+  const nth = ofArtist.findIndex((x) => x.id === r.id) + 1;
   const year = (full && full.year) || (dz && dz.year && dz.year <= reviewYear ? dz.year : null);
   const facts = [
     (r.genres || []).slice(0, 3).join(", "),
@@ -582,8 +581,13 @@ async function sendAlbum(env, uid, a, intro) {
     minutes ? `${minutes} мин` : "",
     year ? "" : `обзор ${reviewYear}`, // the review year only when the release year is unknown
     r.guest ? "гостевой обзор" : "",
+    nth && ofArtist.length > 1 ? `${nth}-й из ${ofArtist.length} обзоров артиста` : "",
   ].filter(Boolean).join(" · ");
-  const text = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}${criticsText(rt)}`;
+  const words = [
+    rt && rt.blurb && !(full && full.ai && full.ai.brief) ? `💬 <i>${esc(rt.blurb)}</i>` : "",
+    rt && rt.fav && rt.fav.length ? `★ Любимые у Фантано: ${esc(rt.fav.join(", "))}` : "",
+  ].filter(Boolean).map((l) => "\n" + l).join("");
+  const text = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}${words}${criticsText(rt)}`;
   const q = encodeURIComponent(`${r.artist_name} ${r.album}`);
   const allServices = links.songlink || (dz && dz.link ? `https://album.link/${dz.link}` : null);
   const reply_markup = { inline_keyboard: [
@@ -594,7 +598,10 @@ async function sendAlbum(env, uid, a, intro) {
     [...(allServices ? [{ text: "Все платформы", url: allServices }] : []), { text: "🔎 Google", url: `https://www.google.com/search?q=${q}` }],
     MARK_ROW(r.id),
     [{ text: "🔔 Следить", callback_data: `f:${r.id}` }, { text: "📚 Все обзоры", callback_data: `ar:${r.id}` }],
-    [{ text: "🕒 Когда слушать?", callback_data: `mq:${r.id}` }, { text: "▶ Отрывки", callback_data: `pv:${r.id}` }],
+    [{ text: "🕒 Когда слушать?", callback_data: `mq:${r.id}` },
+      // Deezer's official player for Fantano's favourite tracks lives on the site: Telegram can't embed it, and handing
+      // out the audio file is against Deezer's rules
+      ...(rt && rt.fav_play && env.SITE_URL ? [{ text: "▶ Любимые треки", url: `${env.SITE_URL}/r/${encodeURIComponent(r.id)}.html#fav` }] : [])],
   ] };
   if (cover) {
     const d = await tg(env, "sendPhoto", { chat_id: uid, photo: cover, caption: text, parse_mode: "HTML", reply_markup });
@@ -827,35 +834,6 @@ async function sendLater(env, uid) {
     chat_id: uid,
     text: `Отложено: ${items.length}${items.length > shown.length ? ` (показаны ${shown.length} последних)` : ""}. Через 3 недели напомню о каждом, не чаще раза в неделю.`,
     reply_markup: { inline_keyboard: shown.map((x) => [{ text: `• ${short(x.artist_name)} — ${short(x.album)}`.slice(0, 120), callback_data: x.open }]) },
-  });
-}
-
-// 30-second previews from Deezer: the tracks Fantano singled out first, then the most played ones.
-// Links only: Deezer's developer guidelines forbid making audio data downloadable or storing it, and sending the mp3
-// through sendAudio would do both (Telegram keeps the file and offers it for download). 30-second extract URLs may be
-// shown to the user. They are signed and expire after a few hours, so the message is made fresh on each press.
-async function sendPreviews(env, uid, id) {
-  const r = (await reviews(env)).find((x) => x.id === id);
-  let artist, album;
-  if (r) [artist, album] = [r.artist_name, r.album];
-  else {
-    const n = (await markedNames(env, [id]))[id];
-    if (n) [artist, album] = [n.artist_name, untitled(n.album)];
-  }
-  const fail = () => tg(env, "sendMessage", { chat_id: uid, text: "Не нашёл отрывков этого альбома в Deezer." });
-  if (!artist) return fail();
-  const dz = await deezerAlbum(artist, album);
-  if (!dz || !dz.id) return fail();
-  const list = ((await deezerJson(`album/${dz.id}/tracks?limit=100`)).data || []).filter((t) => /^https:\/\//.test(t.preview || ""));
-  if (!list.length) return fail();
-  const fav = new Set(((r && r.ai && r.ai.best_tracks) || []).map(nameKey));
-  const picked = list.filter((t) => fav.has(nameKey(t.title)))
-    .concat([...list].sort((a, b) => (b.rank || 0) - (a.rank || 0)))
-    .filter((t, i, all) => all.indexOf(t) === i).slice(0, 3);
-  return tg(env, "sendMessage", {
-    chat_id: uid, parse_mode: "HTML",
-    text: `<b>${esc(artist)} — ${esc(album)}</b>: отрывки по 30 секунд из Deezer. Ссылки работают несколько часов; потом нажми «▶ Отрывки» ещё раз.`,
-    reply_markup: { inline_keyboard: picked.map((t) => [{ text: `▶ ${t.title}`.slice(0, 64), url: t.preview }]) },
   });
 }
 

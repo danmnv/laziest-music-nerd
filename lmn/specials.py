@@ -17,7 +17,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import gemini
+from . import gemini, notes
 from .musicbrainz import norm
 from .tnd import tidy_entry
 
@@ -145,6 +145,11 @@ def run():
     archive = [tidy_entry(a) for a in json.loads((DATA / "archive.json").read_text())]
     idx = archive_index(archive)
     ups = all_uploads()
+    npath = DATA / "notes.json"
+    old_notes = json.loads(npath.read_text()) if npath.exists() else {}
+    nt = notes.build(ups, archive, old_notes, int(os.environ.get("NOTES_DEEZER_LIMIT", "1500")))
+    npath.write_text("{\n" + ",\n".join(json.dumps(k) + ": " + json.dumps(nt[k], ensure_ascii=False, separators=(",", ":"))
+                                          for k in sorted(nt)) + "\n}\n")
     lists = []
     for u in ups:
         label = list_kind(u["title"])
@@ -201,10 +206,9 @@ def badges(specials):
         n = len(r["items"])
         for it in r["items"]:
             if it.get("review"):
-                t = f"&t={it['t']}" if it.get("t") is not None else ""
                 out.setdefault(it["review"], []).append({
                     "text": f"№{it['place']} из {n} в «{r['artist']}: от худшего к лучшему» ({r['date'][:4]})",
-                    "url": f"https://www.youtube.com/watch?v={r['video_id']}{t}"})
+                    "url": f"https://youtu.be/{r['video_id']}"})
     for li in specials.get("lists", []):
         for it in li["items"]:
             if it.get("review"):

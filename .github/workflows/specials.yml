@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Списки и рейтинги из роликов
+      - name: Списки, рейтинги, фразы и любимые треки из роликов
         timeout-minutes: 40
         run: python -m lmn.specials
         env:
@@ -38,10 +38,9 @@ jobs:
         run: |
           git config user.name "laziest-music-nerd-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          [ -f data/specials.json ] || exit 0
-          git add data/specials.json
+          for f in data/specials.json data/notes.json; do [ -f "$f" ] && git add "$f"; done
           git diff --cached --quiet && exit 0
-          git commit -q -m "data: особые видео Фантано"
+          git commit -q -m "data: особые видео и описания роликов Фантано"
           for i in 1 2 3 4; do  # the hourly check may have pushed meanwhile
             git pull --rebase -q origin main && git push -q origin HEAD:main && exit 0
             git rebase --abort 2>/dev/null || true

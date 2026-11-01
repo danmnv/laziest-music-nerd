@@ -62,7 +62,7 @@ class Badges(unittest.TestCase):
             "lists": [{"video_id": "yu", "label": "топ-50 альбомов 2017 года", "items": [{"artist": "A", "album": "B", "review": "okc"}]}]}
         b = specials.badges(data)
         self.assertEqual(b["okc"], [
-            {"text": "№1 из 2 в «Radiohead: от худшего к лучшему» (2017)", "url": "https://www.youtube.com/watch?v=uu8&t=984"},
+            {"text": "№1 из 2 в «Radiohead: от худшего к лучшему» (2017)", "url": "https://youtu.be/uu8"},
             {"text": "топ-50 альбомов 2017 года", "url": "https://youtu.be/yu"}])
         self.assertNotIn("pk", b)
 

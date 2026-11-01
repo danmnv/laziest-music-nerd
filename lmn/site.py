@@ -124,6 +124,22 @@ def contested(a, rt):
     return f"Фантано {a['score']}/10, критики {avg:g}/10 ({src})"
 
 
+def notes_rows(n, rid=None):
+    """Fantano's own line from the video description, and his favourite tracks with Deezer's official player
+    (30-second previews; embedding the widget is what Deezer offers it for, unlike handing out the audio)."""
+    if not n:
+        return []
+    rows = []
+    if n.get("blurb"):
+        rows.append(("Фантано в описании ролика", f'<q lang="en">{e(n["blurb"])}</q>'))
+    fav = n.get("fav") or []
+    if fav:
+        players = "".join(f'<iframe class="dz" title="Deezer: {e(f["t"])}" loading="lazy" src="https://widget.deezer.com/widget/auto/track/{int(f["dz"])}" '
+                          f'width="100%" height="152" frameborder="0" allow="encrypted-media; clipboard-write"></iframe>' for f in fav if f.get("dz"))
+        rows.append(("Любимые треки Фантано", f'<span id="fav">{e(", ".join(f["t"] for f in fav))}</span>{players}'))
+    return rows
+
+
 def lists_rows(badges):
     """Fantano's lists and rankings the album is in (lmn/specials.py), each linking to its video."""
     if not badges:
@@ -145,7 +161,7 @@ def critics_rows(rt, a=None):
     return rows
 
 
-def archive_page(a, artist_reviews, rt=None, lists=None):
+def archive_page(a, artist_reviews, rt=None, lists=None, note=None):
     """A release page for a review the bot never posted a card for: what the archive knows, the artist's other
     reviews, and the reader's marks."""
     review = f"https://youtu.be/{a['video_id']}" if a.get("video_id") else a["url"]
@@ -157,7 +173,7 @@ def archive_page(a, artist_reviews, rt=None, lists=None):
                                     "гостевой обзор" if a.get("guest") else None] if x)
     others = [x for x in artist_reviews if x["id"] != a["id"]]
     hist = (f'<h2>Фантано об этом артисте</h2>{history_list(artist_reviews, a["id"], 1)}' if others else "")
-    rows = lists_rows(lists) + critics_rows(rt, a)
+    rows = notes_rows(note, a["id"]) + lists_rows(lists) + critics_rows(rt, a)
     dl = f"<dl>{''.join(f'<dt>{k}</dt><dd>{v}</dd>' for k, v in rows)}</dl>" if rows else ""
     body = f"""<article class="release" data-id="{e(a['id'])}">
 <h1><a href="../a/{slug(a['artist_name'])}.html">{e(a['artist_name'])}</a> — {e(a['album'])}</h1>
@@ -197,7 +213,7 @@ def dossier_rows(d):
     return rows
 
 
-def release_page(r, rt=None, wiki=None, lists=None):
+def release_page(r, rt=None, wiki=None, lists=None, note=None):
     c = color(r.get("score"), r.get("not_good"), r.get("classic"))
     a = r.get("artist") or {}
     ai = r.get("ai") or {}
@@ -226,6 +242,8 @@ def release_page(r, rt=None, wiki=None, lists=None):
     if r.get("tracks"):
         rows.append(("Треклист", "<ol>" + "".join(f"<li>{line.split('. ', 1)[1]}</li>" for line in card.tracklist(r)) + "</ol>"
                      + ('<span class="muted">★ — выделил Фантано</span>' if (r.get("ai") or {}).get("best_tracks") else "")))
+    # Fantano's line only where there's no brief; the favourites' players always (the tracklist only marks them with ★)
+    rows += notes_rows({"blurb": None if ai.get("brief") else (note or {}).get("blurb"), "fav": (note or {}).get("fav")}, r["id"])
     rows += lists_rows(lists)
     rows += critics_rows(rt, r)
     if r.get("previous"):
@@ -288,20 +306,25 @@ def build():
     artists = load("artists.json", {})
     sp = load("specials.json", {})
     lists = specials.badges(sp)
+    notes = load("notes.json", {})
     (OUT / "wtb.json").write_text(json.dumps([{k: r[k] for k in ("artist", "video_id", "date")} for r in sp.get("rankings", [])],
                                              ensure_ascii=False))  # the bot's artist lists link the "worst to best" video
     (OUT / "rt").mkdir(exist_ok=True)
     for a in by_id.values():
         rt = ratings.get(a["id"])
         li = lists.get(a["id"])
-        html_ = (release_page(a, rt, artists.get((a.get("artist") or {}).get("mbid") or ""), li) if a["id"] in enriched
-                 else archive_page(a, by_artist[slug(a["artist_name"])], rt, li))
+        nt = notes.get(a["id"])
+        html_ = (release_page(a, rt, artists.get((a.get("artist") or {}).get("mbid") or ""), li, nt) if a["id"] in enriched
+                 else archive_page(a, by_artist[slug(a["artist_name"])], rt, li, nt))
         (OUT / "r" / f"{a['id']}.html").write_text(html_)
         crit, sales = critics_parts(rt)
-        if crit or sales or li:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
+        nt = nt or {}
+        if crit or sales or li or nt:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
             (OUT / "rt" / f"{a['id']}.json").write_text(json.dumps(
                 {"crit": crit[:4], "sales": sales[:4], "wp_url": (rt or {}).get("wp_url"), "contested": contested(a, rt),
-                 **({"lists": li[:4]} if li else {})}, ensure_ascii=False))
+                 **({"lists": li[:4]} if li else {}), **({"blurb": nt["blurb"]} if nt.get("blurb") else {}),
+                 **({"fav": [f["t"] for f in nt["fav"]], "fav_play": any(f.get("dz") for f in nt["fav"])} if nt.get("fav") else {})},
+                ensure_ascii=False))
     for k, items in by_artist.items():
         (OUT / "a" / f"{k}.html").write_text(artist_page(items[0]["artist_name"], items))
     cat = sorted((catalog_entry(a) for a in by_id.values()), key=lambda x: x["d"], reverse=True)

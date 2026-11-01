@@ -52,6 +52,9 @@ beforeEach(() => {
       return new Response(JSON.stringify({ crit: ["Metacritic 91", "Pitchfork 10/10"], sales: ["US #1", "UK #1"], wp_url: "https://en.wikipedia.org/wiki/Kid_A" }));
     }
     if (String(url) === "https://site/wtb.json") return new Response(JSON.stringify([{ artist: "Radiohead", video_id: "uu8sC7YDOZg", date: "2017-04-17" }]));
+    if (String(url) === "https://site/rt/p.json") {
+      return new Response(JSON.stringify({ crit: [], sales: [], blurb: "Radiohead return & shine.", fav: ["DAYDREAMING", "TRUE LOVE WAITS"], fav_play: true }));
+    }
     if (String(url).startsWith("https://site/rt/")) return new Response("not found", { status: 404 });
     if (String(url).startsWith("https://musicbrainz.org/") && mbDown) return new Response("busy", { status: 503 });
     if (String(url).startsWith("https://musicbrainz.org/ws/2/release-group?artist=R&") && String(url).includes("offset=100")) {
@@ -221,7 +224,7 @@ test("one hit is sent as a full card: cover, length, all services, marks and fol
   await say(OWNER, "kid a");
   const c = calls.find((x) => x.method === "sendPhoto");
   assert.equal(c.photo, "https://cdn/kida.jpg");
-  assert.match(c.caption, /<b>Radiohead — Kid A<\/b> \(2000\)\n🟢 10\/10 · art rock · 10 треков · 50 мин\n/);
+  assert.match(c.caption, /<b>Radiohead — Kid A<\/b> \(2000\)\n🟢 10\/10 · art rock · 10 треков · 50 мин · 2-й из 2 обзоров артиста\n/);
   assert.match(c.caption, /\nКритики: Metacritic 91 · Pitchfork 10\/10 \(<a href="https:\/\/en.wikipedia.org\/wiki\/Kid_A">Википедия<\/a>\)\nЧарты и продажи: US #1 · UK #1$/);
   const btns = c.reply_markup.inline_keyboard.flat();
   assert.ok(btns.some((b) => b.text === "Все платформы" && b.url === "https://album.link/https://www.deezer.com/album/9"));
@@ -295,7 +298,7 @@ test("when MusicBrainz is down, the list comes from Deezer: albums only, the fir
   assert.match(calls.find((x) => x.method === "sendPhoto").caption, /^<b>Radiohead — The Bends<\/b> \(1995\)/);
 });
 
-test("an album without a review can be put off: it shows in «📌 Отложенные», previews come from Deezer", async () => {
+test("an album without a review can be put off: it shows in «📌 Отложенные»", async () => {
   await press(OWNER, `mb:${BENDS}`);
   const card = calls.find((x) => x.method === "sendPhoto");
   const btns = card.reply_markup.inline_keyboard;
@@ -307,32 +310,26 @@ test("an album without a review can be put off: it shows in «📌 Отложе�
   const list = calls.find((c) => c.method === "sendMessage");
   assert.match(list.text, /^Отложено: 1\./);
   assert.deepEqual(list.reply_markup.inline_keyboard, [[{ text: "• Radiohead — The Bends", callback_data: `mb:${BENDS}` }]]);
-  calls = [];
-  await press(OWNER, `pv:${BENDS}`);
-  const a = calls.find((c) => c.method === "sendMessage");
-  assert.deepEqual(a.reply_markup.inline_keyboard, [[{ text: "▶ Fake Plastic Trees", url: "https://cdn/b1.mp3" }]]);
-  assert.ok(!calls.some((c) => ["sendAudio", "sendMediaGroup"].includes(c.method)), "Deezer forbids handing out audio files");
 });
 
-test("a reviewed album: previews (most played first), «Когда слушать?», and a put-off one in the list", async () => {
-  await press(OWNER, "a:k");
-  const btns = calls.find((x) => x.method === "sendPhoto").reply_markup.inline_keyboard.flat();
+test("a reviewed album: Fantano's line, favourites with a player on the site, n-th review, «Когда слушать?», put off", async () => {
+  await press(OWNER, "a:p");
+  const c = calls.find((x) => x.method === "sendPhoto" || (x.method === "sendMessage" && /Moon/.test(x.text)));
+  const text = c.caption || c.text;
+  assert.match(text, /1-й из 2 обзоров артиста\n💬 <i>Radiohead return &amp; shine\.<\/i>\n★ Любимые у Фантано: DAYDREAMING, TRUE LOVE WAITS/);
+  const btns = c.reply_markup.inline_keyboard.flat();
   assert.ok(btns.some((b) => b.text === "🔔 Следить") && btns.some((b) => b.text === "📚 Все обзоры"));
-  calls = [];
-  await press(OWNER, "pv:k");
-  const g = calls.find((c) => c.method === "sendMessage");
-  assert.deepEqual(g.reply_markup.inline_keyboard.map((r) => [r[0].text, r[0].url]),
-    [["▶ Idioteque", "https://cdn/p3.mp3"], ["▶ Everything in Its Right Place", "https://cdn/p1.mp3"], ["▶ Kid A", "https://cdn/p2.mp3"]]);
-  assert.match(g.text, /^<b>Radiohead — Kid A<\/b>: отрывки по 30 секунд из Deezer\./);
+  assert.ok(btns.some((b) => b.text === "▶ Любимые треки" && b.url === "https://site/r/p.html#fav"));
+  assert.ok(!btns.some((b) => /Отрывки/.test(b.text)));
   calls = [];
   await press(OWNER, "mq:k");
-  const m = calls.find((c) => c.method === "sendMessage");
+  const m = calls.find((x) => x.method === "sendMessage");
   assert.equal(m.text, "Когда лучше слушать <b>Radiohead — Kid A</b>?");
   assert.equal(m.reply_markup.inline_keyboard[0][0].callback_data, "vo:k:0");
   await press(OWNER, "m:k:later");
   calls = [];
   await say(OWNER, "📌 Отложенные");
-  assert.deepEqual(calls.find((c) => c.method === "sendMessage").reply_markup.inline_keyboard, [[{ text: "• Radiohead — Kid A", callback_data: "a:k" }]]);
+  assert.deepEqual(calls.find((x) => x.method === "sendMessage").reply_markup.inline_keyboard, [[{ text: "• Radiohead — Kid A", callback_data: "a:k" }]]);
 });
 
 test("the 21-day reminder covers albums put off from the archive and without a review", async () => {
