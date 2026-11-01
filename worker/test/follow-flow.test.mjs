@@ -48,11 +48,34 @@ beforeEach(() => {
       return new Response(JSON.stringify({ crit: ["Metacritic 91", "Pitchfork 10/10"], sales: ["US #1", "UK #1"], wp_url: "https://en.wikipedia.org/wiki/Kid_A" }));
     }
     if (String(url).startsWith("https://site/rt/")) return new Response("not found", { status: 404 });
+    if (String(url).startsWith("https://api.deezer.com/search/album") && String(url).includes("nothing")) return new Response(JSON.stringify({ data: [] }));
+    if (String(url).startsWith("https://api.deezer.com/search/album") && String(url).includes("bends")) {
+      return new Response(JSON.stringify({ data: [{ id: 20, title: "The Bends", artist: { name: "Radiohead" }, record_type: "album" }] }));
+    }
+    if (String(url).startsWith("https://api.deezer.com/search/artist")) return new Response(JSON.stringify({ data: [{ id: 399, name: "Radiohead" }] }));
+    if (String(url).startsWith("https://api.deezer.com/artist/399/albums")) {
+      return new Response(JSON.stringify({ data: [
+        { id: 9, title: "Kid A (Remastered)", release_date: "2000-10-02", record_type: "album" },
+        { id: 20, title: "The Bends", release_date: "1995-03-13", record_type: "album" },
+        { id: 21, title: "The Bends (Collector's Edition)", release_date: "2009-03-24", record_type: "album" },
+        { id: 22, title: "OK Computer OKNOTOK 1997 2017", release_date: "2017-06-23", record_type: "album" },
+        { id: 23, title: "Creep", release_date: "1992-09-21", record_type: "single" }] }));
+    }
+    if (String(url).startsWith("https://api.deezer.com/album/20")) {
+      return new Response(JSON.stringify({ id: 20, title: "The Bends", artist: { name: "Radiohead" }, release_date: "1995-03-13", nb_tracks: 12,
+        duration: 2928, record_type: "album", genres: { data: [{ name: "Alternative" }] }, cover_xl: "https://cdn/bends.jpg", link: "https://www.deezer.com/album/20" }));
+    }
+    if (String(url).startsWith("https://en.wikipedia.org/w/api.php")) {
+      const text = "{{Infobox album\n| name = The Bends\n| type = studio\n| artist = [[Radiohead]]\n}}\n" +
+        "{{Music ratings\n| rev1 = [[AllMusic]]\n| rev1score = {{Rating|5|5}}\n| rev2 = [[Pitchfork (website)|Pitchfork]]\n| rev2score = 10/10\n| rev3 = Some Blog\n| rev3score = 9/10\n}}\n" +
+        "{{Album chart|Billboard200|88}}\n{{Album chart|UK2|4}}\n";
+      return new Response(JSON.stringify({ query: { pages: [{ index: 1, title: "The Bends", revisions: [{ slots: { main: { content: text } } }] }] } }));
+    }
     if (String(url).startsWith("https://api.deezer.com/search/album")) {
       return new Response(JSON.stringify({ data: [
         { id: 9, title: "Kid A (Remastered)", artist: { name: "Radiohead" }, cover_xl: "https://cdn/kida.jpg", nb_tracks: 10, link: "https://www.deezer.com/album/9" }] }));
     }
-    if (String(url).startsWith("https://api.deezer.com/album/9")) return new Response(JSON.stringify({ duration: 2994, release_date: "2000-10-02" }));
+    if (String(url).startsWith("https://api.deezer.com/album/9")) return new Response(JSON.stringify({ id: 9, title: "Kid A (Remastered)", artist: { name: "Radiohead" }, duration: 2994, release_date: "2000-10-02" }));
     throw new Error("unexpected fetch " + url);
   };
 });
@@ -141,7 +164,7 @@ test("typing a name in the private chat searches Fantano's archive", async () =>
   await say(OWNER, "radiohead");
   const list = calls.find((c) => c.method === "sendMessage");
   assert.equal(list.text, "Radiohead — 2 обзора Фантано:");
-  assert.deepEqual(list.reply_markup.inline_keyboard.map((r) => r[0].callback_data), ["a:k", "a:p"]);
+  assert.deepEqual(list.reply_markup.inline_keyboard.map((r) => r[0].callback_data), ["a:k", "a:p", "da:k"]);
   assert.equal(list.reply_markup.inline_keyboard[0][0].text, "🟢 10/10 · Kid A · обзор 2020");
   calls = [];
   await press(OWNER, "ar:p"); // "Все обзоры артиста" on any of their cards
@@ -171,6 +194,38 @@ test("without a Deezer match the card is text with Google instead of all service
   const c = calls.find((x) => x.method === "sendMessage" && /Obscure/.test(x.text));
   assert.match(c.text, /⚪ без оценки · обзор 2011/);
   assert.ok(c.reply_markup.inline_keyboard.flat().some((b) => b.text === "🔎 Google"));
+});
+
+test("an artist's albums without Fantano's review, and a card for one of them", async () => {
+  await say(OWNER, "radiohead");
+  const list = calls.find((c) => c.method === "sendMessage");
+  assert.deepEqual(list.reply_markup.inline_keyboard.at(-1)[0], { text: "💿 Другие альбомы (без обзора Фантано)", callback_data: "da:k" });
+  calls = [];
+  await press(OWNER, "da:k");
+  const other = calls.find((c) => c.method === "sendMessage");
+  assert.equal(other.text, "Radiohead — альбомы без обзора Фантано (по данным Deezer):");
+  // reviewed Kid A, the later Bends edition and the single are left out; newest first
+  assert.deepEqual(other.reply_markup.inline_keyboard.map((r) => [r[0].text, r[0].callback_data]),
+    [["💿 OK Computer OKNOTOK 1997 2017 · 2017", "dz:22"], ["💿 The Bends · 1995", "dz:20"]]);
+  calls = [];
+  await press(OWNER, "dz:20");
+  const c = calls.find((x) => x.method === "sendPhoto");
+  assert.equal(c.photo, "https://cdn/bends.jpg");
+  assert.equal(c.caption, '<b>Radiohead — The Bends</b> (1995)\n⚪ Фантано не обозревал · Alternative · 12 треков · 49 мин' +
+    '\nКритики: Pitchfork 10/10 · AllMusic 5/5 (<a href="https://en.wikipedia.org/wiki/The_Bends">Википедия</a>)\nЧарты и продажи: US #88 · UK #4');
+  const btns = c.reply_markup.inline_keyboard.flat();
+  assert.ok(btns.some((b) => b.text === "Все платформы" && b.url === "https://album.link/https://www.deezer.com/album/20"));
+  assert.ok(btns.some((b) => b.callback_data === "f:k"));
+  calls = [];
+  await press(OWNER, "dz:9"); // a reviewed album opened from Deezer gets the usual card
+  assert.match(calls.find((x) => x.method === "sendPhoto").caption, /^<b>Radiohead — Kid A<\/b>/);
+});
+
+test("a search without a review offers what Deezer has", async () => {
+  await say(OWNER, "the bends");
+  const m = calls.find((c) => c.method === "sendMessage");
+  assert.equal(m.text, "Обзора Фантано по запросу «the bends» нет. Нашёл в Deezer:");
+  assert.deepEqual(m.reply_markup.inline_keyboard[0][0], { text: "💿 Radiohead — The Bends", callback_data: "dz:20" });
 });
 
 test("random pick is a full card too", async () => {
