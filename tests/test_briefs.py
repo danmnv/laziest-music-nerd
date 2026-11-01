@@ -148,6 +148,11 @@ class Providers(unittest.TestCase):
 
 
 class Run(unittest.TestCase):
+    def setUp(self):
+        env = mock.patch.dict(os.environ, {"BRIEFS_LANG": "ru"})
+        env.start()
+        self.addCleanup(env.stop)
+
     def test_targets_and_saved_file(self):
         archive = [
             {"id": "a" * 24, "artist_name": "Radiohead", "album": "Kid A", "published": "2020-01-01", "score": 10},
@@ -219,6 +224,76 @@ class Run(unittest.TestCase):
             with mock.patch.object(briefs, "DATA", p), mock.patch.object(briefs.tnd, "fetch_texts", side_effect=OSError("down")):
                 briefs.run()
             self.assertEqual(json.loads((p / "briefs.json").read_text()), {})
+
+
+class English(unittest.TestCase):
+    """BRIEFS_LANG=en: written in English, translated by Gemini in batches."""
+    EN = {"brief": "Short, 7/10.", "about": "Longer.", "who": "", "moods": ["ночью"], "model": "g"}
+
+    def archive(self, n):
+        return [{"id": f"{i:024x}", "artist_name": f"A{i}", "album": f"B{i}", "published": f"2020-01-{i + 1:02d}", "score": 7}
+                for i in range(n)]
+
+    def fake_translate(self, items):
+        return [{"brief": f"Ru {x['brief']}", "about": "Подробно.", "who": "", "tr": "gm"} for x in items]
+
+    def run_briefs(self, p, summarize, translate, env=None):
+        with mock.patch.object(briefs, "DATA", p), mock.patch.dict(os.environ, {"BRIEFS_LANG": "en", **(env or {})}), \
+                mock.patch.object(briefs.tnd, "fetch_texts", side_effect=lambda ids: {i: "x " * 300 for i in ids}), \
+                mock.patch.object(briefs.llm, "available", return_value=True), \
+                mock.patch.object(briefs.llm, "summarize", side_effect=summarize) as s, \
+                mock.patch.object(briefs.gemini, "translate", side_effect=translate) as t:
+            briefs.run()
+        return s, t, json.loads((p / "briefs.json").read_text())
+
+    def test_batches_of_ten_and_the_rest_at_the_end(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(self.archive(12)))
+            s, t, out = self.run_briefs(p, lambda *a, **kw: dict(self.EN), self.fake_translate)
+            self.assertEqual([len(c.args[0]) for c in t.call_args_list], [10, 2])
+            self.assertEqual(s.call_args.kwargs, {"lang": "en", "verdict": "Fantano's score: 7/10."})
+            e = out[f"{0:024x}"]
+            self.assertEqual(e, {"brief": "Ru Short, 7/10.", "about": "Подробно.", "tr": "gm", "m": "g", "moods": ["ночью"],
+                                 "en": {"brief": "Short, 7/10.", "about": "Longer."}})
+
+    def test_failed_translation_waits_and_is_not_written_again(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(self.archive(3)))
+            _, t, out = self.run_briefs(p, lambda *a, **kw: dict(self.EN), lambda items: None)
+            self.assertEqual(t.call_count, 1)
+            self.assertEqual(briefs.untranslated(out), [f"{i:024x}" for i in range(3)])
+            s, t, out = self.run_briefs(p, lambda *a, **kw: dict(self.EN), self.fake_translate)
+            s.assert_not_called()
+            self.assertEqual(briefs.untranslated(out), [])
+            self.assertEqual(out[f"{2:024x}"]["brief"], "Ru Short, 7/10.")
+
+    def test_the_translation_budget_holds(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(self.archive(25)))
+            _, t, out = self.run_briefs(p, lambda *a, **kw: dict(self.EN), self.fake_translate, {"BRIEFS_TRANSLATE_MAX": "2"})
+            self.assertEqual(t.call_count, 2)
+            self.assertEqual(len(briefs.untranslated(out)), 5)
+
+    def test_old_russian_briefs_are_written_again_and_kept_if_that_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(self.archive(2)))
+            old = {"brief": "Калька.", "m": "openai/gpt-oss-120b"}
+            (p / "briefs.json").write_text(json.dumps({f"{0:024x}": old, f"{1:024x}": old}))
+            answers = iter([None, dict(self.EN)])  # newest first: 1 fails, 0 gets a new one
+            _, _, out = self.run_briefs(p, lambda *a, **kw: next(answers), self.fake_translate)
+            self.assertEqual(out[f"{1:024x}"], old)
+            self.assertEqual(out[f"{0:024x}"]["brief"], "Ru Short, 7/10.")
+
+    def test_verdict_never_invents_a_score(self):
+        self.assertEqual(briefs.verdict({"score": 0}), "Fantano's score: 0/10.")
+        self.assertIn('"NOT GOOD"', briefs.verdict({"score": None, "not_good": True}))
+        self.assertIn('"CLASSIC"', briefs.verdict({"classic": True}))
+        self.assertEqual(briefs.verdict({}), "Fantano gave no score: don't write one.")
+        self.assertIn("NOT GOOD", gemini.PROMPT_EN.format(moods="[]", title="t", text="x", verdict=briefs.verdict({"not_good": True})))
 
 
 class Site(unittest.TestCase):
