@@ -9,6 +9,7 @@ export function criticsText(rt) {
   if (!rt) return "";
   const src = rt.wp_url ? ` (<a href="${esc(rt.wp_url)}">Википедия</a>)` : "";
   const lines = [];
+  if (rt.contested) lines.push(`⚡ Спорно: ${esc(rt.contested)}`); // Fantano vs the critics' average, 4+ points apart
   if (rt.crit && rt.crit.length) lines.push(`Критики: ${esc(rt.crit.join(" · "))}${src}`);
   if (rt.sales && rt.sales.length) lines.push(`Чарты и продажи: ${esc(rt.sales.join(" · "))}${lines.length ? "" : src}`);
   return lines.length ? "\n" + lines.join("\n") : "";

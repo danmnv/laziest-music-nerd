@@ -7,4 +7,6 @@ test("critics lines escape the Wikipedia link for an HTML attribute", () => {
   assert.equal(criticsText({ crit: ["Metacritic 91"], sales: [], wp_url: 'https://en.wikipedia.org/wiki/A"B' }),
     '\nКритики: Metacritic 91 (<a href="https://en.wikipedia.org/wiki/A&quot;B">Википедия</a>)');
   assert.equal(criticsText({ crit: [], sales: ["US #1"], wp_url: "https://w/x" }), '\nЧарты и продажи: US #1 (<a href="https://w/x">Википедия</a>)');
+  assert.equal(criticsText({ contested: "Фантано 3/10, критики 8/10 (Metacritic)", crit: ["Metacritic 80"], sales: [], wp_url: "https://w/x" }),
+    '\n⚡ Спорно: Фантано 3/10, критики 8/10 (Metacritic)\nКритики: Metacritic 80 (<a href="https://w/x">Википедия</a>)');
 });
