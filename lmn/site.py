@@ -27,17 +27,29 @@ def load(name, default):
     return json.loads(p.read_text()) if p.exists() else default
 
 
+FONTS = "https://fonts.googleapis.com/css2?family=Onest:wght@400;500;700&family=Unbounded:wght@600;800&display=swap"
+CHANNEL = "laziestmusicnerd"
+BOT = "laziest_music_nerd_bot"
+
+
 def page(title, body, depth=0):
     up = "../" * depth
     return f"""<!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{e(title)}</title><link rel="stylesheet" href="{up}style.css"><link rel="manifest" href="{up}manifest.json">
-<meta name="theme-color" content="#16161a"><link rel="icon" href="{up}icon.svg"><link rel="apple-touch-icon" href="{up}apple-touch-icon.png">
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{e(title)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="{FONTS}"><link rel="stylesheet" href="{up}style.css"><link rel="manifest" href="{up}manifest.json">
+<meta name="theme-color" content="#f4f1ea" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#121116" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="{up}icon.svg"><link rel="apple-touch-icon" href="{up}apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="LMN"></head>
-<body><header><a class="logo" href="{up}index.html">Laziest Music Nerd</a><span id="login"></span></header>
+<body><header class="top"><div class="bar">
+<a class="logo" href="{up}index.html"><img src="{up}icon.svg" alt="" width="28" height="28"><span>Laziest<b> Music Nerd</b></span></a>
+<nav><a href="{up}index.html#fresh">Свежее</a><a href="{up}index.html#catalog-h">Каталог</a><a class="find" href="{up}index.html#search" aria-label="Поиск"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="7.5" cy="7.5" r="5.5"/><path d="m12 12 4.5 4.5"/></svg></a></nav>
+<span id="login"></span></div></header>
 <main>{body}</main>
-<footer>{e(DISCLAIMER)}</footer>
-<script>window.LMN={{root:"{up}",worker:{json.dumps(worker_url())},bot:"laziest_music_nerd_bot"}}</script>
+<footer><p class="links"><a href="https://t.me/{CHANNEL}">Канал в Telegram</a><a href="https://t.me/{BOT}">Бот</a><a href="https://www.youtube.com/@theneedledrop">The Needle Drop</a></p>
+<p>{e(DISCLAIMER)}</p></footer>
+<script>window.LMN={{root:"{up}",worker:{json.dumps(worker_url())},bot:"{BOT}"}}</script>
 <script src="{up}app.js"></script></body></html>"""
 
 
@@ -247,17 +259,22 @@ def build():
     (OUT / "catalog.json").write_text(json.dumps(cat, ensure_ascii=False, separators=(",", ":")))
     recent = card.recent(reviews)
     items = "".join(recent_item(r) for r in recent)
-    body = f"""<h2>Свежее за 60 дней</h2><ul class="list">{items or '<li>Пока пусто.</li>'}</ul>
-<h2>Каталог</h2>
-<div class="filters">
-<input id="q" type="search" placeholder="Артист или альбом">
-<select id="fscore"><option value="">Любая оценка</option><option value="8">от 8</option><option value="7">от 7</option><option value="5">от 5</option><option value="red">красные</option></select>
-<select id="fgenre"><option value="">Любой жанр</option></select>
-<select id="fyear"><option value="">Любой год обзора</option></select>
-<select id="fsort"><option value="new">Сначала новые</option><option value="score">Сначала высокие оценки</option></select>
-<label><input id="fhide" type="checkbox" checked> скрыть прослушанное</label>
+    body = f"""<section class="intro"><h1>Обзоры Фантано без лишних кликов</h1>
+<p>Оценки Anthony Fantano, жанры и где послушать. {len(cat)} обзоров с 2010 года.</p></section>
+<h2 id="fresh">Свежее за 60 дней</h2><ul id="recent" class="list rows">{items or '<li>Пока пусто.</li>'}</ul>
+<h2 id="catalog-h">Каталог</h2>
+<div class="filters" id="search">
+<input id="q" type="search" placeholder="Артист или альбом" autocomplete="off" enterkeyhint="search" aria-label="Поиск по артисту и альбому">
+<div class="selects">
+<select id="fscore" aria-label="Оценка"><option value="">Любая оценка</option><option value="8">от 8</option><option value="7">от 7</option><option value="5">от 5</option><option value="red">красные</option></select>
+<select id="fgenre" aria-label="Жанр"><option value="">Любой жанр</option></select>
+<select id="fyear" aria-label="Год обзора"><option value="">Любой год обзора</option></select>
+<select id="fsort" aria-label="Сортировка"><option value="new">Сначала новые</option><option value="score">Сначала высокие оценки</option></select>
 </div>
-<ul id="catalog" class="list"></ul><button id="more" hidden>Показать ещё</button>"""
+<label class="hide" hidden><input id="fhide" type="checkbox" checked> скрыть прослушанное</label>
+</div>
+<p id="count" class="muted" aria-live="polite"></p>
+<ul id="catalog" class="list rows"></ul><button id="more" class="more" hidden>Показать ещё</button>"""
     (OUT / "index.html").write_text(page("Laziest Music Nerd — обзоры Фантано", body))
     print(f"site: {len(by_id)} release pages ({len(reviews)} with a full card), {len(by_artist)} artist pages")
 
