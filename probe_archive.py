@@ -1,21 +1,29 @@
-"""Temporary: dry run of lmn.yt_archive on a copy of data/, to see what it would fill before running it on main."""
+"""Temporary: check what lmn.yt_archive would fill. (1) The text around the score it takes, for 12 random
+fills. (2) Titles of 2010-2012 review videos, whose format the title parser may miss."""
 import json
-import os
 import random
-import shutil
-import subprocess
-from collections import Counter
+import re
 
-shutil.copytree("data", "/tmp/d", dirs_exist_ok=True)
-subprocess.run(["python", "-m", "lmn.yt_archive"], check=True, env={**os.environ, "DATA_DIR": "/tmp/d"})
-before = {a["id"]: a for a in json.load(open("data/archive.json"))}
-after = json.load(open("/tmp/d/archive.json"))
-filled = [a for a in after if a.get("score_source") == "youtube"]
-years = Counter(a["published"][:4] for a in filled)
-missing_years = Counter(a["published"][:4] for a in after if a.get("score") is None and not a.get("not_good") and not a.get("classic"))
-print("filled by year:", dict(sorted(years.items())))
-print("still missing by year:", dict(sorted(missing_years.items())))
-print("kinds:", Counter("score" if a.get("score") is not None else "not_good" if a.get("not_good") else "classic" for a in filled))
-random.seed(3)
-for a in random.sample(filled, min(15, len(filled))):
-    print(f"   {a['published'][:10]} {a['artist_name']} - {a['album']}: {a.get('score')}{' NOT GOOD' if a.get('not_good') else ''}{' CLASSIC' if a.get('classic') else ''} https://youtu.be/{a['video_id']}")
+from lmn import yt_archive as ya
+
+videos = ya.all_uploads()
+by_id = {v["id"]: v for v in videos}
+archive = json.load(open("data/archive.json"))
+missing = {ya.key(a["artist_name"], a["album"]): a for a in archive
+           if a.get("artist_name") and a.get("album") and a.get("score") is None and not a.get("not_good") and not a.get("classic")}
+hits, old_titles = [], []
+for v in videos:
+    t = re.sub(r"\s*[-–(\[]?\s*(ALBUM|EP|MIXTAPE|TRACK)?\s*REVIEW[)\]]?\s*$", "", v["title"], flags=re.I)
+    m = re.match(r"^(.+?)\s+[-–]\s+(.+)$", t)
+    if m and ya.key(m.group(1), m.group(2)) in missing and ya.verdict(v["desc"]):
+        hits.append(v)
+    elif v["date"][:4] in ("2010", "2011", "2012") and "review" in v["title"].lower():
+        old_titles.append(v["title"])
+random.seed(5)
+for v in random.sample(hits, min(12, len(hits))):
+    ms = list(ya.SCORE.finditer(v["desc"]))
+    ctx = v["desc"][max(0, ms[-1].start() - 80): ms[-1].end() + 20].replace("\n", " | ") if ms else v["desc"][:100]
+    print(f"   {v['title']!r}: {ya.verdict(v['desc'])} <- ...{ctx}...")
+print(f"2010-2012 review videos not matched: {len(old_titles)}; examples:")
+for t in random.sample(old_titles, min(15, len(old_titles))):
+    print("   ", repr(t))
