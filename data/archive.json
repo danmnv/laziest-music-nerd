@@ -11240,11 +11240,13 @@
   "published": "2023-05-29T22:38:00.000-04:00",
   "artist_name": "Jeromes Dream",
   "album": "The Gray In Between",
-  "score": null,
+  "score": 8,
   "not_good": false,
   "classic": false,
   "guest": false,
-  "genres": []
+  "genres": [],
+  "score_source": "youtube",
+  "video_id": "VgZkcUA3xko"
  },
  {
   "id": "6684c32c49ea2a054e092820",
@@ -21880,11 +21882,13 @@
   "published": "2020-08-31T22:46:00.000-04:00",
   "artist_name": "Disclosure",
   "album": "Energy",
-  "score": null,
+  "score": 6,
   "not_good": false,
   "classic": false,
   "guest": false,
-  "genres": []
+  "genres": [],
+  "score_source": "youtube",
+  "video_id": "wz0CLtCyKfc"
  },
  {
   "id": "6684c32c49ea2a054e0925e3",
@@ -21906,11 +21910,13 @@
   "published": "2020-08-28T23:44:00.000-04:00",
   "artist_name": "Matmos",
   "album": "The Consuming Flame: Open Exercises in Group Form",
-  "score": null,
+  "score": 8,
   "not_good": false,
   "classic": false,
   "guest": false,
-  "genres": []
+  "genres": [],
+  "score_source": "youtube",
+  "video_id": "n-g7m_ROyds"
  },
  {
   "id": "6684c32c49ea2a054e0925e2",
@@ -21932,11 +21938,13 @@
   "published": "2020-08-26T10:43:00.000-04:00",
   "artist_name": "Bright Eyes",
   "album": "Down in the Weeds, Where the World Once Was",
-  "score": null,
+  "score": 6,
   "not_good": false,
   "classic": false,
   "guest": false,
-  "genres": []
+  "genres": [],
+  "score_source": "youtube",
+  "video_id": "aV2JKSsoux8"
  },
  {
   "id": "6684c32c49ea2a054e0925e1",
@@ -21958,11 +21966,13 @@
   "published": "2020-08-25T22:41:00.000-04:00",
   "artist_name": "The Killers",
   "album": "Imploding the Mirage",
-  "score": null,
+  "score": 5,
   "not_good": false,
   "classic": false,
   "guest": false,
-  "genres": []
+  "genres": [],
+  "score_source": "youtube",
+  "video_id": "NgAuIMECDXY"
  },
  {
   "id": "6684c32c49ea2a054e0925e0",
@@ -21984,11 +21994,13 @@
   "published": "2020-08-24T10:39:00.000-04:00",
   "artist_name": "Nas",
   "album": "King's Disease",
-  "score": null,
+  "score": 7,
   "not_good": false,
   "classic": false,
   "guest": false,
-  "genres": []
+  "genres": [],
+  "score_source": "youtube",
+  "video_id": "bC57B3zsv3k"
  },
  {
   "id": "6684c32c49ea2a054e0925df",
@@ -22010,12 +22022,14 @@
   "published": "2020-08-22T10:38:00.000-04:00",
   "artist_name": "Fontaines D.C.",
   "album": "A Hero's Death",
-  "score": null,
+  "score": 4,
   "not_good": false,
   "classic": false,
   "guest": false,
   "genres": [],
-  "artist_mbid": "fd87acc7-e0a0-4a45-bc2a-d2ab5c10be68"
+  "artist_mbid": "fd87acc7-e0a0-4a45-bc2a-d2ab5c10be68",
+  "score_source": "youtube",
+  "video_id": "fZnUu_QMTN4"
  },
  {
   "id": "6684c32c49ea2a054e0925de",
@@ -22038,11 +22052,13 @@
   "published": "2020-08-20T11:36:00.000-04:00",
   "artist_name": "A. G. Cook",
   "album": "7G",
-  "score": null,
+  "score": 6,
   "not_good": false,
   "classic": false,
   "guest": false,
-  "genres": []
+  "genres": [],
+  "score_source": "youtube",
+  "video_id": "0pq71XoRcgw"
  },
  {
   "id": "6684c32c49ea2a054e0925dd",
