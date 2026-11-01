@@ -35,6 +35,7 @@ jobs:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
           # not the first models: new reviews' briefs keep their quota
           GEMINI_MODEL: gemini-3.5-flash,gemini-3.5-flash-lite
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}

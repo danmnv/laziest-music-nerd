@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from lmn import briefs, gemini, http, llm, site
+from lmn import briefs, deepl, gemini, http, llm, site
 
 ANSWER = {"brief": "Коротко.", "about": "Длинно. " * 100, "who": "Группа из Оксфорда.", "moods": ["для работы за столом", "не то"],
           "best_tracks": [], "artist": "Radiohead", "album": "Kid A", "score_note": ""}
@@ -65,6 +65,19 @@ class Translate(unittest.TestCase):
             llm.ask("groq", "A - B", "text", lang="en", sleep=lambda s: None)
         self.assertTrue(seen[0].startswith("You help run"))
         self.assertIn("в наушниках, вдумчиво", seen[0])  # moods still from the Russian list
+
+
+class DeepL(unittest.TestCase):
+    def test_one_request_free_host_and_empty_fields_stay_empty(self):
+        en = [{"brief": "Good.", "about": "Long.", "who": ""}]
+        with mock.patch.object(http, "get_json", return_value={"translations": [{"text": "Хорошо."}, {"text": "Длинно."}, {"text": ""}]}) as g:
+            out = deepl.translate(en, api_key="abc:fx")
+        self.assertTrue(g.call_args.args[0].startswith("https://api-free.deepl.com/"))
+        self.assertEqual(g.call_args.kwargs["json_body"]["text"], ["Good.", "Long.", ""])
+        self.assertEqual(out, [{"brief": "Хорошо.", "about": "Длинно.", "who": "", "tr": "deepl"}])
+        with mock.patch.object(http, "get_json", side_effect=http.HttpError(456, "Quota exceeded", "u")):
+            self.assertIsNone(deepl.translate(en, api_key="abc:fx"))
+        self.assertIsNone(deepl.translate(en, api_key=""))
 
 
 class Providers(unittest.TestCase):

@@ -62,7 +62,7 @@ def compare(archive, reviews):
     """The 10 newest reviews without a brief, written three ways, to choose how to write the archive's briefs: Groq in
     Russian; Groq in English, translated by Gemini in one request; Gemini itself from the text (one request each).
     Writes nothing; each row is printed as a "COMPARE {json}" log line and as a table in the run's summary."""
-    from . import gemini
+    from . import deepl, gemini
     picked = [(a, t) for a, t in texts(targets(archive, reviews, set())[:12]) if t and len(t) >= MIN_TEXT][:10]
     rows = []
     for a, text in picked:
@@ -72,14 +72,16 @@ def compare(archive, reviews):
                      "groq_en": llm.ask("groq", title, text, lang="en") or {},
                      "gemini": gemini.summarize(title, text=text) or {}})
     tr = gemini.translate([r["groq_en"] for r in rows]) or [{} for _ in rows]
-    for r, t in zip(rows, tr):
-        r["groq_en_ru"] = t
+    dl = deepl.translate([r["groq_en"] for r in rows]) or [{} for _ in rows]  # only with DEEPL_API_KEY
+    for r, t, d in zip(rows, tr, dl):
+        r["groq_en_ru"], r["groq_en_deepl"] = t, d
         print("COMPARE " + json.dumps(r, ensure_ascii=False))
 
     def cell(x):
         return (f"{x.get('brief') or '—'}<br><br>{x.get('about') or '—'}<br><br>*{x.get('who') or ''}*").replace("|", "/")
-    md = ("| Обзор | Groq по-русски | Groq по-английски → Gemini | Gemini сам |\n|---|---|---|---|\n"
-          + "\n".join(f"| {r['title']} ({r['score']}) | {cell(r['groq_ru'])} | {cell(r['groq_en_ru'])} | {cell(r['gemini'])} |" for r in rows) + "\n")
+    md = ("| Обзор | Groq по-русски | Groq по-английски → Gemini | Groq по-английски → DeepL | Gemini сам |\n|---|---|---|---|---|\n"
+          + "\n".join(f"| {r['title']} ({r['score']}) | {cell(r['groq_ru'])} | {cell(r['groq_en_ru'])} | {cell(r['groq_en_deepl'])} | "
+                      f"{cell(r['gemini'])} |" for r in rows) + "\n")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a") as f:
