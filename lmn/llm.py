@@ -28,14 +28,15 @@ _last = {}
 _dead = set()  # providers whose key is wrong (401/403) or still limited after retries (429) in this run
 
 
-def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotonic):
+def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotonic, lang="ru"):
     name, url, var, default, gap, max_text = next(p for p in PROVIDERS if p[0] == provider)
     key = (os.environ.get(var) or "").strip()
     if not key or not text:
         return None
     model = model or _picked.get(name) or default
-    prompt = gemini.PROMPT.format(source=gemini.SOURCE_TEXT, moods=json.dumps(gemini.AI_MOODS, ensure_ascii=False),
-                                  title=title, text="\nТекст обзора:\n" + text[:max_text])
+    moods = json.dumps(gemini.AI_MOODS, ensure_ascii=False)
+    prompt = (gemini.PROMPT_EN.format(moods=moods, title=title, text=text[:max_text]) if lang == "en" else
+              gemini.PROMPT.format(source=gemini.SOURCE_TEXT, moods=moods, title=title, text="\nТекст обзора:\n" + text[:max_text]))
     body = {"model": model, "messages": [{"role": "user", "content": prompt}],
             "response_format": {"type": "json_object"}, "temperature": 0.4}
     for attempt in range(3):

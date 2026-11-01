@@ -14,7 +14,7 @@ MODELS = [m.strip() for m in (os.environ.get("GEMINI_MODEL") or
 MODEL = MODELS[0]
 BUDGET_SEC = 240      # per review, all models and retries together, so a slow day can't eat the hourly run
 CALL_TIMEOUT = 90
-ABOUT_MAX = 560   # the site's longer brief ("about"); the prompt asks for 500
+ABOUT_MAX = 760   # the site's longer brief ("about"); the prompt asks for 700
 BRIEF_MAX = 240   # the card's short brief; the prompt asks for 220
 # When to listen; the same list and order as MOODS in worker/src/index.js (buttons carry the index, votes the words).
 MOODS = ["для тренировки", "для настроения", "для работы за столом", "для тусовки", "в дорогу", "на прогулку", "ночью",
@@ -25,7 +25,7 @@ _unavailable = set()  # models found used up for today (or closed) during this r
 PROMPT = """Ты помогаешь вести русскоязычный Telegram-канал о музыкальных обзорах Anthony Fantano (The Needle Drop).
 {source} Ответь строго JSON-объектом с полями:
 - "brief": 1–2 предложения на русском, своими словами: что за релиз и что Фантано о нём думает. Не цитируй обзор, не переводи его дословно. До 220 символов. Оценку пиши числом («7/10»), слова light, decent, strong не переводи.
-- "about": 3–4 предложения на русском, своими словами, для страницы сайта: что за релиз, что Фантано в нём хвалит, что ругает и к чему пришёл. Не цитируй обзор, не переводи его дословно. До 500 символов.
+- "about": 4–5 предложений на русском, своими словами, для страницы сайта: что за релиз, что Фантано в нём хвалит (с названиями треков), что ругает и к чему пришёл. Не цитируй обзор, не переводи его дословно. До 700 символов.
 - "who": 1 строка на русском о том, кто исполнитель (жанр/сцена, откуда, какой это по счёту релиз, если ясно из текста). Только факты из текста; если не ясно — пустая строка. До 140 символов.
 - "moods": список из 1–2 вариантов ровно из этого набора: {moods}. Когда лучше всего слушать этот релиз: исходи из жанра, звучания и настроения, которые описывает обзор (тяжёлый и злой — не «фоном», тихий и грустный — не «для тусовки»).
 - "best_tracks": до 3 названий треков, которые Фантано выделил как лучшие, точно как они написаны в тексте. Если не выделил — пустой список.
@@ -37,6 +37,51 @@ PROMPT = """Ты помогаешь вести русскоязычный Telegr
 Заголовок: {title}
 {text}"""
 SOURCE_TEXT = "Ниже — расшифровка его видеообзора."
+
+# The same answer in English, for models that write Russian poorly (lmn/llm.py); translate() then makes it Russian.
+PROMPT_EN = """You help run a Russian-language Telegram channel about Anthony Fantano's (The Needle Drop) music reviews.
+Below is the transcript of his video review. Answer with a JSON object only, with the fields:
+- "brief": 1-2 sentences in English, in your own words: what the release is and what Fantano thinks of it. Don't quote the review. Up to 200 characters. Give the score as a number ("7/10").
+- "about": 4-5 sentences in English, in your own words, for the website: what the release is, what Fantano praises (name the tracks), what he criticizes and where he lands. Don't quote the review. Up to 650 characters.
+- "who": one line in English about the artist (genre/scene, where from, which release this is, if clear from the text). Only facts from the text; if unclear, an empty string. Up to 130 characters.
+- "moods": a list of 1-2 items copied exactly from this list: {moods}. When this release is best listened to, judging by the genre, sound and mood the review describes.
+- "best_tracks": up to 3 track titles Fantano singled out as the best, exactly as written in the text; else an empty list.
+- "artist": the artist's name as in the original.
+- "album": the release title as in the original.
+- "score_note": if Fantano gave the score with light, decent or strong (e.g. "a strong 7", "light to decent 6"), that word or pair in lowercase; else an empty string.
+Keep album, track and genre names in the original.
+Title: {title}
+Transcript:
+{text}"""
+
+TRANSLATE = """Переведи на русский тексты для русскоязычного канала о музыкальных обзорах Anthony Fantano. Пиши естественным,
+грамотным русским языком, как музыкальный журналист, а не дословно. Названия альбомов, треков, групп и жанров оставляй в
+оригинале (латиницей). Оценки пиши числом («7/10»); слова light, decent, strong не переводи и не используй. Фамилию
+Fantano пиши «Фантано». Ответь строго JSON-списком той же длины и в том же порядке, где у каждого элемента те же поля
+"brief", "about", "who" по-русски.
+{items}"""
+
+
+def translate(items, api_key=None):
+    """English brief/about/who dicts -> the same list in Russian, in one Gemini request (its limit counts requests,
+    not words); None on any failure or a list of another length."""
+    api_key = (api_key or os.environ.get("GEMINI_API_KEY") or "").strip()
+    if not api_key or not items:
+        return None
+    src = [{k: (x.get(k) or "") for k in ("brief", "about", "who")} for x in items]
+    body = {"contents": [{"parts": [{"text": TRANSLATE.format(items=json.dumps(src, ensure_ascii=False, indent=1))}]}],
+            "generationConfig": {"responseMimeType": "application/json", "temperature": 0.3}}
+    model, raw = generate(body, api_key, budget=300)
+    if raw is None:
+        return None
+    try:
+        out = json.loads(raw["candidates"][0]["content"]["parts"][0]["text"])
+        if not isinstance(out, list) or len(out) != len(src) or not all(isinstance(x, dict) for x in out):
+            raise ValueError("not a list of the same length")
+        return [{k: str(x.get(k) or "").strip() for k in ("brief", "about", "who")} | {"tr": model} for x in out]
+    except (KeyError, IndexError, TypeError, ValueError, AttributeError) as e:
+        print(f"gemini {model}: bad translation {e!r}")
+        return None
 SOURCE_VIDEO = "Выше — сам его видеообзор на YouTube; ниже — описание видео."
 NOTE = re.compile(r"^(?:light|decent|strong)(?: to (?:light|decent|strong))?$")
 

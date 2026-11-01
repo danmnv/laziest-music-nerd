@@ -38,6 +38,35 @@ class ParseAnswer(unittest.TestCase):
         self.assertEqual(re.findall(r'"([^"]+)"', block), gemini.MOODS)
 
 
+class Translate(unittest.TestCase):
+    def test_one_request_for_all_and_the_same_order(self):
+        en = [{"brief": "A good one.", "about": "Long.", "who": "A band."}, {"brief": "A bad one.", "about": "", "who": ""}]
+        ru = [{"brief": "Хороший.", "about": "Длинно.", "who": "Группа."}, {"brief": "Плохой.", "about": "", "who": ""}]
+        answer = {"candidates": [{"content": {"parts": [{"text": json.dumps(ru, ensure_ascii=False)}]}}]}
+        with mock.patch.object(gemini, "generate", return_value=("gemini-3.5-flash", answer)) as g:
+            out = gemini.translate(en, api_key="k")
+        self.assertEqual(g.call_count, 1)
+        self.assertIn('"A bad one."', g.call_args.args[0]["contents"][0]["parts"][0]["text"])
+        self.assertEqual([x["brief"] for x in out], ["Хороший.", "Плохой."])
+        self.assertEqual(out[0]["tr"], "gemini-3.5-flash")
+        short = {"candidates": [{"content": {"parts": [{"text": json.dumps(ru[:1])}]}}]}
+        with mock.patch.object(gemini, "generate", return_value=("m", short)):
+            self.assertIsNone(gemini.translate(en, api_key="k"))  # a lost item would shift every brief after it
+
+    def test_english_prompt_for_groq(self):
+        seen = []
+
+        def fake(url, **kw):
+            seen.append(kw["json_body"]["messages"][0]["content"])
+            return chat(ANSWER)
+
+        llm._dead.clear()
+        with mock.patch.dict(os.environ, {"GROQ_API_KEY": "g"}), mock.patch.object(http, "get_json", side_effect=fake):
+            llm.ask("groq", "A - B", "text", lang="en", sleep=lambda s: None)
+        self.assertTrue(seen[0].startswith("You help run"))
+        self.assertIn("в наушниках, вдумчиво", seen[0])  # moods still from the Russian list
+
+
 class Providers(unittest.TestCase):
     def setUp(self):
         llm._dead.clear()

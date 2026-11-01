@@ -6,8 +6,8 @@ Writes data/briefs.json: {review id: {"brief", "about", "who", "moods", "m": mod
 opinion), single-song reviews, reviews whose card already has a Gemini brief; posts without a text are kept as
 {"skip": ...}, reviews no model answered for as {"fail": n} (left alone after FAIL_MAX runs).
 
-Run: python -m lmn.briefs (workflow «Брифы для архива»). BRIEFS_COMPARE=1 writes nothing and instead puts two Mistral
-models (and Groq, Cerebras when their keys are set) side by side on 10 reviews into the run's summary, to choose the model."""
+Run: python -m lmn.briefs (workflow «Брифы для архива»). BRIEFS_COMPARE=1 writes nothing and instead puts three ways
+of writing side by side on the 10 newest reviews without a brief (see compare)."""
 import json
 import os
 import sys
@@ -21,7 +21,6 @@ BATCH = 15
 MIN_TEXT = 500
 FAIL_MAX = 2  # runs in which no model gave a brief for this review: then it is left alone
 GIVE_UP = 5  # failures in a row: the key, the plan or the service is wrong, no use going on
-COMPARE = [("mistral", "mistral-small-latest"), ("mistral", "mistral-medium-latest"), ("groq", None), ("cerebras", None)]
 
 
 def targets(archive, reviews, done):
@@ -60,22 +59,27 @@ def save(path, data):
 
 
 def compare(archive, reviews):
-    pool = targets(archive, reviews, set())
-    picked = pool[:5] + [a for a in pool[5:] if a.get("score") == 10 or a.get("classic")][:5]  # new ones and ones you know
-    cols = [(p, m) for p, m in COMPARE if (os.environ.get(next(x[2] for x in llm.PROVIDERS if x[0] == p)) or "").strip()]
+    """The 10 newest reviews without a brief, written three ways, to choose how to write the archive's briefs: Groq in
+    Russian; Groq in English, translated by Gemini in one request; Gemini itself from the text (one request each).
+    Writes nothing; each row is printed as a "COMPARE {json}" log line and as a table in the run's summary."""
+    from . import gemini
+    picked = [(a, t) for a, t in texts(targets(archive, reviews, set())[:12]) if t and len(t) >= MIN_TEXT][:10]
     rows = []
-    for a, text in texts(picked):
+    for a, text in picked:
         title = f"{a['artist_name']} - {a['album']}"
-        if len(text) < MIN_TEXT:
-            continue
-        cells = []
-        for p, m in cols:
-            out = llm.ask(p, title, text, model=m) or {}
-            cells.append(f"{out.get('brief') or '—'}<br><br>{out.get('about') or '—'}<br><br>*{out.get('who') or ''}*")
-        rows.append(f"| {title} ({a.get('score') if a.get('score') is not None else 'classic' if a.get('classic') else '?'}) | "
-                    + " | ".join(c.replace("|", "/") for c in cells) + " |")
-    md = "| Обзор | " + " | ".join(m or p for p, m in cols) + " |\n|---|" + "---|" * len(cols) + "\n" + "\n".join(rows) + "\n"
-    print(md)
+        rows.append({"id": a["id"], "title": title, "score": a.get("score"),
+                     "groq_ru": llm.ask("groq", title, text) or {},
+                     "groq_en": llm.ask("groq", title, text, lang="en") or {},
+                     "gemini": gemini.summarize(title, text=text) or {}})
+    tr = gemini.translate([r["groq_en"] for r in rows]) or [{} for _ in rows]
+    for r, t in zip(rows, tr):
+        r["groq_en_ru"] = t
+        print("COMPARE " + json.dumps(r, ensure_ascii=False))
+
+    def cell(x):
+        return (f"{x.get('brief') or '—'}<br><br>{x.get('about') or '—'}<br><br>*{x.get('who') or ''}*").replace("|", "/")
+    md = ("| Обзор | Groq по-русски | Groq по-английски → Gemini | Gemini сам |\n|---|---|---|---|\n"
+          + "\n".join(f"| {r['title']} ({r['score']}) | {cell(r['groq_ru'])} | {cell(r['groq_en_ru'])} | {cell(r['gemini'])} |" for r in rows) + "\n")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a") as f:
