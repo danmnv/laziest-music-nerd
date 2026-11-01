@@ -171,13 +171,24 @@ def run():
             order = ask_gemini(u["id"], artist, key)
             r["checked"] = now.isoformat(timespec="seconds")
             if order:
-                ok = verify([o["album"] for o in order], comments(u["id"], yt))
+                try:
+                    cs = comments(u["id"], yt)
+                except Exception as e:  # comments turned off (403), quota, 5xx: keep the answer unverified, don't lose the run
+                    print(f"  ! comments {u['id']}: {e}", file=sys.stderr)
+                    cs = []
+                ok = verify([o["album"] for o in order], cs)
                 n = len(order)
                 r["verified"] = ok
                 r["items"] = [{"album": o["album"], "place": n - i, "t": o["t"], "review": find_review(idx, artist, o["album"])}
                               for i, o in enumerate(order)]
         print(f"ranking {r['date']} {r['title']}: {len(r['items'])} albums, verified={r['verified']}")
         rankings.append(r)
+        save(path, lists, rankings + [x for x in prev.values() if x["video_id"] not in {y["video_id"] for y in rankings}])
+    save(path, lists, rankings)
+
+
+def save(path, lists, rankings):
+    # after each ranking too: a crash or timeout later in the run keeps the Gemini answers already paid for
     path.write_text(json.dumps({"lists": lists, "rankings": rankings}, ensure_ascii=False, indent=0) + "\n")
 
 
