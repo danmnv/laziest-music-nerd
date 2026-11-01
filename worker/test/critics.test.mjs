@@ -10,3 +10,9 @@ test("critics lines escape the Wikipedia link for an HTML attribute", () => {
   assert.equal(criticsText({ contested: "Фантано 3/10, критики 8/10 (Metacritic)", crit: ["Metacritic 80"], sales: [], wp_url: "https://w/x" }),
     '\n⚡ Спорно: Фантано 3/10, критики 8/10 (Metacritic)\nКритики: Metacritic 80 (<a href="https://w/x">Википедия</a>)');
 });
+
+test("a score written as {{Rating|4.|5}} reads as 4/5, as in lmn/ratings.py", async () => {
+  const { clean } = await import("../src/wiki.mjs");
+  assert.equal(clean("{{Rating|4.|5}}"), "4/5");
+  assert.equal(clean("{{rating|3.5|5}}"), "3.5/5");
+});
