@@ -54,8 +54,10 @@
     const el = rel.querySelector(".moods");
     if (!el || !rows.length) return;
     const total = rows.reduce((t, r) => t + r.y + r.n, 0), top = Math.max(1, ...rows.map((r) => r.y));
-    const html = `<div class="votes"><p class="muted">По голосам в боте (${votesWord(total)}):</p><ul>` + rows.map((r) =>
-      `<li><span class="vm">${escHtml(r.m)}</span><span class="vbar"><i style="width:${Math.round(100 * r.y / top)}%"></i></span>` +
+    // Spec: a mood is a guess until a majority agrees (more «за» than «против»); then it's settled and marked ✓.
+    const ok = rows.filter((r) => r.y > r.n).map((r) => r.m);
+    const html = `<div class="votes"><p class="muted">По голосам в боте (${votesWord(total)}), ✓ — закреплено большинством:</p><ul>` + rows.map((r) =>
+      `<li class="${r.y > r.n ? "ok" : ""}"><span class="vm">${r.y > r.n ? "✓ " : ""}${escHtml(r.m)}</span><span class="vbar"><i style="width:${Math.round(100 * r.y / top)}%"></i></span>` +
       `<span class="vn">${r.y} за${r.n ? ` <span class="muted">· ${r.n} против</span>` : ""}</span></li>`).join("") + "</ul></div>";
     if (el.tagName === "DD") {
       el.innerHTML = html;
@@ -64,7 +66,9 @@
       if (dt) dt.hidden = false;
       el.closest("dl")?.removeAttribute("hidden");
     } else {
-      el.querySelector(".votes")?.remove();
+      // the bot card's AI guess gives way to what the majority settled on; with nothing settled the guess stays as is
+      if (ok.length) el.innerHTML = escHtml(ok.join(" / ")) + ' <span class="muted">(закреплено голосами)</span>';
+      else el.querySelector(".votes")?.remove();
       el.insertAdjacentHTML("beforeend", html);
     }
   }

@@ -130,6 +130,7 @@ footer .links a{color:var(--fg)}
 .votes li{display:contents}
 .votes .vbar{height:8px;border-radius:999px;background:var(--soft);overflow:hidden}
 .votes .vbar i{display:block;height:100%;border-radius:inherit;background:var(--accent)}
+.votes li.ok .vm{font-weight:700}
 .votes .vn{font-variant-numeric:tabular-nums;white-space:nowrap}
 .release q{font-style:italic;quotes:"«" "»"}
 .release iframe.dz{display:block;width:100%;max-width:560px;border:0;border-radius:var(--radius);margin:10px 0 0;background:var(--soft)}
