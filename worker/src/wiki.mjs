@@ -66,7 +66,7 @@ const fmt = (x) => String(Number.isInteger(x) ? x : x);
 
 export function clean(v) {
   v = String(v || "").replace(/<ref[^>]*\/>/g, "").replace(/<ref[\s\S]*?<\/ref>/g, "").replace(/<!--[\s\S]*?-->/g, "");
-  const m = /\{\{\s*rating\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)/i.exec(v);
+  const m = /\{\{\s*rating\s*\|\s*(\d+(?:\.\d+)?)\.?\s*\|\s*(\d+(?:\.\d+)?)/i.exec(v);
   if (m) return `${fmt(parseFloat(m[1]))}/${fmt(parseFloat(m[2]))}`;
   v = v.replace(/\[\[(?:[^|\]]*\|)?([^\]]*)\]\]/g, "$1").replace(/\[https?:\/\/\S+\s+([^\]]*)\]/g, "$1")
     .replace(/\{\{[^{}]*\}\}/g, "").replace(/'''/g, "").replace(/''/g, "");

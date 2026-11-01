@@ -1,0 +1,49 @@
+name: Особые видео Фантано
+on:
+  schedule:
+    - cron: "37 22 * * 0"   # раз в неделю, поздно вечером: дневные брифы новых обзоров уже потратили свою квоту Gemini
+  workflow_dispatch:
+    inputs:
+      calls:
+        description: "Сколько роликов дать посмотреть Gemini за запуск"
+        default: "3"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: specials
+  cancel-in-progress: false
+
+jobs:
+  specials:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Списки, рейтинги, фразы и любимые треки из роликов
+        timeout-minutes: 40
+        run: python -m lmn.specials
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # not the briefs' first model, and at most 3 videos a run: briefs for new reviews keep their quota
+          GEMINI_MODEL: gemini-3.7-flash,gemini-3.5-flash
+          SPECIALS_GEMINI_CALLS: ${{ inputs.calls || '3' }}
+      - name: Сохранить
+        if: ${{ always() }}
+        run: |
+          git config user.name "laziest-music-nerd-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for f in data/specials.json data/notes.json; do [ -f "$f" ] && git add "$f"; done
+          git diff --cached --quiet && exit 0
+          git commit -q -m "data: особые видео и описания роликов Фантано"
+          for i in 1 2 3 4; do  # the hourly check may have pushed meanwhile
+            git pull --rebase -q origin main && git push -q origin HEAD:main && exit 0
+            git rebase --abort 2>/dev/null || true
+            sleep $((i * 5))
+          done
+          echo "::error::Не смог сохранить особые видео в main"; exit 1

@@ -98,8 +98,29 @@ class CriticsTest(unittest.TestCase):
         html_ = site.archive_page(a, [a], self.RT)
         self.assertIn("<dt>Критики</dt><dd>Metacritic 80 · Pitchfork 10/10 · AllMusic 4.5/5", html_)
         self.assertIn('href="https://en.wikipedia.org/wiki/Kid_A">по данным Википедии</a>', html_)
-        self.assertNotIn("<dl>", site.archive_page(a, [a]))
+        bare = site.archive_page(a, [a])  # only the hidden mood row, filled by app.js from visitors' votes
+        self.assertIn('<dl><dt class="moods-h" hidden>Когда слушать</dt><dd class="moods" hidden></dd></dl>', bare)
+        self.assertNotIn("<dt>", bare)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Lists(unittest.TestCase):
+    def test_rows_link_each_video(self):
+        a = {"id": "okc", "url": "https://tnd/okc", "published": "2017-01-01", "artist_name": "Radiohead", "album": "OK Computer", "score": 10}
+        b = [{"text": "№1 из 9 в «Radiohead: от худшего к лучшему» (2017)", "url": "https://www.youtube.com/watch?v=uu8&t=984"}]
+        self.assertIn('<dt>У Фантано в списках</dt><dd>🏆 <a href="https://www.youtube.com/watch?v=uu8&amp;t=984">№1 из 9 в «Radiohead: от худшего к лучшему» (2017)</a></dd>',
+                      site.archive_page(a, [a], None, b))
+
+
+class Notes(unittest.TestCase):
+    def test_blurb_and_players(self):
+        a = {"id": "nat", "url": "https://tnd/nat", "published": "2023-05-05", "artist_name": "The National", "album": "First Two Pages", "score": 6}
+        n = {"blurb": "If you found <it> too colorful", "fav": [{"t": "EUCALYPTUS", "dz": 111}, {"t": "ALIEN", "dz": None}, {"t": "X"}]}
+        html_ = site.archive_page(a, [a], None, None, n)
+        self.assertIn('<dt>Фантано в описании ролика</dt><dd><q lang="en">If you found &lt;it&gt; too colorful</q></dd>', html_)
+        self.assertIn('<span id="fav">EUCALYPTUS, ALIEN, X</span>', html_)
+        self.assertEqual(html_.count("widget.deezer.com/widget/auto/track/"), 1)
+        self.assertIn('src="https://widget.deezer.com/widget/auto/track/111"', html_)

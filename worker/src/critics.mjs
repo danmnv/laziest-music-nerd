@@ -9,6 +9,8 @@ export function criticsText(rt) {
   if (!rt) return "";
   const src = rt.wp_url ? ` (<a href="${esc(rt.wp_url)}">Википедия</a>)` : "";
   const lines = [];
+  // Fantano's year/decade lists and verified "worst to best" places (lmn/specials.py), each linking to its video
+  if (rt.lists && rt.lists.length) lines.push("🏆 " + rt.lists.map((b) => `<a href="${esc(b.url)}">${esc(b.text)}</a>`).join(" · "));
   if (rt.contested) lines.push(`⚡ Спорно: ${esc(rt.contested)}`); // Fantano vs the critics' average, 4+ points apart
   if (rt.crit && rt.crit.length) lines.push(`Критики: ${esc(rt.crit.join(" · "))}${src}`);
   if (rt.sales && rt.sales.length) lines.push(`Чарты и продажи: ${esc(rt.sales.join(" · "))}${lines.length ? "" : src}`);
