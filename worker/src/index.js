@@ -144,12 +144,20 @@ async function onCallback(q, env) {
   const uid = q.from.id;
   const parts = (q.data || "").split(":");
   let answer = "";
+  let answered = false;
+  // Telegram shows a spinner on the button until it's answered and drops answers that come too late, so the slow
+  // follow-ups (lists, three similar cards, a card with Deezer lookups) run after the answer.
+  const answerNow = async () => {
+    answered = true;
+    await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: answer });
+  };
   if (parts[0] === "m") {
     const [, rid, status] = parts;
     const cur = await env.DB.prepare("SELECT status FROM marks WHERE user_id=? AND review_id=?").bind(uid, rid).first();
     const next = cur && cur.status === status ? null : status;
     await setMark(env, uid, rid, next, undefined);
     answer = next ? `Отмечено: ${STATUS_LABEL[next]}` : "Отметка снята";
+    await answerNow();
     if (isOwner(env, uid)) await refreshOwnerLists(env);
     else await refreshDmList(env, uid, false);
     if (next === "done") await maybeSuggestSimilar(env, uid, rid);
@@ -164,6 +172,7 @@ async function onCallback(q, env) {
       await tg(env, "sendMessage", { chat_id: uid, text: `${res.text}\nСписок и отписка — кнопка «${FOLLOWS_BUTTON}» внизу.`, reply_markup: MENU });
     }
   } else if (parts[0] === "a") {
+    await answerNow();
     const a = (await archive(env)).find((x) => x.id === parts[1]);
     if (a) await sendAlbum(env, uid, a, "");
   } else if (parts[0] === "uf") {
@@ -191,7 +200,7 @@ async function onCallback(q, env) {
       answer = "Голос учтён, спасибо!";
     }
   }
-  await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: answer });
+  if (!answered) await answerNow();
 }
 
 // ---------- marks ----------
