@@ -37,7 +37,42 @@ test("badges", () => {
   assert.equal(badge({ score: 8 }), "🟢 8/10");
   assert.equal(badge({ score: 5 }), "🟡 5/10");
   assert.equal(badge({ score: 3 }), "🔴 3/10");
+  assert.equal(badge({ score: null, track: true }), "🎵 трек");
   assert.equal(badge({ not_good: true, score: null }), "🔴 NOT GOOD");
   assert.equal(badge({ classic: true }), "🟢 CLASSIC");
   assert.equal(badge({ score: null }), "⚪ без оценки");
+});
+
+import { answerSearch, artistReviews } from "../src/search.mjs";
+
+test("an artist named exactly: all their reviews, other artists counted", () => {
+  const r = answerSearch(A, "radiohead");
+  assert.equal(r.kind, "albums");
+  assert.equal(r.artist, "Radiohead");
+  assert.deepEqual(r.items.map((a) => a.id), ["1", "2"]);
+  assert.equal(r.others, 1); // the tribute band
+});
+
+test("one hit is a card; nothing is none", () => {
+  assert.equal(answerSearch(A, "anima").kind, "card");
+  assert.equal(answerSearch(A, "zzz").kind, "none");
+});
+
+test("many hits across artists: pick the artist first, the most reviewed first", () => {
+  const many = [];
+  for (let i = 0; i < 6; i++) many.push({ id: `b${i}`, artist_name: "Big Band", album: `Love ${i}`, published: `2020-0${i + 1}-01` });
+  for (let i = 0; i < 4; i++) many.push({ id: `s${i}`, artist_name: "Small Band", album: `Love ${i}`, published: `2021-0${i + 1}-01` });
+  const r = answerSearch(many, "love");
+  assert.equal(r.kind, "artists");
+  assert.deepEqual(r.artists.map((x) => [x.name, x.count]), [["Big Band", 6], ["Small Band", 4]]);
+  const few = answerSearch(many.slice(3, 9), "love"); // 6 hits: shown as albums directly
+  assert.equal(few.kind, "albums");
+  assert.equal(few.artist, null);
+});
+
+test("an artist's reviews from any one of them", () => {
+  const r = artistReviews(A, "2");
+  assert.equal(r.artist, "Radiohead");
+  assert.deepEqual(r.items.map((a) => a.id), ["1", "2"]);
+  assert.equal(artistReviews(A, "nope").total, 0);
 });

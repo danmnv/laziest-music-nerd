@@ -4,7 +4,8 @@
 
 import { isDigestSunday } from "./digest.mjs";
 import { nameKey, followMatches } from "./follow.mjs";
-import { searchArchive, badge } from "./search.mjs";
+import { answerSearch, artistReviews, badge } from "./search.mjs";
+import { criticsText } from "./critics.mjs";
 
 const STATUS_LABEL = { later: "• отложено", done: "✓ прослушано", nope: "✗ не понравилось" };
 const STATUS_ICON = { later: " •", done: " ✓", nope: " ✗" };
@@ -167,10 +168,15 @@ async function onCallback(q, env) {
     if (!user) return tg(env, "answerCallbackQuery", { callback_query_id: q.id, url: `https://t.me/${env.BOT_USERNAME}?start=follow_${parts[1]}` });
     const res = await follow(env, uid, parts[1], true);
     answer = res.text;
+    await answerNow();
     if (res.first) {
       // the first follow: say where the list is, and give people who started the bot earlier the new menu button
       await tg(env, "sendMessage", { chat_id: uid, text: `${res.text}\nСписок и отписка — кнопка «${FOLLOWS_BUTTON}» внизу.`, reply_markup: MENU });
     }
+  } else if (parts[0] === "ar") {
+    await answerNow();
+    const r = artistReviews(await archive(env), parts[1]);
+    if (r.total) await tg(env, "sendMessage", { chat_id: uid, ...artistMessage(r.artist, r.total, r.items, 0) });
   } else if (parts[0] === "a") {
     await answerNow();
     const a = (await archive(env)).find((x) => x.id === parts[1]);
@@ -321,7 +327,8 @@ async function deezerAlbum(artist, album) {
     if (!hit) return null;
     const full = await fetch(`https://api.deezer.com/album/${hit.id}`).then((x) => (x.ok ? x.json() : {})).catch(() => ({}));
     return { cover: hit.cover_xl || hit.cover_big || null, link: hit.link, tracks: hit.nb_tracks || null,
-             minutes: full.duration ? Math.round(full.duration / 60) : null };
+             minutes: full.duration ? Math.round(full.duration / 60) : null,
+             year: /^\d{4}/.test(full.release_date || "") ? full.release_date.slice(0, 4) : null };
   } catch (e) {
     return null;
   }
@@ -333,18 +340,24 @@ async function sendAlbum(env, uid, a, intro) {
   const full = (await reviews(env)).find((x) => x.id === a.id);
   const r = full || a;
   const links = (full && full.links) || {};
-  const dz = (full && full.covers && full.covers.length && full.duration_min) ? null : await deezerAlbum(r.artist_name, r.album);
+  const [dz, rt] = await Promise.all([
+    (full && full.covers && full.covers.length && full.duration_min) ? null : deezerAlbum(r.artist_name, r.album),
+    criticsOf(env, r.id),
+  ]);
   const cover = (full && full.covers && full.covers[0]) || (dz && dz.cover);
   const tracks = (full && full.tracks && full.tracks.length) || (dz && dz.tracks);
   const minutes = (full && full.duration_min) || (dz && dz.minutes);
+  // The release year; Deezer may only have a later reissue, so its year counts only if it isn't after the review.
+  const reviewYear = String(r.published).slice(0, 4);
+  const year = (full && full.year) || (dz && dz.year && dz.year <= reviewYear ? dz.year : null);
   const facts = [
     (r.genres || []).slice(0, 3).join(", "),
     tracks ? `${tracks} трек${tracks % 10 === 1 && tracks % 100 !== 11 ? "" : [2, 3, 4].includes(tracks % 10) && ![12, 13, 14].includes(tracks % 100) ? "а" : "ов"}` : "",
     minutes ? `${minutes} мин` : "",
-    `обзор ${String(r.published).slice(0, 4)}`,
+    year ? "" : `обзор ${reviewYear}`, // the review year only when the release year is unknown
     r.guest ? "гостевой обзор" : "",
   ].filter(Boolean).join(" · ");
-  const text = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>\n${badge(r)} · ${esc(facts)}`;
+  const text = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}${criticsText(rt)}`;
   const q = encodeURIComponent(`${r.artist_name} ${r.album}`);
   const allServices = links.songlink || (dz && dz.link ? `https://album.link/${dz.link}` : null);
   const reply_markup = { inline_keyboard: [
@@ -354,7 +367,7 @@ async function sendAlbum(env, uid, a, intro) {
     ],
     [allServices ? { text: "Все платформы", url: allServices } : { text: "🔎 Google", url: `https://www.google.com/search?q=${q}` }],
     [{ text: "• Отложить", callback_data: `m:${r.id}:later` }, { text: "✓ Прослушано", callback_data: `m:${r.id}:done` }, { text: "✗ Не понравилось", callback_data: `m:${r.id}:nope` }],
-    [{ text: "🔔 Следить за артистом", callback_data: `f:${r.id}` }],
+    [{ text: "🔔 Следить за артистом", callback_data: `f:${r.id}` }, { text: "Все обзоры артиста", callback_data: `ar:${r.id}` }],
   ] };
   if (cover) {
     const d = await tg(env, "sendPhoto", { chat_id: uid, photo: cover, caption: text, parse_mode: "HTML", reply_markup });
@@ -363,19 +376,52 @@ async function sendAlbum(env, uid, a, intro) {
   return tg(env, "sendMessage", { chat_id: uid, text, parse_mode: "HTML", reply_markup, link_preview_options: { is_disabled: true } });
 }
 
+// Critic scores and charts for a review, from the site's rt/<id>.json (built from data/ratings.json; source:
+// the album's Wikipedia article). null when there is none. One small fetch instead of parsing all ratings.
+async function criticsOf(env, id) {
+  try {
+    const r = await fetch(`${env.SITE_URL}/rt/${encodeURIComponent(id)}.json`, { cf: { cacheTtl: 3600 } });
+    return r.ok ? await r.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+
+function albumButtons(items, withArtist) {
+  return items.map((a) => [{
+    text: `${badge(a)} · ${withArtist ? short(a.artist_name) + " — " : ""}${short(a.album)} · обзор ${String(a.published).slice(0, 4)}${a.guest ? " · гость" : ""}`.slice(0, 120),
+    callback_data: `a:${a.id}`,
+  }]);
+}
+
+function plural(n, one, few, many) {
+  return n % 10 === 1 && n % 100 !== 11 ? one : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? few : many;
+}
+
+const reviewsWord = (n) => `${n} ${plural(n, "обзор", "обзора", "обзоров")}`;
+
+// One artist's reviews as buttons, newest first.
+function artistMessage(artist, total, items, others) {
+  const head = `${artist} — ${reviewsWord(total)} Фантано` + (total > items.length ? ` (показаны ${items.length} новых)` : "") + ":";
+  const tail = others ? `\n\nЕщё ${reviewsWord(others)} других артистов по этому запросу — уточни его, чтобы их увидеть.` : "";
+  return { text: head + tail, reply_markup: { inline_keyboard: albumButtons(items, false) } };
+}
+
+// A search answers with a card, one artist's albums, a few albums, or a choice of artists first.
 async function search(env, uid, query) {
-  const { total, items } = searchArchive(await archive(env), query);
-  if (!total) {
+  const r = answerSearch(await archive(env), query);
+  if (r.kind === "none") {
     return tg(env, "sendMessage", { chat_id: uid, text: `Не нашёл обзора Фантано по запросу «${query.slice(0, 100)}». Попробуй имя артиста или название альбома.` });
   }
-  if (total === 1) return sendAlbum(env, uid, items[0], "");
+  if (r.kind === "card") return sendAlbum(env, uid, r.item, "");
+  if (r.kind === "albums" && r.artist) return tg(env, "sendMessage", { chat_id: uid, ...artistMessage(r.artist, r.total, r.items, r.others) });
+  if (r.kind === "albums") return tg(env, "sendMessage", { chat_id: uid, text: `Нашёл ${r.total}:`, reply_markup: { inline_keyboard: albumButtons(r.items, true) } });
   return tg(env, "sendMessage", {
     chat_id: uid,
-    text: total > items.length ? `Нашёл ${total}, вот ${items.length} — уточни запрос, чтобы увидеть остальные:` : `Нашёл ${total}:`,
-    reply_markup: { inline_keyboard: items.map((a) => [{
-      text: `${badge(a)} · ${short(a.artist_name)} — ${short(a.album)} (${String(a.published).slice(0, 4)})${a.guest ? " · гость" : ""}`.slice(0, 120),
-      callback_data: `a:${a.id}`,
-    }]) },
+    text: `Нашёл ${reviewsWord(r.total)} у ${r.groups} ${plural(r.groups, "артиста", "артистов", "артистов")}. Выбери артиста` +
+      (r.groups > r.artists.length ? ` (показаны ${r.artists.length} с наибольшим числом обзоров) или уточни запрос:` : ":"),
+    reply_markup: { inline_keyboard: r.artists.map((x) => [{ text: `${short(x.name)} · ${reviewsWord(x.count)}`.slice(0, 120), callback_data: `ar:${x.id}` }]) },
   });
 }
 

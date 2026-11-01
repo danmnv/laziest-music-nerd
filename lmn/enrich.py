@@ -115,5 +115,8 @@ def previous_reviews(r, archive, max_checks=10):
 
 
 def archive_entry(rev):
-    return {k: rev.get(k) for k in ("id", "url", "published", "artist_name", "album", "score", "not_good", "classic", "guest", "genres",
-                                    "video_id")}
+    out = {k: rev.get(k) for k in ("id", "url", "published", "artist_name", "album", "score", "not_good", "classic", "guest", "genres",
+                                   "video_id")}
+    if rev.get("track"):
+        out["track"] = True
+    return out

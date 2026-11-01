@@ -61,6 +61,30 @@ VERDICT = re.compile(
     r"(?P<n>10|[0-9])\b(?!\s*(?:years|tracks|songs|minutes|albums|records))", re.I)
 
 
+def tidy_album(album):
+    """Drop what 2010-2011 titles and classic reviews glue to the album name:
+    'Kaputt ‡ REVIEW', '"Stamp" ‡ MP3 / REVIEW', "Who's Next (CLASSIC REVIEW)", 'Run Overdrive 7'' | REVIEW'."""
+    if not album:
+        return album
+    a = re.sub(r"\s*‡.*$", "", album)
+    a = re.sub(r"\s*\|?\s*\(?\s*\b(?:CLASSIC\s+|TRACK\s+)?REVIEW\s*\)?\s*$", "", a, flags=re.I)
+    return a.strip() or album
+
+
+def is_track(album, score=None, not_good=False, classic=False):
+    """TND filed single-song reviews under album reviews; their title quotes the song: Kanye West - "Facts".
+    A few albums are quoted too, but those carry a score ("Luciferian Towers" 5/10)."""
+    return bool(album) and album[0] in '"“' and score is None and not not_good and not classic
+
+
+def tidy_entry(a):
+    """Clean an archive entry in place (idempotent); 'track' is only written when true."""
+    a["album"] = tidy_album(a.get("album"))
+    if is_track(a.get("album"), a.get("score"), a.get("not_good"), a.get("classic")):
+        a["track"] = True
+    return a
+
+
 def parse_title(title):
     t = htmlmod.unescape(title).strip()
     info = {"guest": False, "staff": False, "not_good_title": False}
@@ -79,7 +103,7 @@ def parse_title(title):
     t = re.sub(r"\s+(?:ALBUM|EP|MIXTAPE)\s+REVIEW\s*$", "", t, flags=re.I)
     m = re.match(r"^(.+?)\s*[-–—]\s+(.+)$", t) or re.match(r"^(.+?)\s+[-–—]\s*(.+)$", t)
     if m:
-        info.update(artist=m.group(1).strip(), album=m.group(2).strip())
+        info.update(artist=m.group(1).strip(), album=tidy_album(m.group(2).strip()))
     return info
 
 
@@ -159,6 +183,7 @@ def parse_post(p):
         "type": rtype,
         "genres": genres,
         "guest": guest,
+        "track": is_track(album, score, not_good, classic),
         "loved": "loved list" in low,
         "video_id": video,
         "excerpt": htmlmod.unescape(p.get("custom_excerpt") or ""),

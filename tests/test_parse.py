@@ -117,5 +117,27 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(card.fantano_before(r), "обозревает впервые")
 
 
+class OldTitleTest(unittest.TestCase):
+    def test_tidy_album(self):
+        self.assertEqual(tnd.tidy_album("Kaputt ‡ REVIEW"), "Kaputt")
+        self.assertEqual(tnd.tidy_album('"Stamp" ‡ MP3 / REVIEW'), '"Stamp"')
+        self.assertEqual(tnd.tidy_album("Who's Next (CLASSIC REVIEW)"), "Who's Next")
+        self.assertEqual(tnd.tidy_album("Homeland | REVIEW"), "Homeland")
+        self.assertEqual(tnd.tidy_album("Public Strain ‡"), "Public Strain")
+        self.assertEqual(tnd.tidy_album("Black Review Club"), "Black Review Club")
+        self.assertEqual(tnd.tidy_album("Preview"), "Preview")
+        self.assertEqual(tnd.tidy_album("The Interview"), "The Interview")
+        self.assertEqual(tnd.parse_title("Destroyer - Kaputt ‡ REVIEW")["album"], "Kaputt")
+
+    def test_tracks(self):
+        self.assertTrue(tnd.is_track('"Facts"'))
+        self.assertFalse(tnd.is_track('"Luciferian Towers"', score=5))
+        self.assertFalse(tnd.is_track("Kaputt"))
+        p = tnd.parse_post(post('Kanye West - "Facts"', ["Kanye West", "hip hop"]))
+        self.assertTrue(p["track"])
+        a = tnd.tidy_entry({"album": '"Discoverer" ‡ REVIEW', "score": None})
+        self.assertEqual(a, {"album": '"Discoverer"', "score": None, "track": True})
+
+
 if __name__ == "__main__":
     unittest.main()

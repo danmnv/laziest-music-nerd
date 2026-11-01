@@ -44,11 +44,15 @@ beforeEach(() => {
     if (String(url).endsWith("list.json")) return new Response(JSON.stringify({ items: [] }));
     if (String(url).endsWith("reviews.json")) return new Response(JSON.stringify([{ id: "old1", artist_name: "Shame", artist: { mbid: "S" } }]));
     if (String(url).endsWith("archive.json")) return new Response(JSON.stringify(ARCHIVE));
+    if (String(url) === "https://site/rt/k.json") {
+      return new Response(JSON.stringify({ crit: ["Metacritic 91", "Pitchfork 10/10"], sales: ["US #1", "UK #1"], wp_url: "https://en.wikipedia.org/wiki/Kid_A" }));
+    }
+    if (String(url).startsWith("https://site/rt/")) return new Response("not found", { status: 404 });
     if (String(url).startsWith("https://api.deezer.com/search/album")) {
       return new Response(JSON.stringify({ data: [
         { id: 9, title: "Kid A (Remastered)", artist: { name: "Radiohead" }, cover_xl: "https://cdn/kida.jpg", nb_tracks: 10, link: "https://www.deezer.com/album/9" }] }));
     }
-    if (String(url).startsWith("https://api.deezer.com/album/9")) return new Response(JSON.stringify({ duration: 2994 }));
+    if (String(url).startsWith("https://api.deezer.com/album/9")) return new Response(JSON.stringify({ duration: 2994, release_date: "2000-10-02" }));
     throw new Error("unexpected fetch " + url);
   };
 });
@@ -136,9 +140,12 @@ test("/api/new-reviews needs the Actions secret", async () => {
 test("typing a name in the private chat searches Fantano's archive", async () => {
   await say(OWNER, "radiohead");
   const list = calls.find((c) => c.method === "sendMessage");
-  assert.equal(list.text, "Нашёл 2:");
+  assert.equal(list.text, "Radiohead — 2 обзора Фантано:");
   assert.deepEqual(list.reply_markup.inline_keyboard.map((r) => r[0].callback_data), ["a:k", "a:p"]);
-  assert.match(list.reply_markup.inline_keyboard[0][0].text, /🟢 10\/10 · Radiohead — Kid A \(2020\)/);
+  assert.equal(list.reply_markup.inline_keyboard[0][0].text, "🟢 10/10 · Kid A · обзор 2020");
+  calls = [];
+  await press(OWNER, "ar:p"); // "Все обзоры артиста" on any of their cards
+  assert.equal(calls.find((c) => c.method === "sendMessage").text, "Radiohead — 2 обзора Фантано:");
   calls = [];
   await say(OWNER, "nothing like this");
   assert.match(calls[0].text, /Не нашёл обзора Фантано/);
@@ -148,11 +155,13 @@ test("one hit is sent as a full card: cover, length, all services, marks and fol
   await say(OWNER, "kid a");
   const c = calls.find((x) => x.method === "sendPhoto");
   assert.equal(c.photo, "https://cdn/kida.jpg");
-  assert.match(c.caption, /<b>Radiohead — Kid A<\/b>\n🟢 10\/10 · art rock · 10 треков · 50 мин · обзор 2020/);
+  assert.match(c.caption, /<b>Radiohead — Kid A<\/b> \(2000\)\n🟢 10\/10 · art rock · 10 треков · 50 мин\n/);
+  assert.match(c.caption, /\nКритики: Metacritic 91 · Pitchfork 10\/10 \(<a href="https:\/\/en.wikipedia.org\/wiki\/Kid_A">Википедия<\/a>\)\nЧарты и продажи: US #1 · UK #1$/);
   const btns = c.reply_markup.inline_keyboard.flat();
   assert.ok(btns.some((b) => b.text === "Все платформы" && b.url === "https://album.link/https://www.deezer.com/album/9"));
   assert.ok(btns.some((b) => b.callback_data === "m:k:done"));
   assert.ok(btns.some((b) => b.callback_data === "f:k"));
+  assert.ok(btns.some((b) => b.callback_data === "ar:k"));
   await press(OWNER, "f:k"); // an old review the bot never posted a card for
   assert.match(answers().at(-1).text, /Ты следишь за Radiohead/);
 });

@@ -1,12 +1,16 @@
 """Build the static site (GitHub Pages) from data/*.json into _site/."""
+import hashlib
 import html
 import json
 import os
 import shutil
+import unicodedata
+import urllib.parse
 from pathlib import Path
 
-from . import card
+from . import card, tnd
 from .colors import color, label
+from .musicbrainz import norm
 
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 SRC = Path("site_src")
@@ -28,7 +32,8 @@ def page(title, body, depth=0):
     return f"""<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{e(title)}</title><link rel="stylesheet" href="{up}style.css"><link rel="manifest" href="{up}manifest.json">
-<meta name="theme-color" content="#16161a"><link rel="icon" href="{up}icon.svg"></head>
+<meta name="theme-color" content="#16161a"><link rel="icon" href="{up}icon.svg"><link rel="apple-touch-icon" href="{up}apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="LMN"></head>
 <body><header><a class="logo" href="{up}index.html">Laziest Music Nerd</a><span id="login"></span></header>
 <main>{body}</main>
 <footer>{e(DISCLAIMER)}</footer>
@@ -41,7 +46,107 @@ def worker_url():
     return f.read_text().strip() if f.exists() else ""
 
 
-def release_page(r):
+# Latin letters that NFKD doesn't split into a base letter + mark (so they'd be lost on the way to ASCII)
+TRANSLIT = str.maketrans({"ø": "o", "Ø": "O", "ı": "i", "æ": "ae", "Æ": "AE", "ß": "ss", "ł": "l", "Ł": "L", "đ": "d", "Đ": "D",
+                          "œ": "oe", "Œ": "OE", "þ": "th", "Þ": "TH", "ð": "d", "Ð": "D"})
+
+
+def slug(name):
+    """The artist page's file name: the plain-Latin name (Björk -> bjork), or a hash when letters would be lost on
+    the way to Latin (Кино, 坂本龍一 & X), so two such artists never share a page. Names that normalise alike
+    ("Low", "LOW") share one, as in the bot's search."""
+    name = (name or "").translate(TRANSLIT)
+    lost = any(ch.isalpha() and not unicodedata.normalize("NFKD", ch).encode("ascii", "ignore") for ch in name)
+    k = norm(name)
+    return k[:60] if k and not lost else "x" + hashlib.sha1(name.encode()).hexdigest()[:10]
+
+
+def score_badge(a):
+    if a.get("track"):
+        return '<span class="score none">трек</span>'
+    c = color(a.get("score"), a.get("not_good"), a.get("classic")) or "none"
+    return f'<span class="score {c}">{e(card.score_text(a))}</span>'
+
+
+def history_list(items, current_id, depth):
+    """An artist's reviews, newest first, the current one unlinked."""
+    up = "../" * depth
+    li = []
+    for x in items:
+        name = e(x["album"]) if x["id"] == current_id else f'<a href="{up}r/{e(x["id"])}.html">{e(x["album"])}</a>'
+        li.append(f'<li data-id="{e(x["id"])}">{score_badge(x)} {name}'
+                  f'<span class="muted"> · обзор {e(x["published"][:4])}{" · гостевой" if x.get("guest") else ""}</span><span class="st"></span></li>')
+    return f'<ul class="list">{"".join(li)}</ul>'
+
+
+def search_buttons(artist, album):
+    q = urllib.parse.quote_plus(f"{artist} {album}")
+    return [("🔎 YouTube Music", f"https://music.youtube.com/search?q={q}"), ("🔎 Google", f"https://www.google.com/search?q={q}")]
+
+
+def critics_parts(rt):
+    """Critic scores and chart/sales facts from data/ratings.json (the ratings workflow; source: the album's
+    Wikipedia article). Two lists of short strings; both empty when there's no article."""
+    if not rt or not rt.get("wp"):
+        return [], []
+    crit = []
+    if rt.get("metacritic") is not None:
+        crit.append(f"Metacritic {rt['metacritic']}")
+    if rt.get("adm") is not None:
+        crit.append(f"AnyDecentMusic {rt['adm']:g}")
+    crit += [f"{c['outlet']} {c['score']}" for c in (rt.get("critics") or [])[:5] if c.get("outlet") and c.get("score")]
+    sales = [f"{k} #{v}" for k, v in (rt.get("charts") or {}).items() if v]
+    sales += [f"{c['region']} {c['award']}" for c in rt.get("certs") or [] if c.get("region") and c.get("award")]
+    return crit, sales
+
+
+def critics_rows(rt):
+    crit, sales = critics_parts(rt)
+    src = f' <a class="muted" href="{e(rt["wp_url"])}">по данным Википедии</a>' if (crit or sales) and rt.get("wp_url") else ""
+    rows = []
+    if crit:
+        rows.append(("Критики", e(" · ".join(crit)) + src))
+    if sales:
+        rows.append(("Чарты и продажи", e(" · ".join(sales)) + src))
+    return rows
+
+
+def archive_page(a, artist_reviews, rt=None):
+    """A release page for a review the bot never posted a card for: what the archive knows, the artist's other
+    reviews, and the reader's marks."""
+    review = f"https://youtu.be/{a['video_id']}" if a.get("video_id") else a["url"]
+    btns = [("▶ Видеообзор" if a.get("video_id") else "Обзор", review)]
+    if a.get("video_id") and "theneedledrop.com" in a["url"]:
+        btns.append(("Текст обзора на TND", a["url"]))
+    btns += search_buttons(a["artist_name"], a["album"])
+    meta = " · ".join(x for x in [", ".join((a.get("genres") or [])[:5]), "обзор " + a["published"][:10],
+                                    "гостевой обзор" if a.get("guest") else None] if x)
+    others = [x for x in artist_reviews if x["id"] != a["id"]]
+    hist = (f'<h2>Фантано об этом артисте</h2>{history_list(artist_reviews, a["id"], 1)}' if others else "")
+    rows = critics_rows(rt)
+    dl = f"<dl>{''.join(f'<dt>{k}</dt><dd>{v}</dd>' for k, v in rows)}</dl>" if rows else ""
+    body = f"""<article class="release" data-id="{e(a['id'])}">
+<h1><a href="../a/{slug(a['artist_name'])}.html">{e(a['artist_name'])}</a> — {e(a['album'])}</h1>
+<p>{score_badge(a)} <span class="muted">{e(meta)}</span></p>
+{dl}
+<p class="btns">{''.join(f'<a class="btn" href="{e(u)}">{e(n)}</a>' for n, u in btns)}</p>
+<div class="mine" hidden></div>
+<p class="avg muted"></p>
+{hist}
+</article>"""
+    return page(f"{a['artist_name']} — {a['album']}", body, depth=1)
+
+
+def artist_page(name, items):
+    n = len(items)
+    word = "обзор" if n % 10 == 1 and n % 100 != 11 else "обзора" if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14) else "обзоров"
+    body = f"""<h1>{e(name)}</h1>
+<p class="muted">{n} {word} Фантано</p>
+{history_list(items, None, 1)}"""
+    return page(name, body, depth=1)
+
+
+def release_page(r, rt=None):
     c = color(r.get("score"), r.get("not_good"), r.get("classic"))
     a = r.get("artist") or {}
     ai = r.get("ai") or {}
@@ -69,6 +174,7 @@ def release_page(r):
     if r.get("tracks"):
         rows.append(("Треклист", "<ol>" + "".join(f"<li>{line.split('. ', 1)[1]}</li>" for line in card.tracklist(r)) + "</ol>"
                      + ('<span class="muted">★ — выделил Фантано</span>' if (r.get("ai") or {}).get("best_tracks") else "")))
+    rows += critics_rows(rt)
     if r.get("previous"):
         hist = "".join(f'<li><a href="{e(p["url"])}">{e(p["album"])}</a> — {label(p.get("score"), p.get("not_good"), p.get("classic"), "?")} <span class="muted">{e(p["published"][:4])}</span></li>' for p in r["previous"])
         rows.append(("История оценок", f"<ul>{hist}</ul>"))
@@ -82,7 +188,7 @@ def release_page(r):
     cover = (r.get("covers") or [None])[0]
     body = f"""<article class="release" data-id="{e(r['id'])}">
 {f'<img class="cover" src="{e(cover)}" alt="">' if cover else ''}
-<h1>{e(r['artist_name'])} — {e(r['album'])}</h1>
+<h1><a href="../a/{slug(r['artist_name'])}.html">{e(r['artist_name'])}</a> — {e(r['album'])}</h1>
 <p><span class="score {c or 'none'}">{card.score_text(r)}</span> <span class="muted">{e(meta)}</span></p>
 <dl>{''.join(f'<dt>{k}</dt><dd>{v}</dd>' for k, v in rows)}</dl>
 <p class="btns">{btns}</p>
@@ -92,11 +198,11 @@ def release_page(r):
     return page(f"{r['artist_name']} — {r['album']}", body, depth=1)
 
 
-def catalog_entry(a, enriched):
+def catalog_entry(a):
     return {"i": a["id"], "a": a.get("artist_name") or "", "t": a.get("album") or "", "s": a.get("score"),
             "ng": 1 if a.get("not_good") else 0, "cl": 1 if a.get("classic") else 0, "d": a["published"][:10],
-            "g": (a.get("genres") or [])[:4], "u": a["url"], "p": 1 if a["id"] in enriched else 0,
-            "gu": 1 if a.get("guest") else 0}
+            "g": (a.get("genres") or [])[:4], "k": slug(a.get("artist_name")), "gu": 1 if a.get("guest") else 0,
+            **({"tr": 1} if a.get("track") else {})}
 
 
 def recent_item(r):
@@ -110,17 +216,34 @@ def recent_item(r):
 
 def build():
     reviews = load("reviews.json", [])
-    archive = load("archive.json", [])
+    archive = [tnd.tidy_entry(a) for a in load("archive.json", [])]
     if OUT.exists():
         shutil.rmtree(OUT)
     shutil.copytree(SRC, OUT)
     (OUT / "r").mkdir(exist_ok=True)
-    enriched = {r["id"] for r in reviews}
-    by_id = {a["id"]: a for a in archive}
+    (OUT / "a").mkdir(exist_ok=True)
+    by_id = {a["id"]: a for a in archive if a.get("artist_name") and a.get("album")}
     for r in reviews:
         by_id[r["id"]] = r
-        (OUT / "r" / f"{r['id']}.html").write_text(release_page(r))
-    cat = sorted((catalog_entry(a, enriched) for a in by_id.values()), key=lambda x: x["d"], reverse=True)
+    by_artist = {}
+    for a in by_id.values():
+        by_artist.setdefault(slug(a["artist_name"]), []).append(a)
+    for items in by_artist.values():
+        items.sort(key=lambda x: x["published"], reverse=True)
+    enriched = {r["id"] for r in reviews}
+    ratings = load("ratings.json", {})
+    (OUT / "rt").mkdir(exist_ok=True)
+    for a in by_id.values():
+        rt = ratings.get(a["id"])
+        html_ = release_page(a, rt) if a["id"] in enriched else archive_page(a, by_artist[slug(a["artist_name"])], rt)
+        (OUT / "r" / f"{a['id']}.html").write_text(html_)
+        crit, sales = critics_parts(rt)
+        if crit or sales:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
+            (OUT / "rt" / f"{a['id']}.json").write_text(json.dumps(
+                {"crit": crit[:4], "sales": sales[:4], "wp_url": rt.get("wp_url")}, ensure_ascii=False))
+    for k, items in by_artist.items():
+        (OUT / "a" / f"{k}.html").write_text(artist_page(items[0]["artist_name"], items))
+    cat = sorted((catalog_entry(a) for a in by_id.values()), key=lambda x: x["d"], reverse=True)
     (OUT / "catalog.json").write_text(json.dumps(cat, ensure_ascii=False, separators=(",", ":")))
     recent = card.recent(reviews)
     items = "".join(recent_item(r) for r in recent)
@@ -130,12 +253,13 @@ def build():
 <input id="q" type="search" placeholder="Артист или альбом">
 <select id="fscore"><option value="">Любая оценка</option><option value="8">от 8</option><option value="7">от 7</option><option value="5">от 5</option><option value="red">красные</option></select>
 <select id="fgenre"><option value="">Любой жанр</option></select>
-<select id="fyear"><option value="">Любой год</option></select>
+<select id="fyear"><option value="">Любой год обзора</option></select>
+<select id="fsort"><option value="new">Сначала новые</option><option value="score">Сначала высокие оценки</option></select>
 <label><input id="fhide" type="checkbox" checked> скрыть прослушанное</label>
 </div>
 <ul id="catalog" class="list"></ul><button id="more" hidden>Показать ещё</button>"""
     (OUT / "index.html").write_text(page("Laziest Music Nerd — обзоры Фантано", body))
-    print(f"site: {len(reviews)} release pages, {len(cat)} catalog entries")
+    print(f"site: {len(by_id)} release pages ({len(reviews)} with a full card), {len(by_artist)} artist pages")
 
 
 if __name__ == "__main__":

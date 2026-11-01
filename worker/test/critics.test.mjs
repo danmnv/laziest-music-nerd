@@ -1,0 +1,10 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { criticsText } from "../src/critics.mjs";
+
+test("critics lines escape the Wikipedia link for an HTML attribute", () => {
+  assert.equal(criticsText(null), "");
+  assert.equal(criticsText({ crit: ["Metacritic 91"], sales: [], wp_url: 'https://en.wikipedia.org/wiki/A"B' }),
+    '\nКритики: Metacritic 91 (<a href="https://en.wikipedia.org/wiki/A&quot;B">Википедия</a>)');
+  assert.equal(criticsText({ crit: [], sales: ["US #1"], wp_url: "https://w/x" }), '\nЧарты и продажи: US #1 (<a href="https://w/x">Википедия</a>)');
+});
