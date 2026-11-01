@@ -9,7 +9,7 @@ import unicodedata
 import urllib.parse
 from pathlib import Path
 
-from . import card, ratings, specials, tnd
+from . import card, gemini, ratings, specials, tnd
 from .colors import color, label
 from .musicbrainz import norm
 
@@ -246,7 +246,7 @@ def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, 
     others = [x for x in artist_reviews if x["id"] != a["id"]]
     hist = (f'<h2>Фантано об этом артисте</h2>{history_list(artist_reviews, a["id"], 1)}' if others else "")
     brief = brief or {}
-    rows = [(k, e(v)) for k, v in (("Кто", brief.get("who")), ("Бриф", brief.get("about") or brief.get("brief"))) if v]
+    rows = [(k, e(v)) for k, v in (("Кто", brief.get("who")), ("Описание", brief.get("about") or brief.get("brief"))) if v]
     # Fantano's line only where there's no brief (as on bot-card pages)
     rows += notes_rows({**(note or {}), "blurb": None if brief.get("brief") else (note or {}).get("blurb")} if note else None, a["id"])
     if album.get("t"):  # Fantano's favourites marked with ★, as on bot-card pages
@@ -311,7 +311,7 @@ def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None, artis
     if before and not others:  # with other reviews, they are listed below as on archive pages, each linked to its page
         rows.append(("Фантано раньше", before))
     if ai.get("brief"):  # the site has room for the longer one; the card in Telegram keeps the short one
-        rows.append(("Бриф", e(ai.get("about") or ai["brief"])))
+        rows.append(("Описание", e(ai.get("about") or ai["brief"])))
     if ai.get("moods"):
         rows.append(("Когда слушать", '<span class="moods">' + e(" / ".join(ai["moods"])) + ' <span class="muted">(догадка ИИ)</span></span>'))
     dossier = []
@@ -406,6 +406,11 @@ def build():
         li = lists.get(a["id"])
         nt = notes.get(a["id"])
         br = briefs.get(a["id"])
+        # the score is in the page's and the card's first lines: not again in the text (gemini.drop_score)
+        if br:
+            br = {**br, **{k: gemini.drop_score(br[k]) for k in ("brief", "about") if br.get(k)}}
+        if (a.get("ai") or {}).get("brief"):
+            a = {**a, "ai": {**a["ai"], **{k: gemini.drop_score(a["ai"][k]) for k in ("brief", "about") if a["ai"].get(k)}}}
         html_ = (release_page(a, rt, artists.get((a.get("artist") or {}).get("mbid") or ""), li, nt, br, by_artist[slug(a["artist_name"])])
                  if a["id"] in enriched
                  else archive_page(a, by_artist[slug(a["artist_name"])], rt, li, nt, br, albums.get(a["id"]) or None))

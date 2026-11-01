@@ -678,7 +678,7 @@ async function sendAlbum(env, uid, a, intro) {
   const brief = (full && full.ai && full.ai.brief) || (rt && rt.brief);
   const moods = cardMoods(full, rt);
   const words = [
-    brief ? `<b>Бриф:</b> ${esc(brief)}` : "",
+    brief ? `<b>Описание:</b> ${esc(brief)}` : "",
     rt && rt.blurb && !brief ? `💬 <i>${esc(rt.blurb)}</i>` : "",
     rt && rt.fav && rt.fav.length ? `★ Любимые у Фантано: ${esc(rt.fav.join(", "))}` : "",
     moods.length ? `<b>Когда слушать:</b> ${esc(moods.join(" / "))} <i>(догадка ИИ, поправь кнопками)</i>` : "",

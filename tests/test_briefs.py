@@ -252,9 +252,9 @@ class English(unittest.TestCase):
             (p / "archive.json").write_text(json.dumps(self.archive(12)))
             s, t, out = self.run_briefs(p, lambda *a, **kw: dict(self.EN), self.fake_translate)
             self.assertEqual([len(c.args[0]) for c in t.call_args_list], [10, 2])
-            self.assertEqual(s.call_args.kwargs, {"lang": "en", "verdict": "Fantano's score: 7/10."})
+            self.assertEqual(s.call_args.kwargs, {"lang": "en", "verdict": briefs.verdict({"score": 7})})
             e = out[f"{0:024x}"]
-            self.assertEqual(e, {"brief": "Ru Short, 7/10.", "about": "Подробно.", "tr": "gm", "m": "g", "moods": ["ночью"],
+            self.assertEqual(e, {"brief": "Ru Short, 7/10.", "about": "Подробно.", "tr": "gm", "m": "g", "moods": ["ночью"], "p": briefs.PROMPT_V,
                                  "en": {"brief": "Short, 7/10.", "about": "Longer."}})
 
     def test_failed_translation_waits_and_is_not_written_again(self):
@@ -303,8 +303,29 @@ class English(unittest.TestCase):
             self.assertEqual(out[f"{0:024x}"]["trf"], briefs.TR_FAIL_MAX)
             self.assertEqual(briefs.untranslated(out), [])
 
+    def test_briefs_by_the_old_prompt_are_written_again(self):
+        self.assertFalse(briefs.finished({"brief": "x", "en": {"brief": "y"}, "tr": "gm"}, "en"))
+        self.assertTrue(briefs.finished({"brief": "x", "en": {"brief": "y"}, "tr": "gm", "p": briefs.PROMPT_V}, "en"))
+        self.assertTrue(briefs.finished({"skip": "short"}, "en"))
+        self.assertEqual(briefs.entry({"brief": "b"}, "en")["p"], briefs.PROMPT_V)
+
+    def test_the_score_is_cut_from_the_text(self):
+        d = gemini.drop_score
+        self.assertEqual(d("Третий альбом Remi Wolf «Mud» уходит в чистый акустический поп, однако Фантано считает его безликим и ставит 4/10."),
+                         "Третий альбом Remi Wolf «Mud» уходит в чистый акустический поп, однако Фантано считает его безликим.")
+        self.assertEqual(d("Alabama Shakes возвращаются с третьим альбомом «I Must Be Dreaming», получая от Фантано оценку 6/10."),
+                         "Alabama Shakes возвращаются с третьим альбомом «I Must Be Dreaming».")
+        self.assertEqual(d("Пятый альбом Fontaines D.C. «Dopamine Chamber» расширяет звучание; Фантано оценивает его на 7/10."),
+                         "Пятый альбом Fontaines D.C. «Dopamine Chamber» расширяет звучание.")
+        self.assertEqual(d("Альбом Kid Rock «Halfway 2 Jesus» — кантри-рок, однако Фантано считает его NOT GOOD."),
+                         "Альбом Kid Rock «Halfway 2 Jesus» — кантри-рок.")
+        self.assertEqual(d("Ровно. В итоге Фантано оценивает пластинку на 6/10, называя ее неоднозначной."), "Ровно.")
+        self.assertEqual(d("Quavo's album is a summer trap record that earns Fantano a 5/10."), "Quavo's album is a summer trap record.")
+        self.assertEqual(d("Фантано оценивает пластинку на 5/10."), "Фантано оценивает пластинку на 5/10.")  # nothing else to keep
+        self.assertEqual(d("Без оценки."), "Без оценки.")
+
     def test_verdict_never_invents_a_score(self):
-        self.assertEqual(briefs.verdict({"score": 0}), "Fantano's score: 0/10.")
+        self.assertEqual(briefs.verdict({"score": 0}), "Fantano's score: 0/10. The card shows it above your text: never write it.")
         self.assertIn('"NOT GOOD"', briefs.verdict({"score": None, "not_good": True}))
         self.assertIn('"CLASSIC"', briefs.verdict({"classic": True}))
         self.assertEqual(briefs.verdict({}), "Fantano gave no score: don't write one.")
@@ -318,7 +339,7 @@ class Site(unittest.TestCase):
     def test_archive_page_shows_the_long_brief_and_hides_the_quote(self):
         html = site.archive_page(self.A, [self.A], note={"blurb": "Fantano's line."},
                                  brief={"brief": "Коротко.", "about": "Длинно и подробно.", "who": "Группа из Оксфорда."})
-        self.assertIn("<dt>Кто</dt><dd>Группа из Оксфорда.</dd><dt>Бриф</dt><dd>Длинно и подробно.</dd>", html)
+        self.assertIn("<dt>Кто</dt><dd>Группа из Оксфорда.</dd><dt>Описание</dt><dd>Длинно и подробно.</dd>", html)
         self.assertNotIn("Fantano&#x27;s line", html)
         self.assertNotIn("Коротко.", html)
 

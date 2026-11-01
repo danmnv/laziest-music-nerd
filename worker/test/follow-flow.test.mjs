@@ -228,7 +228,7 @@ test("one hit is sent as a full card: cover, length, all services, marks and fol
   await say(OWNER, "kid a");
   const c = calls.find((x) => x.method === "sendPhoto");
   assert.equal(c.photo, "https://cdn/kida.jpg");
-  assert.match(c.caption, /<b>Radiohead — Kid A<\/b> \(2000\)\n🟢 10\/10 · art rock · 10 треков · 50 мин · 2-й из 2 обзоров артиста\n\n<b>Бриф:<\/b> Radiohead уходят в электронику\.\n/);
+  assert.match(c.caption, /<b>Radiohead — Kid A<\/b> \(2000\)\n🟢 10\/10 · art rock · 10 треков · 50 мин · 2-й из 2 обзоров артиста\n\n<b>Описание:<\/b> Radiohead уходят в электронику\.\n/);
   assert.doesNotMatch(c.caption, /Not shown/); // the archive's brief (lmn/briefs.py) replaces Fantano's line
   assert.match(c.caption, /\nКритики: Metacritic 91 · Pitchfork 10\/10\nЧарты и продажи: US #1 · UK #1 \(<a href="https:\/\/en.wikipedia.org\/wiki\/Kid_A">Википедия<\/a>\)$/);
   const btns = c.reply_markup.inline_keyboard.flat();

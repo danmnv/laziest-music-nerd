@@ -24,8 +24,8 @@ _unavailable = set()  # models found used up for today (or closed) during this r
 
 PROMPT = """Ты помогаешь вести русскоязычный Telegram-канал о музыкальных обзорах Anthony Fantano (The Needle Drop).
 {source} Ответь строго JSON-объектом с полями:
-- "brief": 1–2 предложения на русском, своими словами: что за релиз и что Фантано о нём думает. Не цитируй обзор, не переводи его дословно. До 220 символов. Оценку пиши числом («7/10»), слова light, decent, strong не переводи.
-- "about": 4–5 предложений на русском, своими словами, для страницы сайта: что за релиз, что Фантано в нём хвалит (с названиями треков), что ругает и к чему пришёл. Не цитируй обзор, не переводи его дословно. До 700 символов.
+- "brief": 1–2 предложения на русском, своими словами: что за релиз и что Фантано о нём думает — словами, без оценки: оценка уже стоит в заголовке карточки, не повторяй её. Не цитируй обзор, не переводи его дословно. До 220 символов. Слова light, decent, strong не переводи и не используй.
+- "about": 4–5 предложений на русском, своими словами, для страницы сайта: что за релиз, что Фантано в нём хвалит (с названиями треков), что ругает и к чему пришёл — тоже без оценки. Не цитируй обзор, не переводи его дословно. До 700 символов.
 - "who": одна строка на русском строго по образцу «Ирландская пост-панк-группа из Дублина; пятый альбом.» или «Рэпер из Атланты, участник Migos; третий сольный альбом.»: откуда, жанр, кто (группа, рэпер, певица, продюсер), чей участник, если это важно; после точки с запятой — какой это релиз. Без имени исполнителя и названия релиза, без оценочных слов. Только факты из текста; чего нет в тексте — пропусти, но известную часть пиши («Психоделический хип-хоп-проект; восьмой альбом.»); не пиши «новый альбом» и не угадывай, какой это по счёту релиз. Пустая строка — только если в тексте об этом ничего нет. До 120 символов.
 - "moods": список из 1–2 вариантов ровно из этого набора: {moods}. Когда лучше всего слушать этот релиз: исходи из жанра, звучания и настроения, которые описывает обзор (тяжёлый и злой — не «фоном», тихий и грустный — не «для тусовки»). «В наушниках, вдумчиво» — только если обзор подчёркивает плотную, детальную, требующую внимания музыку, а не по умолчанию; слабому альбому тоже выбирай то, к чему подходит его звучание.
 - "best_tracks": до 3 названий треков, которые Фантано выделил как лучшие, точно как они написаны в тексте. Если не выделил — пустой список.
@@ -41,8 +41,8 @@ SOURCE_TEXT = "Ниже — расшифровка его видеообзора
 # The same answer in English, for models that write Russian poorly (lmn/llm.py); translate() then makes it Russian.
 PROMPT_EN = """You help run a Russian-language Telegram channel about Anthony Fantano's (The Needle Drop) music reviews.
 Below is the transcript of his video review. {verdict} Answer with a JSON object only, with the fields:
-- "brief": 1-2 sentences in English, in your own words: what the release is and what Fantano thinks of it. Don't quote the review. Up to 200 characters. Give the score exactly as stated above, never another one.
-- "about": 4-5 sentences in English, in your own words, for the website: what the release is, what Fantano praises (name the tracks), what he criticizes and where he lands. Don't quote the review. Up to 650 characters.
+- "brief": 1-2 sentences in English, in your own words: what the release is and what Fantano thinks of it, in words. Never state the score or verdict: the card shows it right above, a repeat is noise. Don't quote the review. Up to 200 characters.
+- "about": 4-5 sentences in English, in your own words, for the website: what the release is, what Fantano praises (name the tracks), what he criticizes and where he lands, again without the score. Don't quote the review. Up to 650 characters.
 - "who": one line in English, strictly in the pattern "Irish post-punk band from Dublin; fifth album." or "Atlanta rapper, member of Migos; third solo album.": where from, genre, what (band, rapper, singer, producer), whose member if it matters; after the semicolon, which release this is. No artist name, no release title, no opinions. Only facts from the text; leave out what the text doesn't say, but write the part that is known (genre and what, or which release: "Psychedelic hip-hop project; eighth album."); never "new album"; never guess which release it is. An empty string only if the text says nothing of it. Up to 110 characters.
 - "moods": a list of 1-2 items copied exactly from this list: {moods}. When this release is best listened to, judging by the genre, sound and mood the review describes (heavy and angry is not "фоном", quiet and sad is not "для тусовки"). "в наушниках, вдумчиво" only when the review stresses dense, detailed, demanding music, never as a default; a bad record still gets what its sound fits.
 - "best_tracks": up to 3 track titles Fantano singled out as the best, exactly as written in the text; else an empty list.
@@ -81,7 +81,7 @@ def translate(items, api_key=None):
         out = json.loads(raw["candidates"][0]["content"]["parts"][0]["text"])
         if not isinstance(out, list) or len(out) != len(src) or not all(isinstance(x, dict) for x in out):
             raise ValueError("not a list of the same length")
-        return [{"brief": trim_brief(str(x.get("brief") or "")), "about": trim_about(str(x.get("about") or "")),
+        return [{"brief": trim_brief(drop_score(str(x.get("brief") or ""))), "about": trim_about(drop_score(str(x.get("about") or ""))),
                  "who": str(x.get("who") or "").strip(), "tr": model} for x in out]
     except (KeyError, IndexError, TypeError, ValueError, AttributeError) as e:
         print(f"gemini {model}: bad translation {e!r}")
@@ -154,9 +154,52 @@ def parse_answer(text):
     out["moods"] = [m for m in out.get("moods") or [] if m in MOODS][:2]
     note = str(out.get("score_note") or "").strip().lower()
     out["score_note"] = note if NOTE.match(note) else None
-    out["brief"] = trim_brief(str(out.get("brief") or "")) or None
-    out["about"] = trim_about(str(out.get("about") or "")) or None
+    out["brief"] = trim_brief(drop_score(str(out.get("brief") or ""))) or None
+    out["about"] = trim_about(drop_score(str(out.get("about") or ""))) or None
     return out
+
+
+SCORE = r"(?:\d{1,2}(?:[.,]\d)?\s*/\s*10|NOT GOOD|NOT BAD|NOT MUSIC|CLASSIC)"
+_VERB = (r"(?:ставит|оценива\w*|оценил\w*|постави\w*|получа\w*|получил\w*|выставля\w*|дал\w*|даёт|дает|считает|называет|"
+         r"gives?|gave|rates?|rated|rating|awards?|awarding|earn\w*|scor\w*|giving|calls?)")
+_VERB_RE = re.compile(r"\b" + _VERB + r"\b", re.I)
+# what may stand before the verb in that clause: ", и Фантано", "; в итоге он", " that earns", " однако Фантано"
+_LEAD = re.compile(r"(?:\s*[,;—–-])?\s*(?:(?:и|а|но|однако|что|and|but|that|which)\s+)?(?:(?:в итоге|в целом)\s+)?(?:(?:Фантано|Fantano|он|he)\s+)?$", re.I)
+
+
+def _cut_score_clause(body):
+    """body without its trailing clause that only gives the score ("…, и ставит 4/10", "…, получая оценку 6/10"), or
+    body itself. The clause starts at the last verb before the score, so "считает его безликим и ставит 4/10" keeps
+    "считает его безликим"."""
+    for m in reversed(list(_VERB_RE.finditer(body))):
+        rest = body[m.start():]
+        if re.fullmatch(r"[^.;,!?]*?" + SCORE + r"[^.;,!?]*", rest, re.I):
+            lead = _LEAD.search(body[:m.start()])
+            return body[:lead.start() if lead else m.start()]
+        if re.search(SCORE, rest) is None:
+            break
+    return body
+
+
+def drop_score(text):
+    """The text without the score: the card and the page show it in their first lines, so a brief that ends "…и ставит
+    4/10" repeats it (Daniil, 2026-11-01). The prompts say so too; this catches what a model still writes. A trailing
+    score clause is cut; a sentence led by the score is dropped when other sentences remain; else the text stays."""
+    if not text or not re.search(SCORE, text):
+        return text
+    parts = re.split(r"(?<=[.!?])(?<![A-Z]\.[A-Z]\.)\s+(?=[«\"A-ZА-ЯЁ])", text.strip())  # not after "D.C." before a lowercase word
+    out = []
+    for s in parts:
+        if not re.search(SCORE, s):
+            out.append(s)
+            continue
+        body = s.rstrip(".!? ")
+        cut = _cut_score_clause(body)
+        if cut != body and len(cut) >= 25:
+            out.append(cut.rstrip(" ,;—–-") + ".")
+        elif len(parts) == 1:
+            out.append(s)
+    return " ".join(out).strip() or text
 
 
 def trim_brief(brief):

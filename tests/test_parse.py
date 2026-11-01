@@ -118,7 +118,7 @@ class ParseTest(unittest.TestCase):
         r["ai"] = {"brief": "Очень длинный бриф. " * 40}
         c = card.caption(r)
         self.assertLessEqual(card.tg_len(c), 1024)
-        self.assertIn("<b>Бриф:</b>", c)
+        self.assertIn("<b>Описание:</b>", c)
         kb = card.buttons(r)
         self.assertEqual(kb[-1][-1], {"text": "▶ Видеообзор", "url": "https://youtu.be/UzvthnAU6nc"})
         self.assertNotIn("Видеообзор на YouTube", c)
