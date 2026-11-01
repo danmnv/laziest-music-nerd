@@ -93,7 +93,8 @@ def history_list(items, current_id, depth):
 
 def search_buttons(artist, album):
     q = urllib.parse.quote_plus(f"{artist} {album}")
-    return [("🔎 YouTube Music", f"https://music.youtube.com/search?q={q}"), ("🔎 Google", f"https://www.google.com/search?q={q}")]
+    return [("🔎 YouTube Music", f"https://music.youtube.com/search?q={q}"), ("🔎 Google", f"https://www.google.com/search?q={q}"),
+            ("🔎 Оценки на AOTY", card.aoty_search(artist, album))]
 
 
 def critics_parts(rt):

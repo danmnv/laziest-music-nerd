@@ -230,6 +230,7 @@ test("one hit is sent as a full card: cover, length, all services, marks and fol
   assert.match(c.caption, /\nКритики: Metacritic 91 · Pitchfork 10\/10 \(<a href="https:\/\/en.wikipedia.org\/wiki\/Kid_A">Википедия<\/a>\)\nЧарты и продажи: US #1 · UK #1$/);
   const btns = c.reply_markup.inline_keyboard.flat();
   assert.ok(btns.some((b) => b.text === "Все платформы" && b.url === "https://album.link/https://www.deezer.com/album/9"));
+  assert.ok(btns.some((b) => b.text === "🔎 AOTY" && b.url === "https://www.albumoftheyear.org/search/?q=Radiohead%20Kid%20A"));
   assert.ok(btns.some((b) => b.callback_data === "m:k:done"));
   assert.ok(btns.some((b) => b.callback_data === "f:k"));
   assert.ok(btns.some((b) => b.callback_data === "ar:k"));

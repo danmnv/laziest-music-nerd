@@ -2,7 +2,8 @@
 blurb he writes under "Listen:", and his FAV TRACKS (with Deezer track IDs, so the site can embed Deezer's official
 player for them; Deezer's widget plays 30-second previews).
 
-Writes data/notes.json: {review id: {"video_id", "blurb", "fav": [{"t": title, "dz": Deezer track id or null}]}}.
+Writes data/notes.json: {review id: {"video_id", "blurb", "fav": [{"t": title, "dz": Deezer track id, 0 if not on
+Deezer, null or missing if not found out yet}]}}.
 Built by lmn/specials.py's run (same list of uploads, one YouTube pass)."""
 import re
 import sys
@@ -39,16 +40,23 @@ def blurb(desc):
 
 
 def deezer_track(artist, title):
-    q = urllib.parse.quote(f'artist:"{artist}" track:"{title}"')
-    try:
-        d = http.get_json(f"https://api.deezer.com/search/track?q={q}&limit=5")
-    except Exception as e:
-        print(f"  ! deezer {artist} - {title}: {e}", file=sys.stderr)
-        return None
-    for t in d.get("data") or []:
-        if norm((t.get("artist") or {}).get("name")) == norm(artist) and norm(t.get("title")).startswith(norm(title)[:20]):
-            return t["id"]
-    return None
+    """Deezer track ID, 0 when Deezer has no such track, None when the search failed (asked again next run).
+    Deezer's track search answers nothing when the query has an artist:"..." field (checked from Actions 2026-11-01:
+    artist:"Radiohead" track:"Karma Police" -> 0 results), so it searches the plain words, then track:"..." alone,
+    and checks the artist itself."""
+    for q in (f"{artist} {title}", f'track:"{title}"'):
+        try:
+            d = http.get_json(f"https://api.deezer.com/search/track?q={urllib.parse.quote(q)}&limit=25")
+        except Exception as e:
+            print(f"  ! deezer {artist} - {title}: {e}", file=sys.stderr)
+            return None
+        if d.get("error"):  # e.g. the quota (50 requests per 5 seconds)
+            print(f"  ! deezer {artist} - {title}: {d['error']}", file=sys.stderr)
+            return None
+        for t in d.get("data") or []:
+            if norm((t.get("artist") or {}).get("name")) == norm(artist) and norm(t.get("title")).startswith(norm(title)[:20]):
+                return t["id"]
+    return 0
 
 
 def build(uploads, archive, old, deezer_limit=1500):
@@ -64,7 +72,8 @@ def build(uploads, archive, old, deezer_limit=1500):
         if not a:
             continue
         prev = old.get(a["id"]) or {}
-        known = {f["t"]: f["dz"] for f in prev.get("fav", []) if "dz" in f}  # looked up before (dz may be None: not on Deezer)
+        # looked up before: dz is the ID, or 0 when the track isn't on Deezer (None: the search failed, ask again)
+        known = {f["t"]: f["dz"] for f in prev.get("fav", []) if f.get("dz") is not None}
         fav = []
         for t in parse_description(v["desc"]).get("fav_tracks", [])[:5]:
             if t in known:

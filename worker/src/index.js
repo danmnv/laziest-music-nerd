@@ -540,7 +540,7 @@ async function sendUnreviewed(env, uid, x) {
   const rows = [
     [{ text: "🔎 YouTube Music", url: `https://music.youtube.com/search?q=${q}` }, x.link ? { text: "Все платформы", url: `https://album.link/${x.link}` } : google],
   ];
-  if (x.link) rows.push([google]);
+  rows.push(x.link ? [google, aoty(x.artist, x.title)] : [aoty(x.artist, x.title)]);
   if (x.key) {
     // remembered so that "📌 Отложенные", the reminder and "▶ Отрывки" know what this ID is
     await env.DB.prepare("INSERT INTO unreviewed (id, artist_name, album, year) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET artist_name=excluded.artist_name, album=excluded.album, year=excluded.year")
@@ -555,6 +555,9 @@ async function sendUnreviewed(env, uid, x) {
   }
   return tg(env, "sendMessage", { chat_id: uid, text, parse_mode: "HTML", reply_markup, link_preview_options: { is_disabled: true } });
 }
+
+// Critics' and listeners' scores on Album of the Year: a link to its search only, nothing is fetched from AOTY.
+const aoty = (artist, album) => ({ text: "🔎 AOTY", url: `https://www.albumoftheyear.org/search/?q=${encodeURIComponent(`${artist} ${album}`)}` });
 
 // A full card for one review, as in the channel: cover, score, genres, length, links, marks and "🔔".
 // a: an archive entry; a review the bot posted a card for has more in reviews.json, and that is used first.
@@ -598,7 +601,7 @@ async function sendAlbum(env, uid, a, intro) {
       r.video_id ? { text: "▶ Видеообзор", url: `https://youtu.be/${r.video_id}` } : { text: "Обзор", url: r.url },
       links.youtube_album ? { text: "YouTube (альбом)", url: links.youtube_album } : { text: "🔎 YouTube Music", url: `https://music.youtube.com/search?q=${q}` },
     ],
-    [...(allServices ? [{ text: "Все платформы", url: allServices }] : []), { text: "🔎 Google", url: `https://www.google.com/search?q=${q}` }],
+    [...(allServices ? [{ text: "Все платформы", url: allServices }] : []), { text: "🔎 Google", url: `https://www.google.com/search?q=${q}` }, aoty(r.artist_name, r.album)],
     MARK_ROW(r.id),
     [{ text: "🔔 Следить", callback_data: `f:${r.id}` }, { text: "📚 Все обзоры", callback_data: `ar:${r.id}` }],
     [{ text: "🕒 Когда слушать?", callback_data: `mq:${r.id}` },
