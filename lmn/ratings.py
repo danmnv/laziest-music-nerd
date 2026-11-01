@@ -32,7 +32,26 @@ PRIORITY = ["Pitchfork", "AllMusic", "NME", "Rolling Stone", "The Guardian", "Cl
             "Slant Magazine", "Consequence", "PopMatters", "The Observer", "musicOMH", "DIY", "HipHopDX", "XXL",
             "Beats Per Minute", "Kerrang!", "Metal Hammer", "The Quietus", "Resident Advisor", "Under the Radar",
             "The Daily Telegraph", "The Times", "Q", "Record Collector", "Sputnikmusic"]
-SHOW = 5
+SHOW = 5  # on a Telegram card
+KEEP = 8  # stored, one a line on the site
+VERSION = 2  # what an entry holds (2: each review's link, mc_url). Older entries are not re-read on purpose (Daniil,
+# 2026-11-01: the outlet's home page is enough); they get the links at their ordinary re-check.
+# Home pages, the link when Wikipedia doesn't cite the review itself (the site's critics list)
+HOME = {"Pitchfork": "https://pitchfork.com", "AllMusic": "https://www.allmusic.com", "NME": "https://www.nme.com",
+        "Rolling Stone": "https://www.rollingstone.com", "The Guardian": "https://www.theguardian.com",
+        "Clash": "https://www.clashmusic.com", "Exclaim!": "https://exclaim.ca", "The A.V. Club": "https://www.avclub.com",
+        "Spin": "https://www.spin.com", "The Independent": "https://www.independent.co.uk",
+        "The Line of Best Fit": "https://www.thelineofbestfit.com", "Paste": "https://www.pastemagazine.com",
+        "Uncut": "https://www.uncut.co.uk", "Mojo": "https://www.mojo4music.com", "Entertainment Weekly": "https://ew.com",
+        "Slant Magazine": "https://www.slantmagazine.com", "Consequence": "https://consequence.net",
+        "PopMatters": "https://www.popmatters.com", "The Observer": "https://www.theguardian.com/observer",
+        "musicOMH": "https://www.musicomh.com", "DIY": "https://diymag.com", "HipHopDX": "https://hiphopdx.com",
+        "XXL": "https://www.xxlmag.com", "Beats Per Minute": "https://beatsperminute.com", "Kerrang!": "https://www.kerrang.com",
+        "Metal Hammer": "https://www.loudersound.com/metal-hammer", "The Quietus": "https://thequietus.com",
+        "Resident Advisor": "https://ra.co", "Under the Radar": "https://www.undertheradarmag.com",
+        "The Daily Telegraph": "https://www.telegraph.co.uk", "The Times": "https://www.thetimes.com",
+        "Record Collector": "https://recordcollectormag.com", "Sputnikmusic": "https://www.sputnikmusic.com",
+        "Metacritic": "https://www.metacritic.com"}
 ALIASES = {"pitchfork media": "Pitchfork", "consequence of sound": "Consequence", "slant": "Slant Magazine",
            "the av club": "The A.V. Club", "a.v. club": "The A.V. Club", "the guardian": "The Guardian",
            "guardian": "The Guardian", "the telegraph": "The Daily Telegraph", "allmusic": "AllMusic",
@@ -143,6 +162,37 @@ def clean(v):
     return re.sub(r"\s+", " ", v).strip(" ()")
 
 
+def named_refs(text):
+    """{ref name: the URL it cites}: a box often reuses a reference defined in the article body (<ref name="AM"/>)."""
+    out = {}
+    for m in re.finditer(r"<ref\s+name\s*=\s*\"?([^\"/>]+?)\"?\s*>(.*?)</ref>", text or "", re.S | re.I):
+        url = cited_url(m.group(2))
+        if url:
+            out.setdefault(m.group(1).strip(), url)
+    return out
+
+
+def cited_url(v):
+    """The URL a citation points to: a cite template's url= (not archive-url=), else a bare [http… title] link."""
+    m = re.search(r"\|\s*url\s*=\s*(https?://[^|}\s<]+)", v or "", re.I) or re.search(r"\[(https?://[^\s\]<]+)", v or "")
+    return m.group(1) if m else None
+
+
+def review_url(v, refs):
+    """The link to the review behind one score in the ratings box: its own <ref>, a named one from the body, or a bare link.
+    None when Wikipedia gives no source for it."""
+    for m in re.finditer(r"<ref([^>]*?)(/?)>(?:(.*?)</ref>)?", v or "", re.S | re.I):
+        if m.group(3):
+            url = cited_url(m.group(3))
+        else:
+            nm = re.search(r"name\s*=\s*\"?([^\"/>]+?)\"?\s*$", m.group(1).strip(), re.I)
+            url = refs.get(nm.group(1).strip()) if nm else None
+        if url:
+            return url
+    m = re.search(r"\[(https?://[^\s\]<]+)", re.sub(r"<ref.*?</ref>", "", v or "", flags=re.S))
+    return m.group(1) if m else None
+
+
 def fmt(x):
     return str(int(x)) if x == int(x) else str(x)
 
@@ -211,6 +261,7 @@ def parse(text):
     box = template(text, ["album ratings", "music ratings"])
     if box:
         prm = params(box)
+        refs = named_refs(text)
         nums = sorted(int(k[3:]) for k in prm if re.fullmatch(r"rev\d+", k))
         seen = set()
         for n in nums:
@@ -219,17 +270,26 @@ def parse(text):
             if not name or not score or any(x in name.lower() for x in NOT_CRITICS) or name in seen:
                 continue
             seen.add(name)
-            out["critics"].append({"outlet": name, "score": score, "s10": to10(score)})
+            c = {"outlet": name, "score": score, "s10": to10(score)}
+            url = review_url(prm.get(f"rev{n}score", "") + " " + prm[f"rev{n}"], refs)
+            if url:
+                c["url"] = url
+            out["critics"].append(c)
         aggs = {k: clean(v) for k, v in prm.items()}
+        mc_raw = prm.get("mc", "")
         for i in range(1, 6):  # newer boxes: aggregate1 = "AnyDecentMusic?", aggregate1score = "7.6/10"
             label = aggs.get(f"aggregate{i}", "").lower()
             if "metacritic" in label:
                 aggs["mc"] = aggs.get(f"aggregate{i}score", "")
+                mc_raw = prm.get(f"aggregate{i}score", "")
             elif "decent" in label:
                 aggs["adm"] = aggs.get(f"aggregate{i}score", "")
         m = re.match(r"(\d{1,3})\s*/\s*100", aggs.get("mc", ""))
         if m:
             out["metacritic"] = int(m.group(1))
+            url = review_url(mc_raw, refs)
+            if url:
+                out["mc_url"] = url
         m = re.match(r"(\d+(?:\.\d)?)\s*/\s*10\b", aggs.get("adm", ""))
         if m:
             out["adm"] = float(m.group(1))
@@ -258,11 +318,11 @@ def parse(text):
 
 
 def summarize(p):
-    """What the card / site shows: up to SHOW critics in PRIORITY order, plus an average for the "спорно" mark."""
+    """What the card / site shows: up to KEEP critics in PRIORITY order, plus an average for the "спорно" mark."""
     rank = {name: i for i, name in enumerate(PRIORITY)}
     critics = sorted(p["critics"], key=lambda c: rank.get(c["outlet"], len(rank)))
     # only real scores are shown: "Positive" / "favorable" are words, not ratings
-    shown = [c for c in critics if c["outlet"] in rank and c["s10"] is not None][:SHOW]
+    shown = [c for c in critics if c["outlet"] in rank and c["s10"] is not None][:KEEP]
     nums = [c["s10"] for c in p["critics"] if c["s10"] is not None]
     if p["metacritic"] is not None:
         avg, n = round(p["metacritic"] / 10, 1), None
@@ -270,7 +330,7 @@ def summarize(p):
         avg, n = round(sum(nums) / len(nums), 1), len(nums)
     else:
         avg, n = None, None
-    return {"metacritic": p["metacritic"], "adm": p["adm"], "critics": shown, "critics_total": len(p["critics"]),
+    return {"v": VERSION, "metacritic": p["metacritic"], **({"mc_url": p["mc_url"]} if p.get("mc_url") else {}), "adm": p["adm"], "critics": shown, "critics_total": len(p["critics"]),
             "critic_avg10": avg, "critic_avg_n": n, "charts": p["charts"], "certs": p["certs"][:6]}
 
 

@@ -67,7 +67,8 @@ export default {
         if (!uid) return cors(env, json({ error: "login" }, 401));
         const b = await req.json();
         await setMark(env, uid, String(b.review_id), b.status ?? undefined, b.score ?? undefined);
-        if (isOwner(env, uid)) ctx.waitUntil(refreshOwnerLists(env));
+        const later = b.status === "later";
+        ctx.waitUntil(isOwner(env, uid) ? refreshOwnerLists(env, later) : refreshDmList(env, uid, later));
         return cors(env, json({ ok: true }));
       }
       if (url.pathname === "/api/refresh-lists" && req.method === "POST") {
@@ -202,8 +203,8 @@ async function onCallback(q, env) {
     await setMark(env, uid, rid, next, undefined);
     answer = next ? `Отмечено: ${STATUS_LABEL[next]}` : "Отметка снята";
     await answerNow();
-    if (isOwner(env, uid)) await refreshOwnerLists(env);
-    else await refreshDmList(env, uid, false);
+    if (isOwner(env, uid)) await refreshOwnerLists(env, next === "later");
+    else await refreshDmList(env, uid, next === "later");
     if (next === "done") await maybeSuggestSimilar(env, uid, rid);
   } else if (parts[0] === "f") {
     const user = await env.DB.prepare("SELECT 1 FROM users WHERE user_id=?").bind(uid).first();
@@ -350,13 +351,22 @@ function renderList(env, items, statuses) {
   return LIST_HEAD + (lines.length ? lines.join("\n") : "Пока пусто.") + tail;
 }
 
+// createIfMissing: make sure the list exists and is pinned (on /start and when someone puts an album off). The others only
+// edit it: a new pinned message out of the blue would be noise.
 async function refreshDmList(env, uid, createIfMissing) {
   const user = await env.DB.prepare("SELECT dm_pinned_id FROM users WHERE user_id=?").bind(uid).first();
   if (!user) return; // the bot can't write to someone who never pressed /start
   const text = await laterList(env, uid);
   if (user.dm_pinned_id) {
     const d = await tg(env, "editMessageText", { chat_id: uid, message_id: user.dm_pinned_id, text, parse_mode: "HTML", link_preview_options: { is_disabled: true } });
-    if (d.ok || String(d.description || "").includes("not modified") || !createIfMissing) return;
+    const edited = d.ok || String(d.description || "").includes("not modified");
+    if (edited && createIfMissing) {
+      // The message is there, but the person may have unpinned it: pin it again (only then, re-pinning adds a service line).
+      const c = await tg(env, "getChat", { chat_id: uid });
+      if (c.ok && (c.result.pinned_message || {}).message_id !== user.dm_pinned_id)
+        await tg(env, "pinChatMessage", { chat_id: uid, message_id: user.dm_pinned_id, disable_notification: true });
+    }
+    if (edited || !createIfMissing) return;
   } else if (!createIfMissing) return;
   const d = await tg(env, "sendMessage", { chat_id: uid, text, parse_mode: "HTML", link_preview_options: { is_disabled: true }, disable_notification: true });
   if (d.ok) {
@@ -382,9 +392,9 @@ function renderLater(env, items) {
   return LATER_HEAD + lines.slice(0, n).join("\n") + tail(n);
 }
 
-async function refreshOwnerLists(env) {
+async function refreshOwnerLists(env, createDm = false) {
   const uid = Number(env.OWNER_ID);
-  await refreshDmList(env, uid, false);
+  await refreshDmList(env, uid, createDm);
   if ((await getSetting(env, "show_in_channel")) === "0") return;
   const st = await fetch(env.DATA_URL.replace("reviews.json", "state.json"), { cf: { cacheTtl: 120 } });
   const pinned = st.ok ? (await st.json()).channel_pinned_id : null;
@@ -674,11 +684,12 @@ async function sendAlbum(env, uid, a, intro) {
   // a blank line between the score line and the words, so they don't read as one block
   const text = (intro ? intro + "\n\n" : "") + `<b>${titleLink(env, r)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}${words ? "\n" + words : ""}${criticsText(rt)}`;
   const q = encodeURIComponent(`${r.artist_name} ${r.album}`);
+  const vid = r.video_id || (rt && rt.video_id); // most archive reviews have it only in rt (lmn/notes.py: the video's page)
   const allServices = links.songlink || (dz && dz.link ? `https://album.link/${dz.link}` : null);
   // two buttons a row: three get cut to "Все пл…" on a phone
   const reply_markup = { inline_keyboard: [
     [
-      r.video_id ? { text: "▶ Видеообзор", url: `https://youtu.be/${r.video_id}` } : { text: "Обзор", url: r.url },
+      vid ? { text: "▶ Видеообзор", url: `https://youtu.be/${vid}` } : { text: "Обзор", url: r.url },
       allServices ? { text: "Все платформы", url: allServices } : { text: "🔎 Google", url: `https://www.google.com/search?q=${q}` },
     ],
     [bandcampButton(links, r.artist_name, r.album),
