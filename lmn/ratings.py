@@ -193,6 +193,9 @@ def outlet_name(raw):
 def to10(score):
     """A score on a 0-10 scale, or None for words like "favorable"."""
     s = score.replace(",", ".").strip()
+    m = re.fullmatch(r"([\d.]+)\s*%", s)
+    if m:
+        return round(float(m.group(1)) / 10, 1) if float(m.group(1)) <= 100 else None
     m = re.fullmatch(r"([\d.]+)\s*/\s*([\d.]+)", s)
     if m:
         a, b = float(m.group(1)), float(m.group(2))
@@ -258,7 +261,8 @@ def summarize(p):
     """What the card / site shows: up to SHOW critics in PRIORITY order, plus an average for the "спорно" mark."""
     rank = {name: i for i, name in enumerate(PRIORITY)}
     critics = sorted(p["critics"], key=lambda c: rank.get(c["outlet"], len(rank)))
-    shown = [c for c in critics if c["outlet"] in rank][:SHOW]
+    # only real scores are shown: "Positive" / "favorable" are words, not ratings
+    shown = [c for c in critics if c["outlet"] in rank and c["s10"] is not None][:SHOW]
     nums = [c["s10"] for c in p["critics"] if c["s10"] is not None]
     if p["metacritic"] is not None:
         avg, n = round(p["metacritic"] / 10, 1), None

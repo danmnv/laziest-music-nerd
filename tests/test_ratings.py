@@ -72,6 +72,10 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(ratings.to10("3.5/5"), 7.0)
         self.assertIsNone(ratings.to10("favorable"))
         self.assertIsNone(ratings.to10("12/10"))
+        self.assertEqual(ratings.to10("61%"), 6.1)
+        s = ratings.summarize(ratings.parse("{{Album ratings|rev1=The Quietus|rev1score=Positive|rev2=Pitchfork|rev2score=7.8/10}}"))
+        self.assertEqual([c["outlet"] for c in s["critics"]], ["Pitchfork"])
+        self.assertEqual(s["critics_total"], 2)
 
     def test_newer_aggregate_fields(self):
         p = ratings.parse("{{Album ratings|aggregate1 = AnyDecentMusic?|aggregate1score = 7.9/10|MC=83/100|rev1=[[Clash (magazine)|Clash]]|rev1score=8/10}}")
