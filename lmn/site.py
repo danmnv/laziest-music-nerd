@@ -2,6 +2,7 @@
 import hashlib
 import html
 import json
+import re
 import os
 import shutil
 import unicodedata
@@ -132,7 +133,22 @@ def notes_rows(n, rid=None):
     return [("Фантано в описании ролика", f'<q lang="en">{e(n["blurb"])}</q>')]
 
 
-def fav_section(n):
+ROMAN = re.compile(r"^[IVXLC]+$")
+
+
+def track_name(t, titles=()):
+    """Fantano's FAV TRACKS are written in capitals ("LEAVING THE LIGHT"), hard to read on a phone: the album's own
+    spelling when the tracklist has it, else each capitalised word with the rest lowercased (Roman numerals kept)."""
+    key = re.sub(r"[^a-z0-9]", "", t.lower())
+    for x in titles:
+        if key and re.sub(r"[^a-z0-9]", "", x.lower()) == key:
+            return x
+    if not (t.isupper() and len(re.sub(r"[^A-Za-z]", "", t)) > 3):
+        return t
+    return " ".join(w if ROMAN.match(w) else w[:1] + w[1:].lower() for w in t.split(" "))
+
+
+def fav_section(n, titles=()):
     """Fantano's favourite tracks under the page's main part, each opening an official player on a tap: Deezer's
     widget, or Apple Music's embed for a track Deezer doesn't have (both play 30-second previews; embedding them is
     what they are offered for, unlike handing out the audio). Closed, a player isn't loaded (checked in Chromium 153)."""
@@ -141,6 +157,7 @@ def fav_section(n):
         return ""
     items = []
     for f in fav:
+        f = dict(f, t=track_name(f["t"], titles))
         if f.get("dz"):  # the attributes of Deezer's own embed code
             who, attrs = "Deezer", (f'src="https://widget.deezer.com/widget/auto/track/{int(f["dz"])}" height="152" '
                                     'allow="encrypted-media; clipboard-write"')
@@ -155,6 +172,10 @@ def fav_section(n):
         items.append(f'<li><details><summary><span class="trk">{e(f["t"])}</span> <span class="muted">▶ {who}</span></summary>'
                      f'<iframe class="dz" title="{who}: {e(f["t"])}" loading="lazy" {attrs} width="100%" frameborder="0"></iframe></details></li>')
     return f'<section class="favs"><h2 id="fav">Любимые треки Фантано</h2><ul>{"".join(items)}</ul></section>'
+
+
+def fav_titles(r, album):
+    return [t["title"] for t in r.get("tracks") or []] or [t for t, _ in (album or {}).get("t") or []]
 
 
 def lists_rows(badges):
@@ -220,7 +241,7 @@ def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, 
 <p class="btns">{''.join(f'<a class="btn" href="{e(u)}">{e(n)}</a>' for n, u in btns)}</p>
 <div class="mine" hidden></div>
 <p class="avg muted"></p>
-{fav_section(note)}
+{fav_section(note, [t for t, _ in album.get("t") or []])}
 {hist}
 </article>"""
     return page(f"{a['artist_name']} — {a['album']}", body, depth=1)
@@ -306,7 +327,7 @@ def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None):
 <p class="btns">{btns}</p>
 <div class="mine" hidden></div>
 <p class="avg muted"></p>
-{fav_section(note)}
+{fav_section(note, [t["title"] for t in r.get("tracks") or []])}
 </article>"""
     return page(f"{r['artist_name']} — {r['album']}", body, depth=1)
 
@@ -371,7 +392,7 @@ def build():
                 {"crit": crit[:4], "sales": sales[:4], "wp_url": (rt or {}).get("wp_url"), "contested": contested(a, rt),
                  **({"lists": li[:4]} if li else {}), **({"blurb": nt["blurb"]} if nt.get("blurb") else {}),
                  **({"brief": bf} if bf else {}), **({"moods": bm} if bm else {}),
-                 **({"fav": [f["t"] for f in nt["fav"]], "fav_play": any(f.get("dz") or f.get("am") for f in nt["fav"])} if nt.get("fav") else {})},
+                 **({"fav": [track_name(f["t"], fav_titles(a, albums.get(a["id"]))) for f in nt["fav"]], "fav_play": any(f.get("dz") or f.get("am") for f in nt["fav"])} if nt.get("fav") else {})},
                 ensure_ascii=False))
     for k, items in by_artist.items():
         (OUT / "a" / f"{k}.html").write_text(artist_page(items[0]["artist_name"], items))

@@ -259,7 +259,9 @@ LIST_HEAD = "<b>Последние 30 обзоров Фантано</b>\n\n"  # 
 
 
 def list_tail():
-    return f'\n\n<a href="{SITE_URL}/">Полный список на сайте</a>' if SITE_LIVE else ""
+    """Under the channel's pinned list: where the rest lives (the same in worker/src/index.js renderList)."""
+    return (f'\n\n<a href="https://t.me/{BOT_USERNAME}">Бот</a>: поиск по архиву, отложенное, напоминания'
+            + (f' · <a href="{SITE_URL}/">сайт</a>' if SITE_LIVE else ""))
 
 
 def latest(reviews, n=LIST_SIZE):

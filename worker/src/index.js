@@ -163,16 +163,21 @@ async function onUpdate(u, env) {
 
 async function welcome(env, uid) {
   await env.DB.prepare("INSERT OR IGNORE INTO users (user_id, started_at) VALUES (?, ?)").bind(uid, now()).run();
+  const channel = String(env.CHANNEL || "").replace(/^@/, "");
   await tg(env, "sendMessage", {
     chat_id: uid,
     parse_mode: "HTML",
+    link_preview_options: { is_disabled: true },
     text:
-      "Привет! Я присылаю карточки новых обзоров Anthony Fantano в канал " + env.CHANNEL + ".\n\n" +
-      "Кнопки «Отложить», «Слушал», «Не моё» под карточками видят все, а твои отметки — только ты. " +
-      "Закреплённое здесь — то, что ты отложил(а); нажми на альбом, и я пришлю его карточку. Свежие обзоры — в закреплённом в канале.\n\n" +
-      "Кнопка «" + RANDOM_BUTTON + "» внизу выдаёт альбом с оценкой от 8, который ты ещё не отмечал(а).\n\n" +
-      "Поиск: просто напиши мне артиста или альбом — найду обзоры Фантано с 2010 года.\n\n" +
-      "«🔔 Следить за артистом» под карточкой: о новом обзоре этого артиста напишу сюда. Список — кнопка «" + FOLLOWS_BUTTON + "».\n\n" +
+      `Привет! Это бот канала <a href="https://t.me/${channel}">@${channel}</a> о музыкальных обзорах Anthony Fantano.\n\n` +
+      "<b>В канале</b> выходят карточки новых обзоров. В закреплённом там 30 последних: нажми на альбом, и я пришлю его карточку сюда.\n\n" +
+      "<b>Здесь</b> всё твоё личное:\n" +
+      "• <b>Поиск.</b> Напиши артиста или альбом, найду обзоры Фантано с 2010 года и альбомы, которые он не обозревал.\n" +
+      "• <b>Отложенное.</b> «• Отложить» под карточкой, в канале или здесь, и альбом попадёт в закреплённое сообщение этого чата. Через 3 недели напомню.\n" +
+      "• <b>Отметки.</b> «✓ Слушал», «✗ Не моё»: кнопки видят все, твои отметки только ты. На сайте они видны после входа через Telegram.\n" +
+      "• <b>Артисты.</b> «🔔 Следить» под карточкой: о новом обзоре артиста напишу сюда. Список — кнопка «" + FOLLOWS_BUTTON + "».\n" +
+      "• <b>Случайный.</b> «" + RANDOM_BUTTON + "»: альбом с оценкой от 8, который ты ещё не отмечал(а).\n" +
+      "• <b>Лучшее.</b> Раз в две недели по воскресеньям пришлю 8+ за эти две недели.\n\n" +
       "Неофициальный фан-проект. Не связан с Anthony Fantano и The Needle Drop.",
     reply_markup: MENU,
   });
@@ -349,7 +354,8 @@ function tgLen(html) {
 }
 
 function renderList(env, items, statuses) {
-  const tail = env.SITE_LIVE === "1" ? `\n\n<a href="${env.SITE_URL}/">Полный список на сайте</a>` : "";
+  const tail = `\n\n<a href="https://t.me/${env.BOT_USERNAME}">Бот</a>: поиск по архиву, отложенное, напоминания` +
+    (env.SITE_LIVE === "1" ? ` · <a href="${env.SITE_URL}/">сайт</a>` : ""); // the same in lmn/card.py list_tail
   let lines = items.map((i) => i.line + (STATUS_ICON[statuses[i.id]] || ""));
   while (lines.length && tgLen(LIST_HEAD + lines.join("\n") + tail) > MESSAGE_LIMIT) lines.pop();
   return LIST_HEAD + (lines.length ? lines.join("\n") : "Пока пусто.") + tail;
@@ -611,9 +617,9 @@ async function sendUnreviewed(env, uid, x) {
   const known = arch.find((a) => nameKey(a.artist_name) === k); // any review of the artist: follow and their list work through it
   const google = { text: "🔎 Google", url: `https://www.google.com/search?q=${q}` };
   const rows = [
-    [{ text: "🔎 YouTube Music", url: `https://music.youtube.com/search?q=${q}` }, x.link ? { text: "Все платформы", url: `https://album.link/${x.link}` } : google],
+    [x.link ? { text: "Все платформы", url: `https://album.link/${x.link}` } : google, bandcampButton({}, x.artist, x.title)],
+    [{ text: "🔎 YouTube Music", url: `https://music.youtube.com/search?q=${q}` }, aoty(x.artist, x.title)],
   ];
-  rows.push(x.link ? [google, aoty(x.artist, x.title)] : [aoty(x.artist, x.title)]);
   if (x.key) {
     // remembered so that "📌 Отложенные", the reminder and "▶ Отрывки" know what this ID is
     await env.DB.prepare("INSERT INTO unreviewed (id, artist_name, album, year) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET artist_name=excluded.artist_name, album=excluded.album, year=excluded.year")
@@ -630,6 +636,14 @@ async function sendUnreviewed(env, uid, x) {
 }
 
 // Critics' and listeners' scores on Album of the Year: a link to its search only, nothing is fetched from AOTY.
+// The album's Bandcamp page when the card found one (new reviews), else Bandcamp's search for it: there is no
+// Bandcamp API, and its search page can't be read from a script (lmn/links.py).
+function bandcampButton(links, artist, album) {
+  const bc = links && links.bandcamp;
+  if (bc && !bc.includes("bandcamp.com/search")) return { text: "Bandcamp", url: bc };
+  return { text: "🔎 Bandcamp", url: `https://bandcamp.com/search?q=${encodeURIComponent(`${artist} ${album}`)}&item_type=a` };
+}
+
 const aoty = (artist, album) => ({ text: "🔎 AOTY", url: `https://www.albumoftheyear.org/search/?q=${encodeURIComponent(`${artist} ${album}`)}` });
 
 // A full card for one review, as in the channel: cover, score, genres, length, links, marks and "🔔".
@@ -672,12 +686,15 @@ async function sendAlbum(env, uid, a, intro) {
   const text = (intro ? intro + "\n\n" : "") + `<b>${titleLink(env, r)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}${words ? "\n" + words : ""}${criticsText(rt)}`;
   const q = encodeURIComponent(`${r.artist_name} ${r.album}`);
   const allServices = links.songlink || (dz && dz.link ? `https://album.link/${dz.link}` : null);
+  // two buttons a row: three get cut to "Все пл…" on a phone
   const reply_markup = { inline_keyboard: [
     [
       r.video_id ? { text: "▶ Видеообзор", url: `https://youtu.be/${r.video_id}` } : { text: "Обзор", url: r.url },
-      links.youtube_album ? { text: "YouTube (альбом)", url: links.youtube_album } : { text: "🔎 YouTube Music", url: `https://music.youtube.com/search?q=${q}` },
+      allServices ? { text: "Все платформы", url: allServices } : { text: "🔎 Google", url: `https://www.google.com/search?q=${q}` },
     ],
-    [...(allServices ? [{ text: "Все платформы", url: allServices }] : []), { text: "🔎 Google", url: `https://www.google.com/search?q=${q}` }, aoty(r.artist_name, r.album)],
+    [bandcampButton(links, r.artist_name, r.album),
+      links.youtube_album ? { text: "YouTube (альбом)", url: links.youtube_album } : { text: "🔎 YouTube Music", url: `https://music.youtube.com/search?q=${q}` }],
+    [aoty(r.artist_name, r.album)],
     MARK_ROW(r.id),
     [{ text: "🔔 Следить", callback_data: `f:${r.id}` }, { text: "📚 Все обзоры", callback_data: `ar:${r.id}` }],
     // the AI's mood guess gets the channel card's vote (да / нет, «другое» asks all four); without one, a button asks

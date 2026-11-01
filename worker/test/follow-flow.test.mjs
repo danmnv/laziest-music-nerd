@@ -313,7 +313,8 @@ test("an album without a review can be put off: it shows in «📌 Отложе�
   const card = calls.find((x) => x.method === "sendPhoto");
   const btns = card.reply_markup.inline_keyboard;
   assert.deepEqual(btns.find((r) => r[0].callback_data === `m:${BENDS}:later`).map((b) => b.text), ["• Отложить", "✓ Слушал", "✗ Не моё"]);
-  assert.ok(btns.flat().some((b) => b.text === "🔎 Google"));
+  assert.ok(btns.flat().some((b) => b.text === "🔎 Bandcamp" && b.url === "https://bandcamp.com/search?q=Radiohead%20The%20Bends&item_type=a"));
+  assert.ok(btns.filter((row) => row[0].url).every((row) => row.length <= 2)); // three links in a row get cut on a phone
   await press(OWNER, `m:${BENDS}:later`);
   calls = [];
   await say(OWNER, "📌 Отложенные");

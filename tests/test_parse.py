@@ -76,7 +76,8 @@ class ParseTest(unittest.TestCase):
         newer = [dict(r, id=f"n{i}", album=f"Newer {i}", published=f"2027-01-{i + 1:02d}T10:00:00Z") for i in range(30)]
         txt = card.pinned_text([r] + newer)
         self.assertNotIn("Dopamine Chamber", txt)  # the 31st from the top is gone
-        self.assertEqual(txt.count("\n") - 2, 29)
+        self.assertEqual(txt.count("Newer "), 30)
+        self.assertIn('<a href="https://t.me/laziest_music_nerd_bot">Бот</a>: поиск по архиву', txt)
         self.assertTrue(txt.startswith("<b>Последние 30 обзоров Фантано</b>"))
         self.assertLess(txt.index("Newer 29"), txt.index("Newer 0"))
         with mock.patch.object(card, "WORKER_LIVE", True), mock.patch.object(card, "BOT_USERNAME", "bot"):
