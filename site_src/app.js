@@ -36,9 +36,17 @@
     document.querySelectorAll("li[data-id]").forEach((li) => { const m = marks[li.dataset.id]; li.querySelector(".st").textContent = m && m.status ? ICON[m.status] : ""; });
   }
 
+  // Word scores (NOT GOOD, CLASSIC) need smaller type to fit the list's badge column.
+  const markLong = (scope) => scope.querySelectorAll(".rows .score").forEach((b) => b.classList.toggle("long", b.textContent.trim().length > 4));
+  markLong(document);
+  // A cover the CDN won't serve leaves the layout without the empty frame.
+  document.querySelectorAll(".release .cover").forEach((img) => { img.onerror = () => img.remove(); if (img.complete && !img.naturalWidth) img.remove(); });
+
   // ---- release page: my marks + public average ----
   const rel = document.querySelector(".release");
   if (rel) {
+    // Links to the album itself look solid, buttons that only search look dashed (as "🔎" in the bot).
+    rel.querySelectorAll(":scope > .btns .btn").forEach((b) => b.classList.add(b.textContent.trim().startsWith("🔎") ? "look" : "go"));
     const id = rel.dataset.id, box = rel.querySelector(".mine");
     api("/api/public").then((d) => {
       const a = d.avg && d.avg[id];
@@ -70,7 +78,19 @@
   if (!list) return;
   const q = document.getElementById("q"), fs = document.getElementById("fscore"), fg = document.getElementById("fgenre"),
     fy = document.getElementById("fyear"), fh = document.getElementById("fhide"), fo = document.getElementById("fsort"),
-    more = document.getElementById("more");
+    more = document.getElementById("more"), count = document.getElementById("count");
+  const reviews = (n) => n + " " + (n % 10 === 1 && n % 100 !== 11 ? "обзор" : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? "обзора" : "обзоров");
+  // "Скрыть прослушанное" only means something after login: marks are per Telegram account.
+  fh.closest("label").hidden = !token;
+  // Filters live in the address (?q=…&score=…), so Back from a release page and a shared link keep them.
+  const FIELDS = { q, score: fs, genre: fg, year: fy, sort: fo };
+  const params = new URLSearchParams(location.search);
+  function saveState() {
+    const p = new URLSearchParams();
+    Object.entries(FIELDS).forEach(([k, el]) => { if (el.value && !(k === "sort" && el.value === "new")) p.set(k, el.value); });
+    const s = p.toString();
+    history.replaceState(null, "", location.pathname + (s ? "?" + s : "") + location.hash);
+  }
   let all = [], shown = 50;
   const colorOf = (x) => x.ng ? "red" : x.cl ? "green" : x.s == null ? "none" : x.s >= 8 ? "green" : x.s >= 5 ? "neutral" : "red";
   const labelOf = (x) => x.tr ? "трек" : x.ng ? "NOT GOOD" : x.cl ? "CLASSIC" : x.s == null ? "?" : x.s;
@@ -78,7 +98,9 @@
   const fold = (s) => String(s).normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/&/g, "and").replace(/[^\p{L}\p{N}]+/gu, "");
   const rank = (x) => x.ng ? 0 : x.cl ? 11 : x.s == null ? -1 : x.s;
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  let loaded = false;
   function render() {
+    if (!loaded) return; // marks can arrive before the catalog; the catalog's own render comes next
     const words = q.value.split(/\s+/).map(fold).filter(Boolean), sc = fs.value, g = fg.value, y = fy.value, hide = fh.checked && token;
     const rows = all.filter((x) =>
       (!words.length || words.every((w) => x.f.includes(w))) &&
@@ -87,20 +109,30 @@
       (!hide || !(marks[x.i] && marks[x.i].status === "done")));
     if (fo.value === "score") rows.sort((a, b) => rank(b) - rank(a) || b.d.localeCompare(a.d));
     list.innerHTML = rows.slice(0, shown).map((x) =>
-      `<li data-id="${esc(x.i)}"><span class="score ${colorOf(x)}">${labelOf(x)}</span> <a href="${root}a/${esc(x.k)}.html">${esc(x.a)}</a> — <a href="${root}r/${esc(x.i)}.html">${esc(x.t)}</a>` +
-      `<span class="muted"> ${esc([x.g[0], x.d.slice(0, 4), x.gu ? "гостевой" : ""].filter(Boolean).join(" · "))}</span><span class="st">${marks[x.i] && marks[x.i].status ? ICON[marks[x.i].status] : ""}</span></li>`).join("") || "<li>Ничего не нашлось.</li>";
+      `<li data-id="${esc(x.i)}"><span class="score ${colorOf(x)}">${labelOf(x)}</span><span class="t"><a class="ar" href="${root}a/${esc(x.k)}.html">${esc(x.a)}</a><span class="sep"> — </span><a href="${root}r/${esc(x.i)}.html">${esc(x.t)}</a></span>` +
+      `<span class="muted">${esc([x.g[0], "обзор " + x.d.slice(0, 4), x.gu ? "гостевой" : ""].filter(Boolean).join(" · "))}</span><span class="st">${marks[x.i] && marks[x.i].status ? ICON[marks[x.i].status] : ""}</span></li>`).join("") || '<li class="empty">Ничего не нашлось. Попробуй меньше слов или сбрось фильтры.</li>';
     more.hidden = rows.length <= shown;
+    markLong(list);
+    count.textContent = rows.length === all.length ? `Всего ${reviews(all.length)}` : `Найдено: ${reviews(rows.length)}`;
+    saveState();
   }
   fetch(root + "catalog.json").then((r) => r.json()).then((d) => {
     all = d.filter((x) => x.a);
+    loaded = true;
     all.forEach((x) => { x.f = fold(x.a) + "|" + fold(x.t); });
     const genres = {}; all.forEach((x) => x.g.forEach((g) => genres[g] = (genres[g] || 0) + 1));
     Object.entries(genres).filter(([, n]) => n >= 5).sort((a, b) => b[1] - a[1]).slice(0, 150)
       .forEach(([g]) => fg.insertAdjacentHTML("beforeend", `<option>${esc(g)}</option>`));
     [...new Set(all.map((x) => x.d.slice(0, 4)))].sort().reverse().forEach((yr) => fy.insertAdjacentHTML("beforeend", `<option>${yr}</option>`));
+    // A genre from a shared link may be outside the top-150 list: add it, so the list matches what the sender saw.
+    const pg = params.get("genre");
+    if (pg && ![...fg.options].some((o) => o.value === pg)) fg.add(new Option(pg, pg));
+    Object.entries(FIELDS).forEach(([k, el]) => { if (params.get(k)) el.value = params.get(k); });
     render();
+    if (location.hash === "#search") q.focus({ preventScroll: true });
   });
   [q, fs, fg, fy, fh, fo].forEach((el) => el.addEventListener("input", () => { shown = 50; render(); }));
   more.onclick = () => { shown += 100; render(); };
+  window.addEventListener("hashchange", () => { if (location.hash === "#search") q.focus({ preventScroll: true }); });
   loadMarks().then(render);
 })();
