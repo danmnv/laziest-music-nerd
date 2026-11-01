@@ -40,6 +40,9 @@ jobs:
           TELEGRAM_CHANNEL: ${{ secrets.TELEGRAM_CHANNEL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      - name: Temporary live check (other ratings)
+        run: python probe_ratings.py
+        continue-on-error: true
       - run: |
           mkdir -p /tmp/data && echo '{"seeded": true}' > /tmp/data/state.json
           python -m lmn.check
