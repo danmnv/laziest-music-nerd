@@ -15,6 +15,7 @@ MODEL = MODELS[0]
 BUDGET_SEC = 240      # per review, all models and retries together, so a slow day can't eat the hourly run
 CALL_TIMEOUT = 90
 ABOUT_MAX = 560   # the site's longer brief ("about"); the prompt asks for 500
+BRIEF_MAX = 240   # the card's short brief; the prompt asks for 220
 # When to listen; the same list and order as MOODS in worker/src/index.js (buttons carry the index, votes the words).
 MOODS = ["для тренировки", "для настроения", "для работы за столом", "для тусовки", "в дорогу", "на прогулку", "ночью",
          "перед сном", "когда грустно", "когда злишься", "в наушниках, вдумчиво", "фоном", "для романтики", "для бодрости"]
@@ -23,7 +24,7 @@ _unavailable = set()  # models found used up for today (or closed) during this r
 
 PROMPT = """Ты помогаешь вести русскоязычный Telegram-канал о музыкальных обзорах Anthony Fantano (The Needle Drop).
 {source} Ответь строго JSON-объектом с полями:
-- "brief": 1–2 предложения на русском, своими словами: что за релиз и что Фантано о нём думает. Не цитируй обзор, не переводи его дословно. До 220 символов.
+- "brief": 1–2 предложения на русском, своими словами: что за релиз и что Фантано о нём думает. Не цитируй обзор, не переводи его дословно. До 220 символов. Оценку пиши числом («7/10»), слова light, decent, strong не переводи.
 - "about": 3–4 предложения на русском, своими словами, для страницы сайта: что за релиз, что Фантано в нём хвалит, что ругает и к чему пришёл. Не цитируй обзор, не переводи его дословно. До 500 символов.
 - "who": 1 строка на русском о том, кто исполнитель (жанр/сцена, откуда, какой это по счёту релиз, если ясно из текста). Только факты из текста; если не ясно — пустая строка. До 140 символов.
 - "moods": список из 1–2 вариантов ровно из этого набора: {moods}. Когда лучше всего слушать этот релиз: исходи из жанра, звучания и настроения, которые описывает обзор (тяжёлый и злой — не «фоном», тихий и грустный — не «для тусовки»).
@@ -104,6 +105,13 @@ def parse_answer(text):
     out["moods"] = [m for m in out.get("moods") or [] if m in MOODS][:2]
     note = str(out.get("score_note") or "").strip().lower()
     out["score_note"] = note if NOTE.match(note) else None
+    brief = str(out.get("brief") or "").strip()
+    if len(brief) > BRIEF_MAX:  # too long for the card: whole sentences that fit, if they still say what Fantano thinks
+        cut = brief[:BRIEF_MAX]
+        cut = cut[:cut.rfind(". ") + 1] if ". " in cut else ""
+        if "Фантано" in cut:
+            brief = cut
+    out["brief"] = brief or None
     about = str(out.get("about") or "").strip()
     if len(about) > ABOUT_MAX:  # cut at the last full sentence that fits
         cut = about[:ABOUT_MAX]

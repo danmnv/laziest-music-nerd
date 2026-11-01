@@ -22,6 +22,15 @@ class ParseAnswer(unittest.TestCase):
         self.assertTrue(out["about"].endswith("."))
         self.assertEqual(out["moods"], ["для работы за столом"])
 
+    def test_a_long_card_brief_keeps_whole_sentences_only_if_fantanos_view_stays(self):
+        long_ = dict(ANSWER, brief="Новый альбом группы, где она пробует синт-фанк и поп. Фантано считает запись интересной. " + "Ещё слова. " * 20)
+        out = gemini.parse_answer(json.dumps(long_))["brief"]
+        self.assertLessEqual(len(out), gemini.BRIEF_MAX)
+        self.assertTrue(out.startswith("Новый альбом группы, где она пробует синт-фанк и поп. Фантано считает запись интересной."))
+        self.assertTrue(out.endswith("."))
+        one = dict(ANSWER, brief="Новый альбом " + "очень " * 40 + "длинный; Фантано доволен.")
+        self.assertEqual(gemini.parse_answer(json.dumps(one))["brief"], one["brief"])  # cutting would lose his view
+
     def test_moods_are_the_same_list_as_the_bots(self):
         import re
         js = (Path(__file__).parent.parent / "worker/src/index.js").read_text()

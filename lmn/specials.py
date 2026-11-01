@@ -148,16 +148,18 @@ def run():
     ups = all_uploads()
     npath = DATA / "notes.json"
     old_notes = json.loads(npath.read_text()) if npath.exists() else {}
-    # no new lookups after 22 minutes: the step's limit is 40, and up to 3 Gemini videos (~4 min each) come after
-    deadline = time.monotonic() + 60 * float(os.environ.get("LOOKUP_MINUTES", "22"))
-    nt = notes.build(ups, archive, old_notes, int(os.environ.get("NOTES_DEEZER_LIMIT", "1500")),
-                     int(os.environ.get("NOTES_APPLE_LIMIT", "200")), deadline)
-    npath.write_text("{\n" + ",\n".join(json.dumps(k) + ": " + json.dumps(nt[k], ensure_ascii=False, separators=(",", ":"))
-                                          for k in sorted(nt)) + "\n}\n")
+    # no new lookups after LOOKUP_MINUTES: the step's limit is 55, and up to 3 Gemini videos (~4 min each) come after.
+    # The albums first (they fill the archive pages), with about half of that time; then the favourite tracks.
+    start, minutes = time.monotonic(), float(os.environ.get("LOOKUP_MINUTES", "35"))
     apath = DATA / "albums.json"
-    al = notes.albums(archive, json.loads(apath.read_text()) if apath.exists() else {}, int(os.environ.get("ALBUMS_LIMIT", "1500")), deadline)
+    al = notes.albums(archive, json.loads(apath.read_text()) if apath.exists() else {}, int(os.environ.get("ALBUMS_LIMIT", "1500")),
+                      start + 60 * minutes / 2)
     apath.write_text("{\n" + ",\n".join(json.dumps(k) + ": " + json.dumps(al[k], ensure_ascii=False, separators=(",", ":"))
                                           for k in sorted(al)) + "\n}\n")
+    nt = notes.build(ups, archive, old_notes, int(os.environ.get("NOTES_DEEZER_LIMIT", "1500")),
+                     int(os.environ.get("NOTES_APPLE_LIMIT", "200")), start + 60 * minutes)
+    npath.write_text("{\n" + ",\n".join(json.dumps(k) + ": " + json.dumps(nt[k], ensure_ascii=False, separators=(",", ":"))
+                                          for k in sorted(nt)) + "\n}\n")
     lists = []
     for u in ups:
         label = list_kind(u["title"])
