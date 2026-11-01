@@ -93,7 +93,8 @@ def run():
     limit = int(os.environ.get("BRIEFS_LIMIT", "300"))
     todo = targets(archive, reviews, {k for k, v in data.items() if finished(v)})
     print(f"briefs: {sum(1 for v in data.values() if v.get('brief'))} done, {len(todo)} to do, this run up to {limit}")
-    made = failed = in_row = tried = 0
+    made = failed = tried = 0
+    streak = []  # (id, previous entry) of the failures in a row
     deadline = time.monotonic() + 60 * float(os.environ.get("BRIEFS_MINUTES", "100"))
     for a, text in texts(todo):  # the whole list, lazily: skipped ones don't use up the limit
         if tried >= limit:
@@ -103,6 +104,9 @@ def run():
             break
         if text is None:
             continue
+        if not llm.available():  # no key, or every provider gave up: the setup's fault, not this review's
+            print("::warning::no model available (keys missing, wrong or out of quota), stopping")
+            break
         if len(text) < MIN_TEXT:
             data[a["id"]] = {"skip": "no text" if not text else "short"}  # remembered, so it isn't fetched every run
             continue
@@ -111,14 +115,19 @@ def run():
         if out and (out.get("brief") or "").strip():
             data[a["id"]] = entry(out)
             made += 1
-            in_row = 0
+            streak = []
             if made % 25 == 0:
                 save(path, data)  # a timeout later in the run keeps what is done
         else:
+            streak.append((a["id"], data.get(a["id"])))
             data[a["id"]] = {"fail": (data.get(a["id"]) or {}).get("fail", 0) + 1}  # given up after FAIL_MAX runs
             failed += 1
-            in_row += 1
-            if in_row >= GIVE_UP:
+            if len(streak) >= GIVE_UP:  # likely an outage, not these reviews: their failures are not counted
+                for k, prev in streak:
+                    if prev is None:
+                        data.pop(k, None)
+                    else:
+                        data[k] = prev
                 print(f"::warning::no model answered {GIVE_UP} times in a row, stopping")
                 break
     save(path, data)

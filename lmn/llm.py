@@ -62,6 +62,11 @@ def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotoni
     return None
 
 
+def available():
+    """Some provider has a key and has not been given up on in this run."""
+    return any(p[0] not in _dead and (os.environ.get(p[2]) or "").strip() for p in PROVIDERS)
+
+
 def summarize(title, text, **kw):
     """The first provider that answers."""
     for p in PROVIDERS:

@@ -86,6 +86,7 @@ class Run(unittest.TestCase):
             texts = {"a" * 24: "long text " * 100, "e" * 24: "too short"}
             with mock.patch.object(briefs, "DATA", p), \
                     mock.patch.object(briefs.tnd, "fetch_texts", side_effect=lambda ids: {i: texts.get(i, "") for i in ids}) as ft, \
+                    mock.patch.object(briefs.llm, "available", return_value=True), \
                     mock.patch.object(briefs.llm, "summarize", return_value=dict(gemini.parse_answer(json.dumps(ANSWER)), model="m")) as s:
                 briefs.run()
             self.assertEqual(ft.call_args[0][0], ["a" * 24, "e" * 24])  # no guest, song, done or YouTube-only review
@@ -105,6 +106,7 @@ class Run(unittest.TestCase):
             answers = [None, dict(ANSWER, model="m")]  # d fails again, b gets one; the limit is 2 tries
             with mock.patch.object(briefs, "DATA", p), mock.patch.dict(os.environ, {"BRIEFS_LIMIT": "2"}), \
                     mock.patch.object(briefs.tnd, "fetch_texts", side_effect=lambda ids: {i: texts[i] for i in ids}), \
+                    mock.patch.object(briefs.llm, "available", return_value=True), \
                     mock.patch.object(briefs.llm, "summarize", side_effect=answers):
                 briefs.run()
             out = json.loads((p / "briefs.json").read_text())
@@ -113,6 +115,23 @@ class Run(unittest.TestCase):
             self.assertEqual(out["b" * 24]["brief"], "Коротко.")
             self.assertNotIn("a" * 24, out)
             self.assertTrue(all(briefs.finished(out[k]) for k in ("d" * 24, "c" * 24, "b" * 24)))
+
+    def test_no_key_or_an_outage_marks_no_review(self):
+        archive = [{"id": c * 24, "artist_name": c, "album": c, "published": f"2020-01-0{i + 1}"} for i, c in enumerate("abcdef")]
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(archive))
+            with mock.patch.object(briefs, "DATA", p), \
+                    mock.patch.object(briefs.tnd, "fetch_texts", side_effect=lambda ids: {i: "x " * 300 for i in ids}):
+                with mock.patch.object(briefs.llm, "available", return_value=False), mock.patch.object(briefs.llm, "summarize") as s:
+                    briefs.run()
+                    s.assert_not_called()
+                self.assertEqual(json.loads((p / "briefs.json").read_text()), {})
+                with mock.patch.object(briefs.llm, "available", return_value=True), \
+                        mock.patch.object(briefs.llm, "summarize", return_value=None) as s:
+                    briefs.run()
+                    self.assertEqual(s.call_count, briefs.GIVE_UP)
+                self.assertEqual(json.loads((p / "briefs.json").read_text()), {})
 
     def test_tnd_down_is_not_remembered(self):
         archive = [{"id": "a" * 24, "artist_name": "A", "album": "B", "published": "2020-01-01"}]
