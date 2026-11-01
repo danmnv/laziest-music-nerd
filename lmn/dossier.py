@@ -103,6 +103,11 @@ def lookup(mbid):
             "extract": first_paragraph(s.get("extract")), "members": cur, "past_members": past}
 
 
+def save(path, store):
+    lines = [json.dumps(k) + ": " + json.dumps(store[k], ensure_ascii=False, separators=(",", ":")) for k in sorted(store)]
+    path.write_text("{\n" + ",\n".join(lines) + "\n}\n")
+
+
 def run():
     limit = int(os.environ.get("DOSSIER_LIMIT", "200"))
     now = datetime.now(timezone.utc)
@@ -132,9 +137,10 @@ def run():
         store[m] = {"checked": now.isoformat(timespec="seconds"), **entry}
         found += bool(entry)
         done += 1
+        if done % 20 == 0:  # a run cut off by its time limit still keeps what it found
+            save(path, store)
         time.sleep(0.3)
-    lines = [json.dumps(k) + ": " + json.dumps(store[k], ensure_ascii=False, separators=(",", ":")) for k in sorted(store)]
-    path.write_text("{\n" + ",\n".join(lines) + "\n}\n")
+    save(path, store)
     print(f"dossier: checked {done}, article found {found}; stored {len(store)}")
 
 
