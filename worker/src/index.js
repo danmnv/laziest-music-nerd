@@ -820,6 +820,9 @@ async function sendLater(env, uid) {
 }
 
 // 30-second previews from Deezer: the tracks Fantano singled out first, then the most played ones.
+// Links only: Deezer's developer guidelines forbid making audio data downloadable or storing it, and sending the mp3
+// through sendAudio would do both (Telegram keeps the file and offers it for download). 30-second extract URLs may be
+// shown to the user. They are signed and expire after a few hours, so the message is made fresh on each press.
 async function sendPreviews(env, uid, id) {
   const r = (await reviews(env)).find((x) => x.id === id);
   let artist, album;
@@ -832,18 +835,16 @@ async function sendPreviews(env, uid, id) {
   if (!artist) return fail();
   const dz = await deezerAlbum(artist, album);
   if (!dz || !dz.id) return fail();
-  const list = ((await deezerJson(`album/${dz.id}/tracks?limit=100`)).data || []).filter((t) => t.preview);
+  const list = ((await deezerJson(`album/${dz.id}/tracks?limit=100`)).data || []).filter((t) => /^https:\/\//.test(t.preview || ""));
   if (!list.length) return fail();
   const fav = new Set(((r && r.ai && r.ai.best_tracks) || []).map(nameKey));
   const picked = list.filter((t) => fav.has(nameKey(t.title)))
     .concat([...list].sort((a, b) => (b.rank || 0) - (a.rank || 0)))
     .filter((t, i, all) => all.indexOf(t) === i).slice(0, 3);
-  const caption = `${artist} — ${album}: отрывки по 30 секунд из Deezer`;
-  const audio = (t) => ({ title: t.title, performer: (t.artist && t.artist.name) || artist });
-  if (picked.length === 1) return tg(env, "sendAudio", { chat_id: uid, audio: picked[0].preview, ...audio(picked[0]), caption });
-  return tg(env, "sendMediaGroup", { // one block of 2-3 players instead of three separate messages
-    chat_id: uid,
-    media: picked.map((t, i) => ({ type: "audio", media: t.preview, ...audio(t), ...(i === picked.length - 1 ? { caption } : {}) })),
+  return tg(env, "sendMessage", {
+    chat_id: uid, parse_mode: "HTML",
+    text: `<b>${esc(artist)} — ${esc(album)}</b>: отрывки по 30 секунд из Deezer. Ссылки работают несколько часов; потом нажми «▶ Отрывки» ещё раз.`,
+    reply_markup: { inline_keyboard: picked.map((t) => [{ text: `▶ ${t.title}`.slice(0, 64), url: t.preview }]) },
   });
 }
 

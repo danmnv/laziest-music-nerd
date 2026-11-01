@@ -306,10 +306,10 @@ test("an album without a review can be put off: it shows in «📌 Отложе�
   assert.match(list.text, /^Отложено: 1\./);
   assert.deepEqual(list.reply_markup.inline_keyboard, [[{ text: "• Radiohead — The Bends", callback_data: `mb:${BENDS}` }]]);
   calls = [];
-  await press(OWNER, `pv:${BENDS}`); // one track: a single audio
-  const a = calls.find((c) => c.method === "sendAudio");
-  assert.equal(a.audio, "https://cdn/b1.mp3");
-  assert.equal(a.title, "Fake Plastic Trees");
+  await press(OWNER, `pv:${BENDS}`);
+  const a = calls.find((c) => c.method === "sendMessage");
+  assert.deepEqual(a.reply_markup.inline_keyboard, [[{ text: "▶ Fake Plastic Trees", url: "https://cdn/b1.mp3" }]]);
+  assert.ok(!calls.some((c) => ["sendAudio", "sendMediaGroup"].includes(c.method)), "Deezer forbids handing out audio files");
 });
 
 test("a reviewed album: previews (most played first), «Когда слушать?», and a put-off one in the list", async () => {
@@ -318,9 +318,10 @@ test("a reviewed album: previews (most played first), «Когда слушат�
   assert.ok(btns.some((b) => b.text === "🔔 Следить") && btns.some((b) => b.text === "📚 Все обзоры"));
   calls = [];
   await press(OWNER, "pv:k");
-  const g = calls.find((c) => c.method === "sendMediaGroup");
-  assert.deepEqual(g.media.map((m) => m.media), ["https://cdn/p3.mp3", "https://cdn/p1.mp3", "https://cdn/p2.mp3"]);
-  assert.equal(g.media[2].caption, "Radiohead — Kid A: отрывки по 30 секунд из Deezer");
+  const g = calls.find((c) => c.method === "sendMessage");
+  assert.deepEqual(g.reply_markup.inline_keyboard.map((r) => [r[0].text, r[0].url]),
+    [["▶ Idioteque", "https://cdn/p3.mp3"], ["▶ Everything in Its Right Place", "https://cdn/p1.mp3"], ["▶ Kid A", "https://cdn/p2.mp3"]]);
+  assert.match(g.text, /^<b>Radiohead — Kid A<\/b>: отрывки по 30 секунд из Deezer\./);
   calls = [];
   await press(OWNER, "mq:k");
   const m = calls.find((c) => c.method === "sendMessage");
