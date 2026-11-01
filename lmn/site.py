@@ -149,11 +149,13 @@ def archive_page(a, artist_reviews, rt=None):
     return page(f"{a['artist_name']} — {a['album']}", body, depth=1)
 
 
+def reviews_word(n):
+    return f"{n} " + ("обзор" if n % 10 == 1 and n % 100 != 11 else "обзора" if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14) else "обзоров")
+
+
 def artist_page(name, items):
-    n = len(items)
-    word = "обзор" if n % 10 == 1 and n % 100 != 11 else "обзора" if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14) else "обзоров"
     body = f"""<h1>{e(name)}</h1>
-<p class="muted">{n} {word} Фантано</p>
+<p class="muted">{reviews_word(len(items))} Фантано</p>
 {history_list(items, None, 1)}"""
     return page(name, body, depth=1)
 
@@ -260,7 +262,7 @@ def build():
     recent = card.recent(reviews)
     items = "".join(recent_item(r) for r in recent)
     body = f"""<section class="intro"><h1>Обзоры Фантано без лишних кликов</h1>
-<p>Оценки Anthony Fantano, жанры и где послушать. {len(cat)} обзоров с 2010 года.</p></section>
+<p>Оценки Anthony Fantano, жанры и где послушать. {reviews_word(len(cat))} с 2010 года.</p></section>
 <h2 id="fresh">Свежее за 60 дней</h2><ul id="recent" class="list rows">{items or '<li>Пока пусто.</li>'}</ul>
 <h2 id="catalog-h">Каталог</h2>
 <div class="filters" id="search">

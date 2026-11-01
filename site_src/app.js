@@ -124,6 +124,9 @@
     Object.entries(genres).filter(([, n]) => n >= 5).sort((a, b) => b[1] - a[1]).slice(0, 150)
       .forEach(([g]) => fg.insertAdjacentHTML("beforeend", `<option>${esc(g)}</option>`));
     [...new Set(all.map((x) => x.d.slice(0, 4)))].sort().reverse().forEach((yr) => fy.insertAdjacentHTML("beforeend", `<option>${yr}</option>`));
+    // A genre from a shared link may be outside the top-150 list: add it, so the list matches what the sender saw.
+    const pg = params.get("genre");
+    if (pg && ![...fg.options].some((o) => o.value === pg)) fg.add(new Option(pg, pg));
     Object.entries(FIELDS).forEach(([k, el]) => { if (params.get(k)) el.value = params.get(k); });
     render();
     if (location.hash === "#search") q.focus({ preventScroll: true });
