@@ -98,7 +98,9 @@ class CriticsTest(unittest.TestCase):
         html_ = site.archive_page(a, [a], self.RT)
         self.assertIn("<dt>Критики</dt><dd>Metacritic 80 · Pitchfork 10/10 · AllMusic 4.5/5", html_)
         self.assertIn('href="https://en.wikipedia.org/wiki/Kid_A">по данным Википедии</a>', html_)
-        self.assertNotIn("<dl>", site.archive_page(a, [a]))
+        bare = site.archive_page(a, [a])  # only the hidden mood row, filled by app.js from visitors' votes
+        self.assertIn('<dl><dt class="moods-h" hidden>Когда слушать</dt><dd class="moods" hidden></dd></dl>', bare)
+        self.assertNotIn("<dt>", bare)
 
 
 if __name__ == "__main__":

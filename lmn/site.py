@@ -174,7 +174,9 @@ def archive_page(a, artist_reviews, rt=None, lists=None, note=None):
     others = [x for x in artist_reviews if x["id"] != a["id"]]
     hist = (f'<h2>Фантано об этом артисте</h2>{history_list(artist_reviews, a["id"], 1)}' if others else "")
     rows = notes_rows(note, a["id"]) + lists_rows(lists) + critics_rows(rt, a)
-    dl = f"<dl>{''.join(f'<dt>{k}</dt><dd>{v}</dd>' for k, v in rows)}</dl>" if rows else ""
+    # the mood row stays hidden until app.js fills it from visitors' votes (/api/public)
+    dl = (f"<dl>{''.join(f'<dt>{k}</dt><dd>{v}</dd>' for k, v in rows)}"
+          '<dt class="moods-h" hidden>Когда слушать</dt><dd class="moods" hidden></dd></dl>')
     body = f"""<article class="release" data-id="{e(a['id'])}">
 <h1><a href="../a/{slug(a['artist_name'])}.html">{e(a['artist_name'])}</a> — {e(a['album'])}</h1>
 <p>{score_badge(a)} <span class="muted">{e(meta)}</span></p>
