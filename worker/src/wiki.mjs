@@ -127,31 +127,41 @@ export function parse(text) {
     const prm = params(whole);
     const region = REGIONS[clean(prm.region).toLowerCase()];
     const award = clean(prm.award), mult = clean(prm.number);
-    if (region && award) sales.push(`${region} ${/^\d+$/.test(mult) && mult !== "1" ? mult + "× " : ""}${award}`);
+    const line = `${region} ${/^\d+$/.test(mult) && mult !== "1" ? mult + "× " : ""}${award}`;
+    if (region && award && !sales.includes(line)) sales.push(line); // digital and physical tables can repeat one award
   }
   return { crit, sales };
 }
 
 // The article about this album, accepted only when its album infobox names the same album and artist; then its lines.
+async function wp(params) {
+  const r = await fetch(`${WP_API}?${new URLSearchParams({ format: "json", formatversion: "2", ...params })}`,
+    { headers: { "User-Agent": UA }, cf: { cacheTtl: 86400 } });
+  return r.ok ? r.json() : {};
+}
+
+// The article about this album, accepted only when its album infobox names the same album and artist; then its lines.
+// Titles first, then one article's text at a time: three full articles in one response can cost the Worker too much CPU.
 export async function wikiCritics(artist, album) {
   const na = norm(artist), nal = norm(album);
   if (!nal) return null;
   try {
-    const q = new URLSearchParams({ action: "query", format: "json", formatversion: "2", generator: "search",
-      gsrsearch: `${album} ${artist} album`, gsrlimit: "3", prop: "revisions", rvprop: "content", rvslots: "main" });
-    const r = await fetch(`${WP_API}?${q}`, { headers: { "User-Agent": UA }, cf: { cacheTtl: 86400 } });
-    if (!r.ok) return null;
-    const pages = ((await r.json()).query || {}).pages || [];
-    for (const p of pages.sort((a, b) => (a.index || 99) - (b.index || 99))) {
+    const found = ((await wp({ action: "query", list: "search", srsearch: `${album} ${artist} album`, srlimit: "3", srprop: "" })).query || {}).search || [];
+    const titles = found.map((x) => x.title)
+      .sort((a, b) => (norm(b.replace(/\s*\(.*\)$/, "")) === nal) - (norm(a.replace(/\s*\(.*\)$/, "")) === nal)) // the album's own title first
+      .slice(0, 2);
+    for (const title of titles) {
+      const pages = ((await wp({ action: "query", prop: "revisions", rvprop: "content", rvslots: "main", titles: title })).query || {}).pages || [];
+      const p = pages[0] || {};
       const text = p.revisions && p.revisions[0] && p.revisions[0].slots && p.revisions[0].slots.main.content;
       const ib = text && template(text, ["infobox album", "infobox mixtape", "infobox ep"]);
       if (!ib) continue;
       const prm = params(ib);
-      const names = [norm(clean(prm.name)), norm(p.title.replace(/\s*\(.*\)$/, ""))];
+      const names = [norm(clean(prm.name)), norm(String(p.title || title).replace(/\s*\(.*\)$/, ""))];
       const art = norm(clean(prm.artist));
       if (names.includes(nal) && art && na && (art.includes(na) || na.includes(art))) {
         const out = parse(text);
-        return out.crit.length || out.sales.length ? { ...out, wp_url: "https://en.wikipedia.org/wiki/" + encodeURIComponent(p.title.replace(/ /g, "_")) } : null;
+        return out.crit.length || out.sales.length ? { ...out, wp_url: "https://en.wikipedia.org/wiki/" + encodeURIComponent(String(p.title || title).replace(/ /g, "_")) } : null;
       }
     }
   } catch (e) {

@@ -343,7 +343,8 @@ async function deezerAlbum(artist, album) {
   }
 }
 
-const untitled = (t) => String(t || "").replace(/^["“]|["”]$/g, "").replace(/\s*[([].*$/, ""); // "Kid A (Remastered)" -> "Kid A"
+// "Kid A (Remastered)" -> "Kid A"; only a trailing bracket group goes, so "(What's the Story) Morning Glory?" stays whole
+const untitled = (t) => String(t || "").replace(/^["“]|["”]$/g, "").replace(/\s*[([][^)\]]*[)\]]\s*$/, "");
 
 async function deezerJson(path) {
   try {
@@ -401,7 +402,7 @@ async function sendDeezerAlbum(env, uid, id) {
   const arch = await archive(env);
   const k = nameKey(artist);
   const t = nameKey(untitled(d.title));
-  const reviewed = arch.find((a) => nameKey(a.artist_name) === k && nameKey(untitled(a.album)) === t);
+  const reviewed = t && arch.find((a) => nameKey(a.artist_name) === k && nameKey(untitled(a.album)) === t);
   if (reviewed) return sendAlbum(env, uid, reviewed, "");
   const rt = await wikiCritics(artist, untitled(d.title));
   const year = /^\d{4}/.test(d.release_date || "") ? d.release_date.slice(0, 4) : "";

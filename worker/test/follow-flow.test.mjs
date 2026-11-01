@@ -65,10 +65,17 @@ beforeEach(() => {
       return new Response(JSON.stringify({ id: 20, title: "The Bends", artist: { name: "Radiohead" }, release_date: "1995-03-13", nb_tracks: 12,
         duration: 2928, record_type: "album", genres: { data: [{ name: "Alternative" }] }, cover_xl: "https://cdn/bends.jpg", link: "https://www.deezer.com/album/20" }));
     }
+    if (String(url).startsWith("https://en.wikipedia.org/w/api.php") && String(url).includes("list=search")) {
+      return new Response(JSON.stringify({ query: { search: [{ title: "Radiohead discography" }, { title: "The Bends" }] } }));
+    }
+    if (String(url).startsWith("https://en.wikipedia.org/w/api.php") && !String(url).includes("titles=The+Bends")) {
+      return new Response(JSON.stringify({ query: { pages: [{ title: "Radiohead discography", revisions: [{ slots: { main: { content: "no infobox" } } }] }] } }));
+    }
     if (String(url).startsWith("https://en.wikipedia.org/w/api.php")) {
       const text = "{{Infobox album\n| name = The Bends\n| type = studio\n| artist = [[Radiohead]]\n}}\n" +
         "{{Music ratings\n| rev1 = [[AllMusic]]\n| rev1score = {{Rating|5|5}}\n| rev2 = [[Pitchfork (website)|Pitchfork]]\n| rev2score = 10/10\n| rev3 = Some Blog\n| rev3score = 9/10\n}}\n" +
-        "{{Album chart|Billboard200|88}}\n{{Album chart|UK2|4}}\n";
+        "{{Album chart|Billboard200|88}}\n{{Album chart|UK2|4}}\n" +
+        "{{Certification Table Entry|region=United Kingdom|award=Platinum|number=4}}\n{{Certification Table Entry|region=United Kingdom|award=Platinum|number=4}}\n";
       return new Response(JSON.stringify({ query: { pages: [{ index: 1, title: "The Bends", revisions: [{ slots: { main: { content: text } } }] }] } }));
     }
     if (String(url).startsWith("https://api.deezer.com/search/album")) {
@@ -212,7 +219,7 @@ test("an artist's albums without Fantano's review, and a card for one of them", 
   const c = calls.find((x) => x.method === "sendPhoto");
   assert.equal(c.photo, "https://cdn/bends.jpg");
   assert.equal(c.caption, '<b>Radiohead — The Bends</b> (1995)\n⚪ Фантано не обозревал · Alternative · 12 треков · 49 мин' +
-    '\nКритики: Pitchfork 10/10 · AllMusic 5/5 (<a href="https://en.wikipedia.org/wiki/The_Bends">Википедия</a>)\nЧарты и продажи: US #88 · UK #4');
+    '\nКритики: Pitchfork 10/10 · AllMusic 5/5 (<a href="https://en.wikipedia.org/wiki/The_Bends">Википедия</a>)\nЧарты и продажи: US #88 · UK #4 · UK 4× Platinum');
   const btns = c.reply_markup.inline_keyboard.flat();
   assert.ok(btns.some((b) => b.text === "Все платформы" && b.url === "https://album.link/https://www.deezer.com/album/20"));
   assert.ok(btns.some((b) => b.callback_data === "f:k"));
