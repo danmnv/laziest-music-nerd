@@ -51,6 +51,7 @@ beforeEach(() => {
     if (String(url) === "https://site/rt/k.json") {
       return new Response(JSON.stringify({ crit: ["Metacritic 91", "Pitchfork 10/10"], sales: ["US #1", "UK #1"], wp_url: "https://en.wikipedia.org/wiki/Kid_A" }));
     }
+    if (String(url) === "https://site/wtb.json") return new Response(JSON.stringify([{ artist: "Radiohead", video_id: "uu8sC7YDOZg", date: "2017-04-17" }]));
     if (String(url).startsWith("https://site/rt/")) return new Response("not found", { status: 404 });
     if (String(url).startsWith("https://musicbrainz.org/") && mbDown) return new Response("busy", { status: 503 });
     if (String(url).startsWith("https://musicbrainz.org/ws/2/release-group?artist=R&") && String(url).includes("offset=100")) {
@@ -206,7 +207,7 @@ test("typing a name in the private chat searches Fantano's archive", async () =>
   await say(OWNER, "radiohead");
   const list = calls.find((c) => c.method === "sendMessage");
   assert.equal(list.text, "Radiohead — 2 обзора Фантано:");
-  assert.deepEqual(list.reply_markup.inline_keyboard.map((r) => r[0].callback_data), ["a:k", "a:p", "da:k"]);
+  assert.deepEqual(list.reply_markup.inline_keyboard.map((r) => r[0].callback_data || r[0].url), ["a:k", "a:p", "da:k", "https://youtu.be/uu8sC7YDOZg"]);
   assert.equal(list.reply_markup.inline_keyboard[0][0].text, "🟢 10/10 · Kid A · обзор 2020");
   calls = [];
   await press(OWNER, "ar:p"); // "Все обзоры артиста" on any of their cards
@@ -241,7 +242,8 @@ test("without a Deezer match the card is text with Google instead of all service
 test("an artist's albums without Fantano's review, and a card for one of them", async () => {
   await say(OWNER, "radiohead");
   const list = calls.find((c) => c.method === "sendMessage");
-  assert.deepEqual(list.reply_markup.inline_keyboard.at(-1)[0], { text: "💿 Другие альбомы (без обзора Фантано)", callback_data: "da:k" });
+  assert.deepEqual(list.reply_markup.inline_keyboard.at(-2)[0], { text: "💿 Другие альбомы (без обзора Фантано)", callback_data: "da:k" });
+  assert.deepEqual(list.reply_markup.inline_keyboard.at(-1)[0], { text: "🎬 Radiohead: от худшего к лучшему (2017)", url: "https://youtu.be/uu8sC7YDOZg" });
   calls = [];
   await press(OWNER, "da:k");
   const other = calls.find((c) => c.method === "sendMessage");

@@ -103,3 +103,11 @@ class CriticsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Lists(unittest.TestCase):
+    def test_rows_link_each_video(self):
+        a = {"id": "okc", "url": "https://tnd/okc", "published": "2017-01-01", "artist_name": "Radiohead", "album": "OK Computer", "score": 10}
+        b = [{"text": "№1 из 9 в «Radiohead: от худшего к лучшему» (2017)", "url": "https://www.youtube.com/watch?v=uu8&t=984"}]
+        self.assertIn('<dt>У Фантано в списках</dt><dd>🏆 <a href="https://www.youtube.com/watch?v=uu8&amp;t=984">№1 из 9 в «Radiohead: от худшего к лучшему» (2017)</a></dd>',
+                      site.archive_page(a, [a], None, b))

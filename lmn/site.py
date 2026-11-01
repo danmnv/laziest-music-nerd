@@ -8,7 +8,7 @@ import unicodedata
 import urllib.parse
 from pathlib import Path
 
-from . import card, tnd
+from . import card, specials, tnd
 from .colors import color, label
 from .musicbrainz import norm
 
@@ -124,6 +124,13 @@ def contested(a, rt):
     return f"Фантано {a['score']}/10, критики {avg:g}/10 ({src})"
 
 
+def lists_rows(badges):
+    """Fantano's lists and rankings the album is in (lmn/specials.py), each linking to its video."""
+    if not badges:
+        return []
+    return [("У Фантано в списках", "<br>".join(f'🏆 <a href="{e(b["url"])}">{e(b["text"])}</a>' for b in badges))]
+
+
 def critics_rows(rt, a=None):
     rows = []
     sp = contested(a or {}, rt)
@@ -138,7 +145,7 @@ def critics_rows(rt, a=None):
     return rows
 
 
-def archive_page(a, artist_reviews, rt=None):
+def archive_page(a, artist_reviews, rt=None, lists=None):
     """A release page for a review the bot never posted a card for: what the archive knows, the artist's other
     reviews, and the reader's marks."""
     review = f"https://youtu.be/{a['video_id']}" if a.get("video_id") else a["url"]
@@ -150,7 +157,7 @@ def archive_page(a, artist_reviews, rt=None):
                                     "гостевой обзор" if a.get("guest") else None] if x)
     others = [x for x in artist_reviews if x["id"] != a["id"]]
     hist = (f'<h2>Фантано об этом артисте</h2>{history_list(artist_reviews, a["id"], 1)}' if others else "")
-    rows = critics_rows(rt, a)
+    rows = lists_rows(lists) + critics_rows(rt, a)
     dl = f"<dl>{''.join(f'<dt>{k}</dt><dd>{v}</dd>' for k, v in rows)}</dl>" if rows else ""
     body = f"""<article class="release" data-id="{e(a['id'])}">
 <h1><a href="../a/{slug(a['artist_name'])}.html">{e(a['artist_name'])}</a> — {e(a['album'])}</h1>
@@ -190,7 +197,7 @@ def dossier_rows(d):
     return rows
 
 
-def release_page(r, rt=None, wiki=None):
+def release_page(r, rt=None, wiki=None, lists=None):
     c = color(r.get("score"), r.get("not_good"), r.get("classic"))
     a = r.get("artist") or {}
     ai = r.get("ai") or {}
@@ -219,6 +226,7 @@ def release_page(r, rt=None, wiki=None):
     if r.get("tracks"):
         rows.append(("Треклист", "<ol>" + "".join(f"<li>{line.split('. ', 1)[1]}</li>" for line in card.tracklist(r)) + "</ol>"
                      + ('<span class="muted">★ — выделил Фантано</span>' if (r.get("ai") or {}).get("best_tracks") else "")))
+    rows += lists_rows(lists)
     rows += critics_rows(rt, r)
     if r.get("previous"):
         hist = "".join(f'<li><a href="{e(p["url"])}">{e(p["album"])}</a> — {label(p.get("score"), p.get("not_good"), p.get("classic"), "?")} <span class="muted">{e(p["published"][:4])}</span></li>' for p in r["previous"])
@@ -278,15 +286,22 @@ def build():
     enriched = {r["id"] for r in reviews}
     ratings = load("ratings.json", {})
     artists = load("artists.json", {})
+    sp = load("specials.json", {})
+    lists = specials.badges(sp)
+    (OUT / "wtb.json").write_text(json.dumps([{k: r[k] for k in ("artist", "video_id", "date")} for r in sp.get("rankings", [])],
+                                             ensure_ascii=False))  # the bot's artist lists link the "worst to best" video
     (OUT / "rt").mkdir(exist_ok=True)
     for a in by_id.values():
         rt = ratings.get(a["id"])
-        html_ = release_page(a, rt, artists.get((a.get("artist") or {}).get("mbid") or "")) if a["id"] in enriched else archive_page(a, by_artist[slug(a["artist_name"])], rt)
+        li = lists.get(a["id"])
+        html_ = (release_page(a, rt, artists.get((a.get("artist") or {}).get("mbid") or ""), li) if a["id"] in enriched
+                 else archive_page(a, by_artist[slug(a["artist_name"])], rt, li))
         (OUT / "r" / f"{a['id']}.html").write_text(html_)
         crit, sales = critics_parts(rt)
-        if crit or sales:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
+        if crit or sales or li:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
             (OUT / "rt" / f"{a['id']}.json").write_text(json.dumps(
-                {"crit": crit[:4], "sales": sales[:4], "wp_url": rt.get("wp_url"), "contested": contested(a, rt)}, ensure_ascii=False))
+                {"crit": crit[:4], "sales": sales[:4], "wp_url": (rt or {}).get("wp_url"), "contested": contested(a, rt),
+                 **({"lists": li[:4]} if li else {})}, ensure_ascii=False))
     for k, items in by_artist.items():
         (OUT / "a" / f"{k}.html").write_text(artist_page(items[0]["artist_name"], items))
     cat = sorted((catalog_entry(a) for a in by_id.values()), key=lambda x: x["d"], reverse=True)

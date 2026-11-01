@@ -182,7 +182,7 @@ async function onCallback(q, env) {
   } else if (parts[0] === "ar") {
     await answerNow();
     const r = artistReviews(await archive(env), parts[1]);
-    if (r.total) await tg(env, "sendMessage", { chat_id: uid, ...artistMessage(r.artist, r.total, r.items, 0) });
+    if (r.total) await tg(env, "sendMessage", { chat_id: uid, ...artistMessage(r.artist, r.total, r.items, 0, await rankingVideo(env, r.artist)) });
   } else if (parts[0] === "da") {
     await answerNow();
     const arch = await archive(env);
@@ -630,11 +630,22 @@ const reviewsWord = (n) => `${n} ${plural(n, "обзор", "обзора", "об
 const tracksWord = (n) => `${n} ${plural(n, "трек", "трека", "треков")}`;
 
 // One artist's reviews as buttons, newest first.
-function artistMessage(artist, total, items, others) {
+// Fantano's "Artist: Worst to Best" video for this artist, if he made one (site's wtb.json, from lmn/specials.py).
+async function rankingVideo(env, artist) {
+  try {
+    const r = await fetch(`${env.SITE_URL}/wtb.json`, { cf: { cacheTtl: 3600 } });
+    const v = r.ok ? (await r.json()).find((x) => nameKey(x.artist) === nameKey(artist)) : null;
+    return v ? { text: `🎬 ${short(v.artist)}: от худшего к лучшему (${v.date.slice(0, 4)})`.slice(0, 64), url: `https://youtu.be/${v.video_id}` } : null;
+  } catch {
+    return null;
+  }
+}
+
+function artistMessage(artist, total, items, others, video = null) {
   const head = `${artist} — ${reviewsWord(total)} Фантано` + (total > items.length ? ` (показаны ${items.length} новых)` : "") + ":";
   const tail = others ? `\n\nЕщё ${reviewsWord(others)} других артистов по этому запросу — уточни его, чтобы их увидеть.` : "";
   const more = items.length ? [[{ text: "💿 Другие альбомы (без обзора Фантано)", callback_data: `da:${items[0].id}` }]] : [];
-  return { text: head + tail, reply_markup: { inline_keyboard: albumButtons(items, false).concat(more) } };
+  return { text: head + tail, reply_markup: { inline_keyboard: albumButtons(items, false).concat(more, video ? [[video]] : []) } };
 }
 
 // A search answers with a card, one artist's albums, a few albums, or a choice of artists first.
@@ -651,7 +662,7 @@ async function search(env, uid, query) {
     return tg(env, "sendMessage", { chat_id: uid, text: `Не нашёл обзора Фантано по запросу «${query.slice(0, 100)}». Попробуй имя артиста или название альбома.` });
   }
   if (r.kind === "card") return sendAlbum(env, uid, r.item, "");
-  if (r.kind === "albums" && r.artist) return tg(env, "sendMessage", { chat_id: uid, ...artistMessage(r.artist, r.total, r.items, r.others) });
+  if (r.kind === "albums" && r.artist) return tg(env, "sendMessage", { chat_id: uid, ...artistMessage(r.artist, r.total, r.items, r.others, await rankingVideo(env, r.artist)) });
   if (r.kind === "albums") return tg(env, "sendMessage", { chat_id: uid, text: `Нашёл ${r.total}:`, reply_markup: { inline_keyboard: albumButtons(r.items, true) } });
   return tg(env, "sendMessage", {
     chat_id: uid,
