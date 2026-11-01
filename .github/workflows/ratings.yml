@@ -1,0 +1,45 @@
+name: Оценки критиков из Википедии
+on:
+  schedule:
+    - cron: "41 3 * * *"   # раз в день; свежие обзоры перепроверяются чаще, старые — раз в 3–6 месяцев
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Сколько обзоров проверить за запуск (400 ≈ 10 минут)"
+        default: "400"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ratings
+  cancel-in-progress: false
+
+jobs:
+  ratings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Собрать оценки
+        timeout-minutes: 50
+        run: python -m lmn.ratings
+        env:
+          RATINGS_LIMIT: ${{ inputs.limit || '400' }}
+      - name: Сохранить
+        if: ${{ always() }}
+        run: |
+          git config user.name "laziest-music-nerd-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/ratings.json
+          git diff --cached --quiet && exit 0
+          git commit -q -m "data: оценки критиков"
+          for i in 1 2 3 4; do  # the hourly check may have pushed meanwhile
+            git pull --rebase -q origin main && git push -q origin HEAD:main && exit 0
+            git rebase --abort 2>/dev/null || true
+            sleep $((i * 5))
+          done
+          echo "::error::Не смог сохранить оценки в main"; exit 1
