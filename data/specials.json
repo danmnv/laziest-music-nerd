@@ -4030,24 +4030,192 @@
 "title": "Kanye West: Worst To Best",
 "artist": "Kanye West",
 "date": "2017-03-13",
-"verified": false,
-"items": []
+"verified": true,
+"items": [
+{
+"album": "Cruel Summer",
+"place": 9,
+"t": 68,
+"review": null
+},
+{
+"album": "Yeezus",
+"place": 8,
+"t": 139,
+"review": "6684c32c49ea2a054e091830"
+},
+{
+"album": "Watch the Throne",
+"place": 7,
+"t": 215,
+"review": null
+},
+{
+"album": "The Life of Pablo",
+"place": 6,
+"t": 338,
+"review": "6684c32c49ea2a054e092364"
+},
+{
+"album": "Graduation",
+"place": 5,
+"t": 459,
+"review": null
+},
+{
+"album": "808s & Heartbreak",
+"place": 4,
+"t": 614,
+"review": null
+},
+{
+"album": "Late Registration",
+"place": 3,
+"t": 767,
+"review": null
+},
+{
+"album": "My Beautiful Dark Twisted Fantasy",
+"place": 2,
+"t": 850,
+"review": "6684c32c49ea2a054e09254d"
+},
+{
+"album": "The College Dropout",
+"place": 1,
+"t": 1001,
+"review": null
+}
+],
+"checked": "2026-11-01T23:10:40+00:00"
 },
 {
 "video_id": "uu8sC7YDOZg",
 "title": "Radiohead: Worst To Best",
 "artist": "Radiohead",
 "date": "2017-04-17",
-"verified": false,
-"items": []
+"verified": true,
+"items": [
+{
+"album": "The King of Limbs",
+"place": 9,
+"t": 35,
+"review": "6684c32c49ea2a054e090d22"
+},
+{
+"album": "Pablo Honey",
+"place": 8,
+"t": 118,
+"review": null
+},
+{
+"album": "Amnesiac",
+"place": 7,
+"t": 201,
+"review": null
+},
+{
+"album": "The Bends",
+"place": 6,
+"t": 330,
+"review": null
+},
+{
+"album": "Hail to the Thief",
+"place": 5,
+"t": 426,
+"review": null
+},
+{
+"album": "A Moon Shaped Pool",
+"place": 4,
+"t": 554,
+"review": "6684c32c49ea2a054e0920e6"
+},
+{
+"album": "Kid A",
+"place": 3,
+"t": 674,
+"review": "6684c32c49ea2a054e091ff8"
+},
+{
+"album": "In Rainbows",
+"place": 2,
+"t": 811,
+"review": null
+},
+{
+"album": "OK Computer",
+"place": 1,
+"t": 984,
+"review": null
+}
+],
+"checked": "2026-11-01T23:10:40+00:00"
 },
 {
 "video_id": "LTweat11TdE",
 "title": "MF DOOM: Worst to Best",
 "artist": "MF DOOM",
 "date": "2017-07-17",
-"verified": false,
-"items": []
+"verified": true,
+"items": [
+{
+"album": "Key to the Kuffs",
+"place": 9,
+"t": 102,
+"review": null
+},
+{
+"album": "Venomous Villain",
+"place": 8,
+"t": 250,
+"review": null
+},
+{
+"album": "Take Me to Your Leader",
+"place": 7,
+"t": 372,
+"review": null
+},
+{
+"album": "The Mouse and the Mask",
+"place": 6,
+"t": 448,
+"review": null
+},
+{
+"album": "Operation: Doomsday",
+"place": 5,
+"t": 656,
+"review": null
+},
+{
+"album": "Vaudeville Villain",
+"place": 4,
+"t": 784,
+"review": null
+},
+{
+"album": "Born Like This",
+"place": 3,
+"t": 897,
+"review": null
+},
+{
+"album": "Mm.. Food",
+"place": 2,
+"t": 1051,
+"review": null
+},
+{
+"album": "Madvillainy",
+"place": 1,
+"t": 1166,
+"review": null
+}
+],
+"checked": "2026-11-01T23:10:40+00:00"
 },
 {
 "video_id": "OGOO1os78z8",
