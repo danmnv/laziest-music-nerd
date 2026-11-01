@@ -100,10 +100,25 @@ def critics_parts(rt):
     return crit, sales
 
 
-def critics_rows(rt):
+def contested(a, rt):
+    """'Спорно' (spec, v2): Fantano's score and the critics' average are 4+ points apart on a 10-point scale.
+    The average is Metacritic/10, else the mean of 3+ numeric scores (data/ratings.json critic_avg10); text or None."""
+    if not rt or not rt.get("wp") or a.get("guest") or a.get("score") is None or rt.get("critic_avg10") is None:
+        return None
+    avg = rt["critic_avg10"]
+    if abs(a["score"] - avg) < 4:
+        return None
+    src = "Metacritic" if not rt.get("critic_avg_n") else f"среднее по {rt['critic_avg_n']} изданиям"
+    return f"Фантано {a['score']}/10, критики {avg:g}/10 ({src})"
+
+
+def critics_rows(rt, a=None):
+    rows = []
+    sp = contested(a or {}, rt)
+    if sp:
+        rows.append(("Спорно", f'<span class="contested">⚡ {e(sp)}</span>'))
     crit, sales = critics_parts(rt)
     src = f' <a class="muted" href="{e(rt["wp_url"])}">по данным Википедии</a>' if (crit or sales) and rt.get("wp_url") else ""
-    rows = []
     if crit:
         rows.append(("Критики", e(" · ".join(crit)) + src))
     if sales:
@@ -123,7 +138,7 @@ def archive_page(a, artist_reviews, rt=None):
                                     "гостевой обзор" if a.get("guest") else None] if x)
     others = [x for x in artist_reviews if x["id"] != a["id"]]
     hist = (f'<h2>Фантано об этом артисте</h2>{history_list(artist_reviews, a["id"], 1)}' if others else "")
-    rows = critics_rows(rt)
+    rows = critics_rows(rt, a)
     dl = f"<dl>{''.join(f'<dt>{k}</dt><dd>{v}</dd>' for k, v in rows)}</dl>" if rows else ""
     body = f"""<article class="release" data-id="{e(a['id'])}">
 <h1><a href="../a/{slug(a['artist_name'])}.html">{e(a['artist_name'])}</a> — {e(a['album'])}</h1>
@@ -174,7 +189,7 @@ def release_page(r, rt=None):
     if r.get("tracks"):
         rows.append(("Треклист", "<ol>" + "".join(f"<li>{line.split('. ', 1)[1]}</li>" for line in card.tracklist(r)) + "</ol>"
                      + ('<span class="muted">★ — выделил Фантано</span>' if (r.get("ai") or {}).get("best_tracks") else "")))
-    rows += critics_rows(rt)
+    rows += critics_rows(rt, r)
     if r.get("previous"):
         hist = "".join(f'<li><a href="{e(p["url"])}">{e(p["album"])}</a> — {label(p.get("score"), p.get("not_good"), p.get("classic"), "?")} <span class="muted">{e(p["published"][:4])}</span></li>' for p in r["previous"])
         rows.append(("История оценок", f"<ul>{hist}</ul>"))
@@ -240,7 +255,7 @@ def build():
         crit, sales = critics_parts(rt)
         if crit or sales:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
             (OUT / "rt" / f"{a['id']}.json").write_text(json.dumps(
-                {"crit": crit[:4], "sales": sales[:4], "wp_url": rt.get("wp_url")}, ensure_ascii=False))
+                {"crit": crit[:4], "sales": sales[:4], "wp_url": rt.get("wp_url"), "contested": contested(a, rt)}, ensure_ascii=False))
     for k, items in by_artist.items():
         (OUT / "a" / f"{k}.html").write_text(artist_page(items[0]["artist_name"], items))
     cat = sorted((catalog_entry(a) for a in by_id.values()), key=lambda x: x["d"], reverse=True)

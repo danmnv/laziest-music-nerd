@@ -81,6 +81,17 @@ class CriticsTest(unittest.TestCase):
         self.assertEqual(site.critics_parts({"checked": "x", "wp": None}), ([], []))
         self.assertEqual(site.critics_parts(None), ([], []))
 
+    def test_contested(self):
+        rt = dict(self.RT, critic_avg10=8.0, critic_avg_n=None)
+        self.assertEqual(site.contested({"score": 3}, rt), "Фантано 3/10, критики 8/10 (Metacritic)")
+        self.assertEqual(site.contested({"score": 9}, dict(rt, critic_avg10=4.5, critic_avg_n=6)), "Фантано 9/10, критики 4.5/10 (среднее по 6 изданиям)")
+        self.assertIsNone(site.contested({"score": 5}, rt))  # 3 points apart
+        self.assertIsNone(site.contested({"score": 3, "guest": True}, rt))
+        self.assertIsNone(site.contested({"score": None, "not_good": True}, rt))
+        self.assertIsNone(site.contested({"score": 3}, dict(rt, critic_avg10=None)))
+        a = {"id": "k", "url": "u", "published": "2020-01-01", "artist_name": "X", "album": "Y", "score": 3, "genres": []}
+        self.assertIn('<dt>Спорно</dt><dd><span class="contested">⚡ Фантано 3/10, критики 8/10 (Metacritic)</span>', site.archive_page(a, [a], rt))
+
     def test_archive_page_shows_them_with_attribution(self):
         a = {"id": "k", "url": "https://theneedledrop.com/x", "published": "2020-01-01", "artist_name": "Radiohead", "album": "Kid A",
              "score": 10, "not_good": False, "classic": False, "genres": []}
