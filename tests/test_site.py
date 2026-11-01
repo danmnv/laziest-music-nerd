@@ -30,6 +30,27 @@ class SiteTest(unittest.TestCase):
             self.assertEqual(cat[0]["s"], 8)
             self.assertIn(f'r/{r["id"]}.html', (out / "index.html").read_text())
 
+    def test_release_page_lists_the_artists_other_reviews(self):
+        r = tnd.parse_post(post("Swans - The Beggar", ["Album Reviews", "7/10", "post-rock"]))
+        r.update(previous=[{"album": "To Be Kind", "url": "https://theneedledrop.com/o2/", "score": 10, "published": "2014-05-01"}],
+                 previous_unsure=0, artist={}, links={})
+        older = {"id": "o2", "album": "To Be Kind", "score": 10, "published": "2014-05-01T00:00:00Z", "artist_name": "Swans"}
+        html_ = site.release_page(r, artist_reviews=[r, older])
+        self.assertNotIn("История оценок", html_)
+        self.assertNotIn("Фантано раньше", html_)  # the list below says it, each album linked to its page here
+        self.assertIn('<h2>Фантано об этом артисте</h2>', html_)
+        self.assertIn('<a href="../r/o2.html">To Be Kind</a>', html_)
+        first = site.release_page(dict(r, previous=[]), artist_reviews=[r])
+        self.assertIn("<dt>Фантано раньше</dt><dd>обозревает впервые", first)
+        self.assertNotIn("Фантано об этом артисте", first)
+
+    def test_archive_card_video_from_notes(self):
+        a = {"id": "k", "url": "https://theneedledrop.com/x", "published": "2022-08-18", "artist_name": "Black Thought & Danger Mouse",
+             "album": "Cheat Codes", "score": 8, "genres": []}
+        html_ = site.archive_page(a, [a], note={"video_id": "UeSwqepnAX0", "blurb": "b", "fav": []})
+        self.assertIn('<a class="btn" href="https://youtu.be/UeSwqepnAX0">▶ Видеообзор</a>', html_)
+        self.assertIn('>Текст обзора на TND</a>', html_)
+
     def test_pages_for_the_whole_archive_and_artists(self):
         with tempfile.TemporaryDirectory() as d:
             data, out = Path(d, "data"), Path(d, "out")
@@ -76,7 +97,7 @@ class CriticsTest(unittest.TestCase):
 
     def test_parts(self):
         crit, sales = site.critics_parts(self.RT)
-        self.assertEqual(crit, ["Metacritic 80", "Pitchfork 10/10", "AllMusic 4.5/5"])
+        self.assertEqual(crit, ["Pitchfork 10/10", "AllMusic 4.5/5", "Metacritic 80/100"])
         self.assertEqual(sales, ["US #1", "UK #1", "US Platinum"])
         self.assertEqual(site.critics_parts({"checked": "x", "wp": None}), ([], []))
         self.assertEqual(site.critics_parts(None), ([], []))
@@ -96,8 +117,16 @@ class CriticsTest(unittest.TestCase):
         a = {"id": "k", "url": "https://theneedledrop.com/x", "published": "2020-01-01", "artist_name": "Radiohead", "album": "Kid A",
              "score": 10, "not_good": False, "classic": False, "genres": []}
         html_ = site.archive_page(a, [a], self.RT)
-        self.assertIn("<dt>Критики</dt><dd>Metacritic 80 · Pitchfork 10/10 · AllMusic 4.5/5", html_)
-        self.assertIn('href="https://en.wikipedia.org/wiki/Kid_A">по данным Википедии</a>', html_)
+        # one outlet a line, authority order, linked to the review when Wikipedia cites it; the aggregators after them
+        self.assertIn('<dt>Критики</dt><dd><ul class="critics"><li>Pitchfork — 10/10</li><li>AllMusic — 4.5/5</li></ul></dd>'
+                      '<dt>Среднее по рецензиям</dt><dd>Metacritic 80/100</dd>', html_)
+        self.assertEqual(html_.count("источник: Википедия"), 1)
+        self.assertIn('href="https://en.wikipedia.org/wiki/Kid_A">источник: Википедия</a>', html_)
+        linked = dict(self.RT, critics=[{"outlet": "Pitchfork", "score": "10/10", "url": "https://pitchfork.com/r"},
+                                        {"outlet": "NME", "score": "5/5", "url": "javascript:alert(1)"}], mc_url="https://www.metacritic.com/m")
+        html_ = site.archive_page(a, [a], linked)
+        self.assertIn('<li><a href="https://pitchfork.com/r">Pitchfork</a> — 10/10</li><li>NME — 5/5</li>', html_)
+        self.assertIn('<a href="https://www.metacritic.com/m">Metacritic</a> 80/100', html_)
         bare = site.archive_page(a, [a])  # only the hidden mood row, filled by app.js from visitors' votes
         self.assertIn('<dl><dt class="moods-h" hidden>Когда слушать</dt><dd class="moods" hidden></dd></dl>', bare)
         self.assertNotIn("<dt>", bare)

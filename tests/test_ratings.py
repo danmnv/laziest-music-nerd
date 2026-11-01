@@ -59,13 +59,35 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(p["certs"][1], {"region": "US", "award": "2× Platinum"})
         self.assertEqual(p["certs"][2], {"region": "JP", "award": "", "sales": "12,000"})
         s = ratings.summarize(p)
-        self.assertEqual([c["outlet"] for c in s["critics"]], ["Pitchfork", "AllMusic", "NME", "Rolling Stone", "The Guardian"])
+        self.assertEqual([c["outlet"] for c in s["critics"]], ["Pitchfork", "AllMusic", "NME", "Rolling Stone", "The Guardian", "Entertainment Weekly"])
         self.assertEqual(s["critics"][1]["score"], "4.5/5")
         self.assertEqual(s["critics"][1]["s10"], 9.0)
         self.assertEqual(s["critic_avg10"], 9.5)  # Metacritic wins over own average
         e = dict(s, wp="Brat (album)")
         self.assertEqual(ratings.card_line(e), "Критики: Metacritic 95 · Pitchfork 9.3/10 · AllMusic 4.5/5 · NME 4/5 · Rolling Stone 4.5/5 · The Guardian 5/5")
         self.assertEqual(ratings.sales_line(e), "Чарты и сертификаты: US #3 · UK #1 · UK Platinum · US 2× Platinum · JP 12,000")
+
+    def test_review_links(self):
+        text = """{{Album ratings
+| MC = 90/100<ref name="MC">{{cite web |title=Popstar |url=https://www.metacritic.com/music/popstar/tinashe |website=[[Metacritic]]}}</ref>
+| rev1 = [[AllMusic]]
+| rev1Score = {{Rating|4.5|5}}<ref name=AM />
+| rev2 = ''[[Pitchfork (website)|Pitchfork]]''
+| rev2Score = 9.0/10<ref>{{cite web |url=https://pitchfork.com/reviews/albums/tinashe-popstar/ |archive-url=https://web.archive.org/x |title=Popstar}}</ref>
+| rev3 = ''[[Paste (magazine)|Paste]]''
+| rev3Score = B+<ref>[https://www.pastemagazine.com/music/tinashe-popstar Review]</ref>
+| rev4 = ''[[NME]]''
+| rev4Score = {{Rating|5|5}}
+}}
+Body.<ref name="AM">{{Cite web|archive-url=https://web.archive.org/y|url = https://www.allmusic.com/album/popstar-mw1|title=x}}</ref>"""
+        p = ratings.parse(text)
+        urls = {c["outlet"]: c.get("url") for c in p["critics"]}
+        self.assertEqual(urls, {"AllMusic": "https://www.allmusic.com/album/popstar-mw1", "Pitchfork": "https://pitchfork.com/reviews/albums/tinashe-popstar/",
+                                "Paste": "https://www.pastemagazine.com/music/tinashe-popstar", "NME": None})
+        s = ratings.summarize(p)
+        self.assertEqual(s["mc_url"], "https://www.metacritic.com/music/popstar/tinashe")
+        self.assertEqual(s["v"], ratings.VERSION)
+        self.assertEqual(s["critics"][0]["url"], "https://pitchfork.com/reviews/albums/tinashe-popstar/")
 
     def test_grades_and_words(self):
         self.assertEqual(ratings.to10("A−"), 9)
@@ -105,6 +127,10 @@ class ScheduleTest(unittest.TestCase):
         self.assertTrue(ratings.due({"checked": ago(8).isoformat()}, ago(40), now))
         self.assertFalse(ratings.due({"checked": ago(100).isoformat(), "wp": None}, ago(900), now))
         self.assertTrue(ratings.due({"checked": ago(100).isoformat(), "wp": "X"}, ago(900), now))
+        # stored before review links: an article is read again at once; no article, nothing to re-read
+        self.assertTrue(ratings.due({"checked": ago(1).isoformat(), "wp": "X"}, ago(900), now))
+        self.assertFalse(ratings.due({"checked": ago(1).isoformat(), "wp": "X", "v": ratings.VERSION}, ago(900), now))
+        self.assertFalse(ratings.due({"checked": ago(1).isoformat(), "wp": None}, ago(900), now))
 
     def test_run_keeps_old_data_when_search_misses(self):
         with tempfile.TemporaryDirectory() as d:

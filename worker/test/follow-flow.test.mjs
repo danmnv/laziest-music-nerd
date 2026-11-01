@@ -30,9 +30,11 @@ function d1(sqlite) {
 
 const [KIDA, BENDS, OKNOTOK, PABLO, TKOL, LUNG, UNDATED, AMNESIAC] = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => `0000000${n}-0000-4000-8000-000000000000`);
 let mbDown = false;
+let pinnedNow = null; // what getChat says is pinned in a private chat
 
 beforeEach(() => {
   mbDown = false;
+  pinnedNow = null;
   db = new DatabaseSync(":memory:");
   db.exec(readFileSync(new URL("../schema.sql", import.meta.url), "utf8"));
   db.prepare("INSERT INTO users (user_id, started_at) VALUES (?, ?)").run(OWNER, "2026-10-31");
@@ -42,6 +44,7 @@ beforeEach(() => {
   globalThis.fetch = async (url, opts) => {
     if (String(url).startsWith("https://api.telegram.org/")) {
       calls.push({ method: String(url).split("/").pop(), ...JSON.parse(opts.body) });
+      if (String(url).endsWith("/getChat")) return new Response(JSON.stringify({ ok: true, result: pinnedNow ? { pinned_message: { message_id: pinnedNow } } : {} }));
       return new Response(JSON.stringify({ ok: true, result: { message_id: 500 + calls.length } }));
     }
     if (String(url).endsWith("state.json")) return new Response(JSON.stringify({ channel_pinned_id: 2 }));
@@ -49,7 +52,7 @@ beforeEach(() => {
     if (String(url).endsWith("reviews.json")) return new Response(JSON.stringify([{ id: "old1", artist_name: "Shame", artist: { mbid: "S" } }, { id: "rk", artist_name: "Radiohead", artist: { mbid: "R" } }]));
     if (String(url).endsWith("archive.json")) return new Response(JSON.stringify(ARCHIVE));
     if (String(url) === "https://site/rt/k.json") {
-      return new Response(JSON.stringify({ crit: ["Metacritic 91", "Pitchfork 10/10"], sales: ["US #1", "UK #1"], wp_url: "https://en.wikipedia.org/wiki/Kid_A",
+      return new Response(JSON.stringify({ crit: ["Metacritic 91", "Pitchfork 10/10"], sales: ["US #1", "UK #1"], wp_url: "https://en.wikipedia.org/wiki/Kid_A", video_id: "kidavideo01",
         brief: "Radiohead уходят в электронику.", blurb: "Not shown when there is a brief.", moods: ["для работы за столом", "не то"] }));
     }
     if (String(url) === "https://site/wtb.json") return new Response(JSON.stringify([{ artist: "Radiohead", video_id: "uu8sC7YDOZg", date: "2017-04-17" }]));
@@ -230,6 +233,8 @@ test("one hit is sent as a full card: cover, length, all services, marks and fol
   assert.match(c.caption, /\nКритики: Metacritic 91 · Pitchfork 10\/10 \(<a href="https:\/\/en.wikipedia.org\/wiki\/Kid_A">Википедия<\/a>\)\nЧарты и продажи: US #1 · UK #1$/);
   const btns = c.reply_markup.inline_keyboard.flat();
   assert.ok(btns.some((b) => b.text === "Все платформы" && b.url === "https://album.link/https://www.deezer.com/album/9"));
+  // the archive has no video id for it, the site's per-review file has (from the video's page)
+  assert.deepEqual(c.reply_markup.inline_keyboard[0][0], { text: "▶ Видеообзор", url: "https://youtu.be/kidavideo01" });
   // the archive brief's mood guess: the channel card's vote, «другое» opens all four
   assert.match(c.caption, /\n<b>Когда слушать:<\/b> для работы за столом <i>\(догадка ИИ, поправь кнопками\)<\/i>/);
   assert.ok(btns.some((b) => b.text === "для работы за столом: да" && b.callback_data === "v:k:0:y"));
@@ -411,6 +416,34 @@ test("the pinned list in a private chat holds only what was put off, each a link
   await press(OTHER, `m:${BENDS}:done`);
   const empty = calls.filter((c) => c.method === "editMessageText" && c.chat_id === OTHER).pop();
   assert.match(empty.text, /Отложенных пока нет/);
+});
+
+test("putting off makes the pinned list in a private chat when there is none, and pins it again if it was unpinned", async () => {
+  db.prepare("INSERT INTO users (user_id, started_at) VALUES (?, ?)").run(OTHER, "2026-11-01");
+  await press(OTHER, "m:k:later");
+  const sent = calls.find((c) => c.method === "sendMessage" && c.chat_id === OTHER && /Отложено/.test(c.text));
+  assert.ok(sent, "the list is sent");
+  assert.ok(calls.some((c) => c.method === "pinChatMessage" && c.chat_id === OTHER));
+  const id = db.prepare("SELECT dm_pinned_id FROM users WHERE user_id=?").get(OTHER).dm_pinned_id;
+  assert.ok(id);
+  calls = [];
+  await press(OTHER, "m:k:nope"); // another mark only edits it
+  assert.ok(!calls.some((c) => c.method === "getChat" || c.method === "pinChatMessage" || (c.method === "sendMessage" && c.chat_id === OTHER)));
+  calls = [];
+  await press(OTHER, "m:k:later"); // unpinned by the person: pinned again, not sent again
+  assert.deepEqual(calls.filter((c) => c.method === "pinChatMessage").map((c) => c.message_id), [id]);
+  assert.ok(!calls.some((c) => c.method === "sendMessage" && c.chat_id === OTHER && /Отложено/.test(c.text)));
+  calls = [];
+  pinnedNow = id;
+  await press(OTHER, "m:k:nope");
+  await press(OTHER, "m:k:later"); // still pinned: nothing to do
+  assert.ok(!calls.some((c) => c.method === "pinChatMessage"));
+});
+
+test("putting off from the owner's account makes the owner's list too", async () => {
+  await press(OWNER, "m:k:later");
+  assert.ok(calls.some((c) => c.method === "sendMessage" && c.chat_id === OWNER && /Отложено/.test(c.text)));
+  assert.ok(calls.some((c) => c.method === "pinChatMessage" && c.chat_id === OWNER));
 });
 
 test("a link from a pinned list: the card in the private chat, the «/start» it sent removed", async () => {

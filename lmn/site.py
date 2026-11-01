@@ -103,12 +103,12 @@ def critics_parts(rt):
     Wikipedia article). Two lists of short strings; both empty when there's no article."""
     if not rt or not rt.get("wp"):
         return [], []
-    crit = []
+    # the outlets first, in ratings.PRIORITY order; the aggregators' averages after them (Daniil, 2026-11-01)
+    crit = [f"{c['outlet']} {c['score']}" for c in (rt.get("critics") or [])[:5] if c.get("outlet") and c.get("score")]
     if rt.get("metacritic") is not None:
-        crit.append(f"Metacritic {rt['metacritic']}")
+        crit.append(f"Metacritic {rt['metacritic']}/100")
     if rt.get("adm") is not None:
-        crit.append(f"AnyDecentMusic {rt['adm']:g}")
-    crit += [f"{c['outlet']} {c['score']}" for c in (rt.get("critics") or [])[:5] if c.get("outlet") and c.get("score")]
+        crit.append(f"AnyDecentMusic {rt['adm']:g}/10")
     sales = [f"{k} #{v}" for k, v in (rt.get("charts") or {}).items() if v]
     sales += [f"{c['region']} {c['award']}" for c in rt.get("certs") or [] if c.get("region") and c.get("award")]
     return crit, sales
@@ -192,20 +192,65 @@ def critics_rows(rt, a=None):
     if sp:
         rows.append(("Спорно", f'<span class="contested">⚡ {e(sp)}</span>'))
     crit, sales = critics_parts(rt)
-    src = f' <a class="muted" href="{e(rt["wp_url"])}">по данным Википедии</a>' if (crit or sales) and rt.get("wp_url") else ""
-    if crit:
-        rows.append(("Критики", e(" · ".join(crit)) + src))
+    if not (crit or sales):
+        return rows
+
+    def name(n, url):
+        return f'<a href="{e(url)}">{e(n)}</a>' if url and url.startswith(("https://", "http://")) else e(n)
+    own = []
+    # one outlet a line, in ratings.PRIORITY order (Pitchfork first), each linked to its review when Wikipedia cites it
+    outlets = [f'<li>{name(c["outlet"], c.get("url"))} — {e(c["score"])}</li>'
+               for c in rt.get("critics") or [] if c.get("outlet") and c.get("score")]
+    if outlets:
+        own.append(("Критики", f'<ul class="critics">{"".join(outlets)}</ul>'))
+    # the aggregators after the outlets: one number averaged from many reviews by the site's own rules
+    agg = []
+    if rt.get("metacritic") is not None:
+        agg.append(f'{name("Metacritic", rt.get("mc_url"))} {rt["metacritic"]}/100')
+    if rt.get("adm") is not None:
+        agg.append(f'AnyDecentMusic {rt["adm"]:g}/10')
+    if agg:
+        own.append(("Среднее по рецензиям", " · ".join(agg)))
     if sales:
-        rows.append(("Чарты и продажи", e(" · ".join(sales)) + src))
+        own.append(("Чарты и продажи", e(" · ".join(sales))))
+    # scores and links come from the album's Wikipedia article (CC BY-SA): one small source link, on the last row
+    if own and rt.get("wp_url"):
+        own[-1] = (own[-1][0], own[-1][1] + f' <span class="muted">· <a href="{e(rt["wp_url"])}">источник: Википедия</a></span>')
+    rows += own
+    return rows
+    # Scores and links come from the album's Wikipedia article (CC BY-SA), so a small source link stays.
+    src = f' <span class="muted">· <a href="{e(rt["wp_url"])}">источник: Википедия</a></span>' if rt.get("wp_url") else ""
+
+    def name(n, url):
+        return f'<a href="{e(url)}">{e(n)}</a>' if url and url.startswith(("https://", "http://")) else e(n)
+    # one outlet a line, in ratings.PRIORITY order (Pitchfork first), each linked to its review when Wikipedia cites it
+    outlets = [f'<li>{name(c["outlet"], c.get("url"))} — {e(c["score"])}</li>'
+               for c in (rt.get("critics") or [])[:ratings.SHOW_SITE] if c.get("outlet") and c.get("score")]
+    if outlets:
+        rows.append(("Критики", f'<ul class="critics">{"".join(outlets)}</ul>'))
+    # the aggregators after the outlets: an average of many reviews, weighted by Metacritic's own rules
+    agg = []
+    if rt.get("metacritic") is not None:
+        agg.append(f'{name("Metacritic", rt.get("mc_url"))} {rt["metacritic"]}/100')
+    if rt.get("adm") is not None:
+        agg.append(f'AnyDecentMusic {rt["adm"]:g}/10')
+    if agg:
+        rows.append(("Среднее по рецензиям", " · ".join(agg)))
+    if rows and rows[-1][0] in ("Критики", "Среднее по рецензиям"):
+        rows[-1] = (rows[-1][0], rows[-1][1] + src)
+        src = ""
+    if sales:
+        rows.append(("Чарты и продажи", e(" · ".join(sales)) + (src or (f' <span class="muted">· <a href="{e(rt["wp_url"])}">Википедия</a></span>' if rt.get("wp_url") else ""))))
     return rows
 
 
 def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, album=None):
     """A release page for a review the bot never posted a card for: what the archive knows, the artist's other
     reviews, and the reader's marks."""
-    review = f"https://youtu.be/{a['video_id']}" if a.get("video_id") else a["url"]
-    btns = [("▶ Видеообзор" if a.get("video_id") else "Обзор", review)]
-    if a.get("video_id") and "theneedledrop.com" in a["url"]:
+    vid = a.get("video_id") or (note or {}).get("video_id")  # most archive entries have it only from the video's page (lmn/notes.py)
+    review = f"https://youtu.be/{vid}" if vid else a["url"]
+    btns = [("▶ Видеообзор" if vid else "Обзор", review)]
+    if vid and "theneedledrop.com" in a["url"]:
         btns.append(("Текст обзора на TND", a["url"]))
     # what the bot's card shows for this album, from Deezer (data/albums.json, lmn/notes.py)
     album = album or {}
@@ -274,7 +319,7 @@ def dossier_rows(d):
     return rows
 
 
-def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None):
+def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None, artist_reviews=None):
     c = color(r.get("score"), r.get("not_good"), r.get("classic"))
     a = r.get("artist") or {}
     ai = r.get("ai") or {}
@@ -283,8 +328,9 @@ def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None):
     rows = []
     if ai.get("who"):
         rows.append(("Кто", e(ai["who"])))
+    others = [x for x in artist_reviews or [] if x["id"] != r["id"]]
     before = card.fantano_before(r)
-    if before:
+    if before and not others:  # with other reviews, they are listed below as on archive pages, each linked to its page
         rows.append(("Фантано раньше", before))
     if ai.get("brief"):  # the site has room for the longer one; the card in Telegram keeps the short one
         rows.append(("Бриф", e(ai.get("about") or ai["brief"])))
@@ -309,9 +355,6 @@ def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None):
     rows += notes_rows({"blurb": None if ai.get("brief") else (note or {}).get("blurb")}, r["id"])
     rows += lists_rows(lists)
     rows += critics_rows(rt, r)
-    if r.get("previous"):
-        hist = "".join(f'<li><a href="{e(p["url"])}">{e(p["album"])}</a> — {label(p.get("score"), p.get("not_good"), p.get("classic"), "?")} <span class="muted">{e(p["published"][:4])}</span></li>' for p in r["previous"])
-        rows.append(("История оценок", f"<ul>{hist}</ul>"))
     top, alls = card.link_rows(r)
     btns = "".join(f'<a class="btn" href="{e(u)}">{e(n)}</a>' for n, u in top + alls + [
         ("Текст обзора на TND", r.get("tnd_url") or (r["url"] if "theneedledrop.com" in r["url"] else None)),
@@ -329,6 +372,7 @@ def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None):
 <div class="mine" hidden></div>
 <p class="avg muted"></p>
 {fav_section(note, [t["title"] for t in r.get("tracks") or []])}
+{f'<h2>Фантано об этом артисте</h2>{history_list(artist_reviews, r["id"], 1)}' if others else ''}
 </article>"""
     return page(f"{r['artist_name']} — {r['album']}", body, depth=1)
 
@@ -381,7 +425,8 @@ def build():
         li = lists.get(a["id"])
         nt = notes.get(a["id"])
         br = briefs.get(a["id"])
-        html_ = (release_page(a, rt, artists.get((a.get("artist") or {}).get("mbid") or ""), li, nt, br) if a["id"] in enriched
+        html_ = (release_page(a, rt, artists.get((a.get("artist") or {}).get("mbid") or ""), li, nt, br, by_artist[slug(a["artist_name"])])
+                 if a["id"] in enriched
                  else archive_page(a, by_artist[slug(a["artist_name"])], rt, li, nt, br, albums.get(a["id"]) or None))
         (OUT / "r" / f"{a['id']}.html").write_text(html_)
         crit, sales = critics_parts(rt)
@@ -393,6 +438,7 @@ def build():
                 {"crit": crit[:4], "sales": sales[:4], "wp_url": (rt or {}).get("wp_url"), "contested": contested(a, rt),
                  **({"lists": li[:4]} if li else {}), **({"blurb": nt["blurb"]} if nt.get("blurb") else {}),
                  **({"brief": bf} if bf else {}), **({"moods": bm} if bm else {}),
+                 **({"video_id": nt["video_id"]} if nt.get("video_id") and not a.get("video_id") else {}),
                  **({"fav": [track_name(f["t"], fav_titles(a, albums.get(a["id"]))) for f in nt["fav"]], "fav_play": any(f.get("dz") or f.get("am") for f in nt["fav"])} if nt.get("fav") else {})},
                 ensure_ascii=False))
     for k, items in by_artist.items():
