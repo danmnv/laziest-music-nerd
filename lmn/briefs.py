@@ -107,29 +107,26 @@ def save(path, data):
 
 
 def compare(archive, reviews):
-    """The 10 newest reviews without a brief, written three ways, to choose how to write the archive's briefs: Groq in
-    Russian; Groq in English, translated by Gemini in one request; Gemini itself from the text (one request each).
-    Writes nothing; each row is printed as a "COMPARE {json}" log line and as a table in the run's summary."""
-    from . import deepl, gemini
+    """The 10 newest reviews without a brief, written in English by Groq and translated two ways, Gemini (one request
+    for all) and DeepL (DEEPL_API_KEY), to choose the translator. Writes nothing; each row is printed as a
+    "COMPARE {json}" log line and as a table in the run's summary. (Groq writing Russian itself, and Gemini writing the
+    brief alone, lost the first comparison on 2026-11-01.)"""
+    from . import deepl
     picked = [(a, t) for a, t in texts(targets(archive, reviews, set())[:12]) if t and len(t) >= MIN_TEXT][:10]
     rows = []
     for a, text in picked:
-        title = f"{a['artist_name']} - {a['album']}"
-        rows.append({"id": a["id"], "title": title, "score": a.get("score"),
-                     "groq_ru": llm.ask("groq", title, text) or {},
-                     "groq_en": llm.ask("groq", title, text, lang="en", verdict=verdict(a)) or {},
-                     "gemini": gemini.summarize(title, text=text) or {}})
-    tr = gemini.translate([r["groq_en"] for r in rows]) or [{} for _ in rows]
-    dl = deepl.translate([r["groq_en"] for r in rows]) or [{} for _ in rows]  # only with DEEPL_API_KEY
+        rows.append({"id": a["id"], "title": f"{a['artist_name']} - {a['album']}", "verdict": verdict(a),
+                     "en": llm.ask("groq", f"{a['artist_name']} - {a['album']}", text, lang="en", verdict=verdict(a)) or {}})
+    tr = gemini.translate([r["en"] for r in rows]) or [{} for _ in rows]
+    dl = deepl.translate([r["en"] for r in rows]) or [{} for _ in rows]
     for r, t, d in zip(rows, tr, dl):
-        r["groq_en_ru"], r["groq_en_deepl"] = t, d
+        r["gemini"], r["deepl"] = t, d
         print("COMPARE " + json.dumps(r, ensure_ascii=False))
 
     def cell(x):
-        return (f"{x.get('brief') or '—'}<br><br>{x.get('about') or '—'}<br><br>*{x.get('who') or ''}*").replace("|", "/")
-    md = ("| Обзор | Groq по-русски | Groq по-английски → Gemini | Groq по-английски → DeepL | Gemini сам |\n|---|---|---|---|---|\n"
-          + "\n".join(f"| {r['title']} ({r['score']}) | {cell(r['groq_ru'])} | {cell(r['groq_en_ru'])} | {cell(r['groq_en_deepl'])} | "
-                      f"{cell(r['gemini'])} |" for r in rows) + "\n")
+        return (f"{x.get('who') or '—'}<br><br>{x.get('brief') or '—'}<br><br>{x.get('about') or '—'}").replace("|", "/")
+    md = ("| Обзор | Перевод Gemini | Перевод DeepL |\n|---|---|---|\n"
+          + "\n".join(f"| {r['title']} | {cell(r['gemini'])} | {cell(r['deepl'])} |" for r in rows) + "\n")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a") as f:

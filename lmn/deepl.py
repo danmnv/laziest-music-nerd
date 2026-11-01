@@ -2,7 +2,7 @@
 Returns None on any failure, so the caller can fall back to Gemini (lmn/gemini.py translate)."""
 import os
 
-from . import http
+from . import gemini, http
 
 FIELDS = ("brief", "about", "who")
 
@@ -27,5 +27,6 @@ def translate(items, api_key=None):
     res = []
     for i, x in enumerate(items):
         got = out[i * len(FIELDS):(i + 1) * len(FIELDS)]
-        res.append({k: (t.strip() if x.get(k) else "") for k, t in zip(FIELDS, got)} | {"tr": "deepl"})
+        t = {k: (t.strip() if x.get(k) else "") for k, t in zip(FIELDS, got)}
+        res.append(t | {"brief": gemini.trim_brief(t["brief"]), "about": gemini.trim_about(t["about"]), "tr": "deepl"})
     return res
