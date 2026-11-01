@@ -5,6 +5,7 @@
 import { isDigestSunday } from "./digest.mjs";
 import { nameKey, followMatches } from "./follow.mjs";
 import { answerSearch, artistReviews, badge } from "./search.mjs";
+import { criticsText } from "./critics.mjs";
 
 const STATUS_LABEL = { later: "• отложено", done: "✓ прослушано", nope: "✗ не понравилось" };
 const STATUS_ICON = { later: " •", done: " ✓", nope: " ✗" };
@@ -386,14 +387,6 @@ async function criticsOf(env, id) {
   }
 }
 
-export function criticsText(rt) {
-  if (!rt) return "";
-  const src = rt.wp_url ? ` (<a href="${esc(rt.wp_url)}">Википедия</a>)` : "";
-  const lines = [];
-  if (rt.crit && rt.crit.length) lines.push(`Критики: ${esc(rt.crit.join(" · "))}${src}`);
-  if (rt.sales && rt.sales.length) lines.push(`Чарты и продажи: ${esc(rt.sales.join(" · "))}${lines.length ? "" : src}`);
-  return lines.length ? "\n" + lines.join("\n") : "";
-}
 
 function albumButtons(items, withArtist) {
   return items.map((a) => [{

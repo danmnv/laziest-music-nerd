@@ -46,11 +46,16 @@ def worker_url():
     return f.read_text().strip() if f.exists() else ""
 
 
+# Latin letters that NFKD doesn't split into a base letter + mark (so they'd be lost on the way to ASCII)
+TRANSLIT = str.maketrans({"ø": "o", "Ø": "O", "ı": "i", "æ": "ae", "Æ": "AE", "ß": "ss", "ł": "l", "Ł": "L", "đ": "d", "Đ": "D",
+                          "œ": "oe", "Œ": "OE", "þ": "th", "Þ": "TH", "ð": "d", "Ð": "D"})
+
+
 def slug(name):
     """The artist page's file name: the plain-Latin name (Björk -> bjork), or a hash when letters would be lost on
     the way to Latin (Кино, 坂本龍一 & X), so two such artists never share a page. Names that normalise alike
     ("Low", "LOW") share one, as in the bot's search."""
-    name = name or ""
+    name = (name or "").translate(TRANSLIT)
     lost = any(ch.isalpha() and not unicodedata.normalize("NFKD", ch).encode("ascii", "ignore") for ch in name)
     k = norm(name)
     return k[:60] if k and not lost else "x" + hashlib.sha1(name.encode()).hexdigest()[:10]

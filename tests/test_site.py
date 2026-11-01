@@ -69,6 +69,11 @@ class CriticsTest(unittest.TestCase):
           "adm": None, "critics": [{"outlet": "Pitchfork", "score": "10/10", "s10": 10}, {"outlet": "AllMusic", "score": "4.5/5", "s10": 9}],
           "charts": {"US": 1, "UK": 1}, "certs": [{"region": "US", "award": "Platinum"}]}
 
+    def test_slug_keeps_latin_letters_nfkd_cannot_split(self):
+        self.assertEqual(site.slug("Mø"), "mo")
+        self.assertEqual(site.slug("MØ"), "mo")
+        self.assertEqual(site.slug("Altın Gün"), "altingun")
+
     def test_parts(self):
         crit, sales = site.critics_parts(self.RT)
         self.assertEqual(crit, ["Metacritic 80", "Pitchfork 10/10", "AllMusic 4.5/5"])

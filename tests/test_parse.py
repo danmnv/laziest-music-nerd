@@ -125,6 +125,8 @@ class OldTitleTest(unittest.TestCase):
         self.assertEqual(tnd.tidy_album("Homeland | REVIEW"), "Homeland")
         self.assertEqual(tnd.tidy_album("Public Strain ‡"), "Public Strain")
         self.assertEqual(tnd.tidy_album("Black Review Club"), "Black Review Club")
+        self.assertEqual(tnd.tidy_album("Preview"), "Preview")
+        self.assertEqual(tnd.tidy_album("The Interview"), "The Interview")
         self.assertEqual(tnd.parse_title("Destroyer - Kaputt ‡ REVIEW")["album"], "Kaputt")
 
     def test_tracks(self):

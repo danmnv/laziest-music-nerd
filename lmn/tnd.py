@@ -67,7 +67,7 @@ def tidy_album(album):
     if not album:
         return album
     a = re.sub(r"\s*‡.*$", "", album)
-    a = re.sub(r"\s*\|?\s*\(?\s*(?:CLASSIC\s+|TRACK\s+)?REVIEW\s*\)?\s*$", "", a, flags=re.I)
+    a = re.sub(r"\s*\|?\s*\(?\s*\b(?:CLASSIC\s+|TRACK\s+)?REVIEW\s*\)?\s*$", "", a, flags=re.I)
     return a.strip() or album
 
 
