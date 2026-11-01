@@ -4748,5 +4748,189 @@
    "1d"
   ],
   "followers_told": true
+ },
+ {
+  "id": "DnG3IkbkGQ0",
+  "source": "youtube",
+  "slug": null,
+  "url": "https://www.youtube.com/watch?v=DnG3IkbkGQ0",
+  "title": "The Olivia Tremor Control - The Same Place ALBUM REVIEW",
+  "artist_name": "The Olivia Tremor Control",
+  "album": "The Same Place",
+  "published": "2026-11-01T04:41:41Z",
+  "score": null,
+  "not_good": false,
+  "classic": false,
+  "not_bad": false,
+  "score_note": null,
+  "type": null,
+  "genres": [
+   "'60s psych throwback",
+   "sound collage"
+  ],
+  "guest": true,
+  "loved": false,
+  "video_id": "DnG3IkbkGQ0",
+  "excerpt": "",
+  "thumb": "https://i.ytimg.com/vi/DnG3IkbkGQ0/maxresdefault.jpg",
+  "fav_tracks": [],
+  "least_fav_track": null,
+  "year": 2026,
+  "label": "ELEPHANT 6",
+  "listen_bandcamp": "https://oliviatremorcontrol.bandcamp.com/album/the-same-place",
+  "listen_url": "https://oliviatremorcontrol.bandcamp.com/album/the-same-place",
+  "ai": {
+   "brief": "Финальный, третий альбом легенд инди-сцены Elephant 6, работа над которым шла десятилетиями. Гиггинс высоко оценил релиз за теплоту, уютный психоделик-поп и эмоциональное завершение истории группы.",
+   "who": "Инди- и психоделик-поп коллектив из Афин, Джорджия. Третий и последний альбом группы.",
+   "moods": [
+    "для настроения"
+   ],
+   "best_tracks": [
+    "Begin Now",
+    "Time Waster",
+    "Garden of Light"
+   ]
+  },
+  "artist": {
+   "mbid": "d62842be-03d8-414b-a8d6-36f4b3b563ed",
+   "type": "Group",
+   "country": "US",
+   "area": "United States",
+   "begin": "1992",
+   "end": null,
+   "aliases": [
+    "Olivia Tremor Control",
+    "the olivia tremor control / black foliage"
+   ]
+  },
+  "links": {
+   "bandcamp": "https://oliviatremorcontrol.bandcamp.com/album/the-same-place",
+   "songlink": "https://album.link/https://www.deezer.com/album/1048612912",
+   "ytmusic": "https://music.youtube.com/search?q=The+Olivia+Tremor+Control+The+Same+Place"
+  },
+  "mb_release_group": "aad9d9ad-e610-4d2e-adee-3350c8251de9",
+  "duration_min": 70,
+  "tracks": [
+   {
+    "title": "Begin Now!",
+    "sec": 135
+   },
+   {
+    "title": "Advice From the Oceans",
+    "sec": 178
+   },
+   {
+    "title": "Timewaster",
+    "sec": 153
+   },
+   {
+    "title": "The Spinning Continuous",
+    "sec": 385
+   },
+   {
+    "title": "The Same Old Place",
+    "sec": 188
+   },
+   {
+    "title": "A Useful Planet, Partially Yellow",
+    "sec": 20
+   },
+   {
+    "title": "We Captured a Frame",
+    "sec": 254
+   },
+   {
+    "title": "Meeting Ourselves",
+    "sec": 198
+   },
+   {
+    "title": "Striping the Orchestra",
+    "sec": 4
+   },
+   {
+    "title": "½ Way Down",
+    "sec": 226
+   },
+   {
+    "title": "Now Begin",
+    "sec": 191
+   },
+   {
+    "title": "Have We Come Round Again?",
+    "sec": 23
+   },
+   {
+    "title": "California Demise 4",
+    "sec": 166
+   },
+   {
+    "title": "Path of the Parallels I - Follow the Path",
+    "sec": 68
+   },
+   {
+    "title": "Path of the Parallels II - It's Obvious",
+    "sec": 279
+   },
+   {
+    "title": "Path of the Parallels III - A River of White",
+    "sec": 227
+   },
+   {
+    "title": "Path of the Parallels IV - Membraned Wings",
+    "sec": 98
+   },
+   {
+    "title": "Path of the Parallels V - Universe Café",
+    "sec": 86
+   },
+   {
+    "title": "Path of the Parallels VI - Last Occupants",
+    "sec": 95
+   },
+   {
+    "title": "Path of the Parallels VII - The Same Place",
+    "sec": 195
+   },
+   {
+    "title": "Leaf",
+    "sec": 179
+   },
+   {
+    "title": "Seen It All",
+    "sec": 48
+   },
+   {
+    "title": "Garden of Light",
+    "sec": 225
+   },
+   {
+    "title": "It's Not Impossible for Golden Times",
+    "sec": 148
+   },
+   {
+    "title": "Mirrors Hear Us",
+    "sec": 26
+   },
+   {
+    "title": "Impressions Through the Ring",
+    "sec": 203
+   },
+   {
+    "title": "Fossil Faun",
+    "sec": 207
+   }
+  ],
+  "covers": [
+   "https://cdn-images.dzcdn.net/images/cover/614a067529cf07f23f7b8ebf7fe9dbd9/1000x1000-000000-80-0-0.jpg",
+   "https://coverartarchive.org/release-group/aad9d9ad-e610-4d2e-adee-3350c8251de9/front-500",
+   "https://i.ytimg.com/vi/DnG3IkbkGQ0/maxresdefault.jpg"
+  ],
+  "previous": [],
+  "previous_unsure": 0,
+  "tg_channel_msg": 5,
+  "tg_kind": "photo",
+  "tg_shown": "9c1b9fbbf7ef7248",
+  "refreshed": [],
+  "followers_told": true
  }
 ]
