@@ -13,6 +13,15 @@ class DossierTest(unittest.TestCase):
         text = "{{Музыкальный коллектив\n|Название = Кино\n|Состав = [[Виктор Цой]]<br>[[Юрий Каспарян]]\n|Бывшие участники = [[Алексей Рыбин]]\n}}"
         self.assertEqual(dossier.members(text), (["Виктор Цой", "Юрий Каспарян"], ["Алексей Рыбин"]))
 
+    def test_members_with_russian_link_templates(self):
+        text = ("{{Музыкальный коллектив\n|Название = The Olivia Tremor Control\n"
+                "|Состав = {{нп3|Досс, Билл|Билл Досс|en|Bill Doss}}<br>[[Харрис, Эрик|Эрик Харрис]]<br>{{нп3|Фернандес, Джон|Джон Фернандес}}\n"
+                "|Бывшие участники = [[Мэнгам, Джефф|Джефф Мэнгам]] (1992–1993)\n}}")
+        self.assertEqual(dossier.members(text), (["Билл Досс", "Эрик Харрис", "Джон Фернандес"], ["Джефф Мэнгам"]))
+
+    def test_hlist(self):
+        self.assertEqual(dossier.member_list("{{hlist|[[Thom Yorke]]|Ed O'Brien}}"), ["Thom Yorke", "Ed O'Brien"])
+
     def test_first_paragraph_is_cut_at_a_sentence(self):
         long = "A. " * 400
         self.assertTrue(dossier.first_paragraph(long).endswith("."))

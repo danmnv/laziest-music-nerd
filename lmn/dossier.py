@@ -47,13 +47,19 @@ def article(qid):
 
 
 def member_list(v):
-    """Names from an infobox value: '{{flatlist|* A * B}}', 'A<br>B', '[[A]], [[B]]'."""
-    v = re.sub(r"<br\s*/?>", "\n", v or "", flags=re.I)
-    v = re.sub(r"\{\{\s*(?:flat|plain|unbulleted|hlist)\s*list\s*\|", "", v, flags=re.I)
+    """Names from an infobox value: '{{flatlist|* [[A]] * [[B]]}}', 'A<br>B', '{{hlist|A|B}}', and Russian
+    '{{нп3|Досс, Билл|Билл Досс|en|Bill Doss}}' (the name as shown is the second parameter)."""
+    v = re.sub(r"<ref[^>]*/>|<ref.*?</ref>|<!--.*?-->", "", v or "", flags=re.S)
+    v = re.sub(r"\{\{\s*(?:нп\d?|не переведено \d?)\s*\|([^|}]*)(?:\|([^|}]*))?[^{}]*\}\}",
+               lambda m: (m.group(2) or m.group(1)).strip(), v, flags=re.I)
+    v = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]*)\]\]", r"\1", v)  # links: the text shown
+    v = re.sub(r"\(\s*[\d–—-]+[^)]*\)", "", v)  # years in brackets: "(1985–present)"
+    v = re.sub(r"<br\s*/?>", "\n", v, flags=re.I)
+    v = re.sub(r"\{\{\s*(?:flat|plain|unbulleted|hlist|bulleted)\s*list\s*\||\{\{\s*hlist\s*\|", "\n", v, flags=re.I)
     names = []
-    for part in re.split(r"\n|\*|•|·|,(?![^\[]*\]\])|\|", v):
-        n = clean(part).strip(" ,;}")
-        if n and len(n) <= 60 and n not in names:
+    for part in re.split(r"[\n*•·|]|,", v):
+        n = clean(part).strip(" ,;{}")
+        if n and len(n) <= 60 and not re.search(r"[{}\[\]=]", n) and n not in names:
             names.append(n)
     return names[:12]
 
