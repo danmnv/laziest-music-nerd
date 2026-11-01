@@ -127,10 +127,8 @@ class ScheduleTest(unittest.TestCase):
         self.assertTrue(ratings.due({"checked": ago(8).isoformat()}, ago(40), now))
         self.assertFalse(ratings.due({"checked": ago(100).isoformat(), "wp": None}, ago(900), now))
         self.assertTrue(ratings.due({"checked": ago(100).isoformat(), "wp": "X"}, ago(900), now))
-        # stored before review links: an article is read again at once; no article, nothing to re-read
-        self.assertTrue(ratings.due({"checked": ago(1).isoformat(), "wp": "X"}, ago(900), now))
-        self.assertFalse(ratings.due({"checked": ago(1).isoformat(), "wp": "X", "v": ratings.VERSION}, ago(900), now))
-        self.assertFalse(ratings.due({"checked": ago(1).isoformat(), "wp": None}, ago(900), now))
+        # stored before review links: not re-read early, the ordinary schedule brings them in
+        self.assertFalse(ratings.due({"checked": ago(1).isoformat(), "wp": "X"}, ago(900), now))
 
     def test_run_keeps_old_data_when_search_misses(self):
         with tempfile.TemporaryDirectory() as d:

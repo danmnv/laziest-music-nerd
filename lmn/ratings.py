@@ -34,7 +34,8 @@ PRIORITY = ["Pitchfork", "AllMusic", "NME", "Rolling Stone", "The Guardian", "Cl
             "The Daily Telegraph", "The Times", "Q", "Record Collector", "Sputnikmusic"]
 SHOW = 5  # on a Telegram card
 KEEP = 8  # stored, one a line on the site
-VERSION = 2  # what an entry holds; older entries with an article are re-read first (2: each review's link, mc_url)
+VERSION = 2  # what an entry holds (2: each review's link, mc_url). Older entries are not re-read on purpose (Daniil,
+# 2026-11-01: the outlet's home page is enough); they get the links at their ordinary re-check.
 # Home pages, the link when Wikipedia doesn't cite the review itself (the site's critics list)
 HOME = {"Pitchfork": "https://pitchfork.com", "AllMusic": "https://www.allmusic.com", "NME": "https://www.nme.com",
         "Rolling Stone": "https://www.rollingstone.com", "The Guardian": "https://www.theguardian.com",
@@ -357,8 +358,6 @@ def sales_line(e):
 def due(entry, published, now):
     """Ratings boxes fill in over weeks after release, so young reviews are re-checked more often."""
     if not entry:
-        return True
-    if entry.get("wp") and entry.get("v", 1) < VERSION:  # stored before this version learned more (2: review links)
         return True
     age = (now - published).days
     checked = datetime.fromisoformat(entry["checked"])
