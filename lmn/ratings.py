@@ -323,7 +323,7 @@ def run():
         pub = datetime.fromisoformat(r["published"])
         if not due(store.get(r["id"]), pub, now):
             continue
-        album = clean_album(r.get("artist_name"), r.get("album"))
+        album = None if r.get("track") else clean_album(r.get("artist_name"), r.get("album"))
         entry = {"checked": now.isoformat(timespec="seconds"), "wp": None}
         if album and r.get("artist_name"):
             try:
