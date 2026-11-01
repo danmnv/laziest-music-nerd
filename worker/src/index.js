@@ -312,7 +312,8 @@ async function deezerAlbum(artist, album) {
     if (!hit) return null;
     const full = await fetch(`https://api.deezer.com/album/${hit.id}`).then((x) => (x.ok ? x.json() : {})).catch(() => ({}));
     return { cover: hit.cover_xl || hit.cover_big || null, link: hit.link, tracks: hit.nb_tracks || null,
-             minutes: full.duration ? Math.round(full.duration / 60) : null };
+             minutes: full.duration ? Math.round(full.duration / 60) : null,
+             year: /^\d{4}/.test(full.release_date || "") ? full.release_date.slice(0, 4) : null };
   } catch (e) {
     return null;
   }
@@ -328,14 +329,17 @@ async function sendAlbum(env, uid, a, intro) {
   const cover = (full && full.covers && full.covers[0]) || (dz && dz.cover);
   const tracks = (full && full.tracks && full.tracks.length) || (dz && dz.tracks);
   const minutes = (full && full.duration_min) || (dz && dz.minutes);
+  // The release year; Deezer may only have a later reissue, so its year counts only if it isn't after the review.
+  const reviewYear = String(r.published).slice(0, 4);
+  const year = (full && full.year) || (dz && dz.year && dz.year <= reviewYear ? dz.year : null);
   const facts = [
     (r.genres || []).slice(0, 3).join(", "),
     tracks ? `${tracks} трек${tracks % 10 === 1 && tracks % 100 !== 11 ? "" : [2, 3, 4].includes(tracks % 10) && ![12, 13, 14].includes(tracks % 100) ? "а" : "ов"}` : "",
     minutes ? `${minutes} мин` : "",
-    `обзор ${String(r.published).slice(0, 4)}`,
+    year ? "" : `обзор ${reviewYear}`, // the review year only when the release year is unknown
     r.guest ? "гостевой обзор" : "",
   ].filter(Boolean).join(" · ");
-  const text = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>\n${badge(r)} · ${esc(facts)}`;
+  const text = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}`;
   const q = encodeURIComponent(`${r.artist_name} ${r.album}`);
   const allServices = links.songlink || (dz && dz.link ? `https://album.link/${dz.link}` : null);
   const reply_markup = { inline_keyboard: [
@@ -364,7 +368,7 @@ async function search(env, uid, query) {
     chat_id: uid,
     text: total > items.length ? `Нашёл ${total}, вот ${items.length} — уточни запрос, чтобы увидеть остальные:` : `Нашёл ${total}:`,
     reply_markup: { inline_keyboard: items.map((a) => [{
-      text: `${badge(a)} · ${short(a.artist_name)} — ${short(a.album)} (${String(a.published).slice(0, 4)})${a.guest ? " · гость" : ""}`.slice(0, 120),
+      text: `${badge(a)} · ${short(a.artist_name)} — ${short(a.album)} · обзор ${String(a.published).slice(0, 4)}${a.guest ? " · гость" : ""}`.slice(0, 120),
       callback_data: `a:${a.id}`,
     }]) },
   });

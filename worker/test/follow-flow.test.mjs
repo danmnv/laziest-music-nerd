@@ -47,7 +47,7 @@ beforeEach(() => {
       return new Response(JSON.stringify({ data: [
         { id: 9, title: "Kid A (Remastered)", artist: { name: "Radiohead" }, cover_xl: "https://cdn/kida.jpg", nb_tracks: 10, link: "https://www.deezer.com/album/9" }] }));
     }
-    if (String(url).startsWith("https://api.deezer.com/album/9")) return new Response(JSON.stringify({ duration: 2994 }));
+    if (String(url).startsWith("https://api.deezer.com/album/9")) return new Response(JSON.stringify({ duration: 2994, release_date: "2000-10-02" }));
     throw new Error("unexpected fetch " + url);
   };
 });
@@ -137,7 +137,7 @@ test("typing a name in the private chat searches Fantano's archive", async () =>
   const list = calls.find((c) => c.method === "sendMessage");
   assert.equal(list.text, "Нашёл 2:");
   assert.deepEqual(list.reply_markup.inline_keyboard.map((r) => r[0].callback_data), ["a:k", "a:p"]);
-  assert.match(list.reply_markup.inline_keyboard[0][0].text, /🟢 10\/10 · Radiohead — Kid A \(2020\)/);
+  assert.match(list.reply_markup.inline_keyboard[0][0].text, /🟢 10\/10 · Radiohead — Kid A · обзор 2020/);
   calls = [];
   await say(OWNER, "nothing like this");
   assert.match(calls[0].text, /Не нашёл обзора Фантано/);
@@ -147,7 +147,7 @@ test("one hit is sent as a full card: cover, length, all services, marks and fol
   await say(OWNER, "kid a");
   const c = calls.find((x) => x.method === "sendPhoto");
   assert.equal(c.photo, "https://cdn/kida.jpg");
-  assert.match(c.caption, /<b>Radiohead — Kid A<\/b>\n🟢 10\/10 · art rock · 10 треков · 50 мин · обзор 2020/);
+  assert.match(c.caption, /<b>Radiohead — Kid A<\/b> \(2000\)\n🟢 10\/10 · art rock · 10 треков · 50 мин$/);
   const btns = c.reply_markup.inline_keyboard.flat();
   assert.ok(btns.some((b) => b.text === "Все платформы" && b.url === "https://album.link/https://www.deezer.com/album/9"));
   assert.ok(btns.some((b) => b.callback_data === "m:k:done"));
