@@ -35,6 +35,22 @@ PRIORITY = ["Pitchfork", "AllMusic", "NME", "Rolling Stone", "The Guardian", "Cl
 SHOW = 5  # on a Telegram card
 KEEP = 8  # stored, one a line on the site
 VERSION = 2  # what an entry holds; older entries with an article are re-read first (2: each review's link, mc_url)
+# Home pages, the link when Wikipedia doesn't cite the review itself (the site's critics list)
+HOME = {"Pitchfork": "https://pitchfork.com", "AllMusic": "https://www.allmusic.com", "NME": "https://www.nme.com",
+        "Rolling Stone": "https://www.rollingstone.com", "The Guardian": "https://www.theguardian.com",
+        "Clash": "https://www.clashmusic.com", "Exclaim!": "https://exclaim.ca", "The A.V. Club": "https://www.avclub.com",
+        "Spin": "https://www.spin.com", "The Independent": "https://www.independent.co.uk",
+        "The Line of Best Fit": "https://www.thelineofbestfit.com", "Paste": "https://www.pastemagazine.com",
+        "Uncut": "https://www.uncut.co.uk", "Mojo": "https://www.mojo4music.com", "Entertainment Weekly": "https://ew.com",
+        "Slant Magazine": "https://www.slantmagazine.com", "Consequence": "https://consequence.net",
+        "PopMatters": "https://www.popmatters.com", "The Observer": "https://www.theguardian.com/observer",
+        "musicOMH": "https://www.musicomh.com", "DIY": "https://diymag.com", "HipHopDX": "https://hiphopdx.com",
+        "XXL": "https://www.xxlmag.com", "Beats Per Minute": "https://beatsperminute.com", "Kerrang!": "https://www.kerrang.com",
+        "Metal Hammer": "https://www.loudersound.com/metal-hammer", "The Quietus": "https://thequietus.com",
+        "Resident Advisor": "https://ra.co", "Under the Radar": "https://www.undertheradarmag.com",
+        "The Daily Telegraph": "https://www.telegraph.co.uk", "The Times": "https://www.thetimes.com",
+        "Record Collector": "https://recordcollectormag.com", "Sputnikmusic": "https://www.sputnikmusic.com",
+        "Metacritic": "https://www.metacritic.com"}
 ALIASES = {"pitchfork media": "Pitchfork", "consequence of sound": "Consequence", "slant": "Slant Magazine",
            "the av club": "The A.V. Club", "a.v. club": "The A.V. Club", "the guardian": "The Guardian",
            "guardian": "The Guardian", "the telegraph": "The Daily Telegraph", "allmusic": "AllMusic",

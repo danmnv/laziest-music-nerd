@@ -88,7 +88,7 @@ function to10(score) {
   return s in GRADES ? GRADES[s] : null;
 }
 
-// The lines a card shows, from one article's wikitext: up to 5 known critics with real scores, Metacritic, chart peaks.
+// The lines a card shows, from one article's wikitext: up to 5 known critics with real scores, then Metacritic, chart peaks.
 export function parse(text) {
   const crit = [], sales = [];
   const box = template(text, ["album ratings", "music ratings"]);
@@ -101,7 +101,6 @@ export function parse(text) {
       if (label.includes("metacritic")) aggs.mc = aggs[`aggregate${i}score`] || "";
     }
     const mc = /^(\d{1,3})\s*\/\s*100/.exec(aggs.mc || "");
-    if (mc) crit.push(`Metacritic ${mc[1]}`);
     const seen = new Set(), found = [];
     for (const k of Object.keys(prm).filter((x) => /^rev\d+$/.test(x)).sort((a, b) => a.slice(3) - b.slice(3))) {
       const name = outletName(prm[k]);
@@ -112,6 +111,7 @@ export function parse(text) {
     }
     found.sort((a, b) => PRIORITY.indexOf(a.name) - PRIORITY.indexOf(b.name));
     crit.push(...found.slice(0, 5).map((c) => `${c.name} ${c.score}`));
+    if (mc) crit.push(`Metacritic ${mc[1]}/100`); // after the outlets, as in lmn/site.py critics_parts
   }
   const peaks = {};
   for (const t of text.matchAll(/\{\{\s*album ?chart\s*\|([^{}]*)\}\}/gi)) {

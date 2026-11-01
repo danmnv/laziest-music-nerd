@@ -9,7 +9,7 @@ import unicodedata
 import urllib.parse
 from pathlib import Path
 
-from . import card, specials, tnd
+from . import card, ratings, specials, tnd
 from .colors import color, label
 from .musicbrainz import norm
 
@@ -196,9 +196,11 @@ def critics_rows(rt, a=None):
         return rows
 
     def name(n, url):
-        return f'<a href="{e(url)}">{e(n)}</a>' if url and url.startswith(("https://", "http://")) else e(n)
+        url = url if url and url.startswith(("https://", "http://")) else ratings.HOME.get(n)
+        return f'<a href="{e(url)}">{e(n)}</a>' if url else e(n)
     own = []
-    # one outlet a line, in ratings.PRIORITY order (Pitchfork first), each linked to its review when Wikipedia cites it
+    # one outlet a line, in ratings.PRIORITY order (Pitchfork first), each linked to its review when Wikipedia cites it,
+    # else to the outlet's home page: the primary source, so no Wikipedia mention here (Daniil, 2026-11-01)
     outlets = [f'<li>{name(c["outlet"], c.get("url"))} — {e(c["score"])}</li>'
                for c in rt.get("critics") or [] if c.get("outlet") and c.get("score")]
     if outlets:
@@ -211,36 +213,10 @@ def critics_rows(rt, a=None):
         agg.append(f'AnyDecentMusic {rt["adm"]:g}/10')
     if agg:
         own.append(("Среднее по рецензиям", " · ".join(agg)))
-    if sales:
-        own.append(("Чарты и продажи", e(" · ".join(sales))))
-    # scores and links come from the album's Wikipedia article (CC BY-SA): one small source link, on the last row
-    if own and rt.get("wp_url"):
-        own[-1] = (own[-1][0], own[-1][1] + f' <span class="muted">· <a href="{e(rt["wp_url"])}">источник: Википедия</a></span>')
+    if sales:  # charts and certifications have no single primary source to link: the article they come from
+        own.append(("Чарты и продажи", e(" · ".join(sales))
+                     + (f' <span class="muted">· <a href="{e(rt["wp_url"])}">Википедия</a></span>' if rt.get("wp_url") else "")))
     rows += own
-    return rows
-    # Scores and links come from the album's Wikipedia article (CC BY-SA), so a small source link stays.
-    src = f' <span class="muted">· <a href="{e(rt["wp_url"])}">источник: Википедия</a></span>' if rt.get("wp_url") else ""
-
-    def name(n, url):
-        return f'<a href="{e(url)}">{e(n)}</a>' if url and url.startswith(("https://", "http://")) else e(n)
-    # one outlet a line, in ratings.PRIORITY order (Pitchfork first), each linked to its review when Wikipedia cites it
-    outlets = [f'<li>{name(c["outlet"], c.get("url"))} — {e(c["score"])}</li>'
-               for c in (rt.get("critics") or [])[:ratings.SHOW_SITE] if c.get("outlet") and c.get("score")]
-    if outlets:
-        rows.append(("Критики", f'<ul class="critics">{"".join(outlets)}</ul>'))
-    # the aggregators after the outlets: an average of many reviews, weighted by Metacritic's own rules
-    agg = []
-    if rt.get("metacritic") is not None:
-        agg.append(f'{name("Metacritic", rt.get("mc_url"))} {rt["metacritic"]}/100')
-    if rt.get("adm") is not None:
-        agg.append(f'AnyDecentMusic {rt["adm"]:g}/10')
-    if agg:
-        rows.append(("Среднее по рецензиям", " · ".join(agg)))
-    if rows and rows[-1][0] in ("Критики", "Среднее по рецензиям"):
-        rows[-1] = (rows[-1][0], rows[-1][1] + src)
-        src = ""
-    if sales:
-        rows.append(("Чарты и продажи", e(" · ".join(sales)) + (src or (f' <span class="muted">· <a href="{e(rt["wp_url"])}">Википедия</a></span>' if rt.get("wp_url") else ""))))
     return rows
 
 

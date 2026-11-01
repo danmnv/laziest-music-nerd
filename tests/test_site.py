@@ -118,14 +118,16 @@ class CriticsTest(unittest.TestCase):
              "score": 10, "not_good": False, "classic": False, "genres": []}
         html_ = site.archive_page(a, [a], self.RT)
         # one outlet a line, authority order, linked to the review when Wikipedia cites it; the aggregators after them
-        self.assertIn('<dt>Критики</dt><dd><ul class="critics"><li>Pitchfork — 10/10</li><li>AllMusic — 4.5/5</li></ul></dd>'
-                      '<dt>Среднее по рецензиям</dt><dd>Metacritic 80/100</dd>', html_)
-        self.assertEqual(html_.count("источник: Википедия"), 1)
-        self.assertIn('href="https://en.wikipedia.org/wiki/Kid_A">источник: Википедия</a>', html_)
+        # without a cited review, the outlet's home page; Wikipedia named only on the charts line (Daniil, 2026-11-01)
+        self.assertIn('<dt>Критики</dt><dd><ul class="critics"><li><a href="https://pitchfork.com">Pitchfork</a> — 10/10</li>'
+                      '<li><a href="https://www.allmusic.com">AllMusic</a> — 4.5/5</li></ul></dd>'
+                      '<dt>Среднее по рецензиям</dt><dd><a href="https://www.metacritic.com">Metacritic</a> 80/100</dd>', html_)
+        self.assertEqual(html_.count("Википедия"), 1)
+        self.assertIn('US Platinum <span class="muted">· <a href="https://en.wikipedia.org/wiki/Kid_A">Википедия</a></span>', html_)
         linked = dict(self.RT, critics=[{"outlet": "Pitchfork", "score": "10/10", "url": "https://pitchfork.com/r"},
                                         {"outlet": "NME", "score": "5/5", "url": "javascript:alert(1)"}], mc_url="https://www.metacritic.com/m")
         html_ = site.archive_page(a, [a], linked)
-        self.assertIn('<li><a href="https://pitchfork.com/r">Pitchfork</a> — 10/10</li><li>NME — 5/5</li>', html_)
+        self.assertIn('<li><a href="https://pitchfork.com/r">Pitchfork</a> — 10/10</li><li><a href="https://www.nme.com">NME</a> — 5/5</li>', html_)
         self.assertIn('<a href="https://www.metacritic.com/m">Metacritic</a> 80/100', html_)
         bare = site.archive_page(a, [a])  # only the hidden mood row, filled by app.js from visitors' votes
         self.assertIn('<dl><dt class="moods-h" hidden>Когда слушать</dt><dd class="moods" hidden></dd></dl>', bare)

@@ -230,7 +230,7 @@ test("one hit is sent as a full card: cover, length, all services, marks and fol
   assert.equal(c.photo, "https://cdn/kida.jpg");
   assert.match(c.caption, /<b>Radiohead — Kid A<\/b> \(2000\)\n🟢 10\/10 · art rock · 10 треков · 50 мин · 2-й из 2 обзоров артиста\n\n<b>Бриф:<\/b> Radiohead уходят в электронику\.\n/);
   assert.doesNotMatch(c.caption, /Not shown/); // the archive's brief (lmn/briefs.py) replaces Fantano's line
-  assert.match(c.caption, /\nКритики: Metacritic 91 · Pitchfork 10\/10 \(<a href="https:\/\/en.wikipedia.org\/wiki\/Kid_A">Википедия<\/a>\)\nЧарты и продажи: US #1 · UK #1$/);
+  assert.match(c.caption, /\nКритики: Metacritic 91 · Pitchfork 10\/10\nЧарты и продажи: US #1 · UK #1 \(<a href="https:\/\/en.wikipedia.org\/wiki\/Kid_A">Википедия<\/a>\)$/);
   const btns = c.reply_markup.inline_keyboard.flat();
   assert.ok(btns.some((b) => b.text === "Все платформы" && b.url === "https://album.link/https://www.deezer.com/album/9"));
   // the archive has no video id for it, the site's per-review file has (from the video's page)
@@ -286,7 +286,7 @@ test("an artist's albums without Fantano's review, and a card for one of them", 
   const c = calls.find((x) => x.method === "sendPhoto");
   assert.equal(c.photo, "https://cdn/bends.jpg");
   assert.equal(c.caption, '<b>Radiohead — The Bends</b> (1995)\n⚪ Фантано не обозревал · Alternative · 12 треков · 49 мин' +
-    '\nКритики: Pitchfork 10/10 · AllMusic 5/5 (<a href="https://en.wikipedia.org/wiki/The_Bends">Википедия</a>)\nЧарты и продажи: US #88 · UK #4 · UK 4× Platinum');
+    '\nКритики: Pitchfork 10/10 · AllMusic 5/5\nЧарты и продажи: US #88 · UK #4 · UK 4× Platinum (<a href="https://en.wikipedia.org/wiki/The_Bends">Википедия</a>)');
   const btns = c.reply_markup.inline_keyboard.flat();
   assert.ok(btns.some((b) => b.text === "Все платформы" && b.url === "https://album.link/https://www.deezer.com/album/20"));
   assert.ok(btns.some((b) => b.callback_data === "f:k"));
