@@ -35,6 +35,14 @@ def fetch_posts(limit=15, page=1, with_text=False, since=None):
     return http.get_json(f"{API}/posts/?{urllib.parse.urlencode(params)}")
 
 
+def fetch_texts(ids):
+    """{post id: plaintext} for up to ~15 posts (the ids go into the URL)."""
+    params = {"key": content_key(), "limit": len(ids), "filter": f"id:[{','.join(ids)}]", "fields": "id,plaintext",
+              "formats": "plaintext"}
+    d = http.get_json(f"{API}/posts/?{urllib.parse.urlencode(params)}")
+    return {p["id"]: p.get("plaintext") or "" for p in d.get("posts", [])}
+
+
 def fetch_all_light():
     out, page = [], 1
     while page:

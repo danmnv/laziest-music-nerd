@@ -14,12 +14,14 @@ MODELS = [m.strip() for m in (os.environ.get("GEMINI_MODEL") or
 MODEL = MODELS[0]
 BUDGET_SEC = 240      # per review, all models and retries together, so a slow day can't eat the hourly run
 CALL_TIMEOUT = 90
+ABOUT_MAX = 560   # the site's longer brief ("about"); the prompt asks for 500
 MOODS = ["для тренировки", "для настроения", "для работы за столом", "для тусовки"]
 _unavailable = set()  # models found used up for today (or closed) during this run: skipped for the next reviews
 
 PROMPT = """Ты помогаешь вести русскоязычный Telegram-канал о музыкальных обзорах Anthony Fantano (The Needle Drop).
 {source} Ответь строго JSON-объектом с полями:
 - "brief": 1–2 предложения на русском, своими словами: что за релиз и что Фантано о нём думает. Не цитируй обзор, не переводи его дословно. До 220 символов.
+- "about": 3–4 предложения на русском, своими словами, для страницы сайта: что за релиз, что Фантано в нём хвалит, что ругает и к чему пришёл. Не цитируй обзор, не переводи его дословно. До 500 символов.
 - "who": 1 строка на русском о том, кто исполнитель (жанр/сцена, откуда, какой это по счёту релиз, если ясно из текста). Только факты из текста; если не ясно — пустая строка. До 140 символов.
 - "moods": список из 1–2 вариантов ровно из этого набора: {moods}. Когда лучше всего слушать этот релиз.
 - "best_tracks": до 3 названий треков, которые Фантано выделил как лучшие, точно как они написаны в тексте. Если не выделил — пустой список.
@@ -83,18 +85,28 @@ def summarize(title, text=None, api_key=None, video_id=None, notes=""):
     if raw is None:
         return None
     try:
-        out = json.loads(raw["candidates"][0]["content"]["parts"][0]["text"])
-        if isinstance(out, list):  # gemini-3.5-flash sometimes wraps the object in a list (seen 2026-10-31 on HMLTD)
-            out = next((x for x in out if isinstance(x, dict)), None)
-        if not isinstance(out, dict):
-            raise ValueError(f"expected a JSON object, got {type(out).__name__}")
-        out["moods"] = [m for m in out.get("moods", []) if m in MOODS][:2]
-        note = str(out.get("score_note") or "").strip().lower()
-        out["score_note"] = note if NOTE.match(note) else None
-        return out
+        return parse_answer(raw["candidates"][0]["content"]["parts"][0]["text"])
     except (KeyError, IndexError, TypeError, ValueError, AttributeError) as e:
         print(f"gemini {model}: bad response {e!r}")
         return None
+
+
+def parse_answer(text):
+    """The model's JSON answer to PROMPT, checked (also used for lmn/mistral.py). Raises ValueError on a bad answer."""
+    out = json.loads(text)
+    if isinstance(out, list):  # gemini-3.5-flash sometimes wraps the object in a list (seen 2026-10-31 on HMLTD)
+        out = next((x for x in out if isinstance(x, dict)), None)
+    if not isinstance(out, dict):
+        raise ValueError(f"expected a JSON object, got {type(out).__name__}")
+    out["moods"] = [m for m in out.get("moods") or [] if m in MOODS][:2]
+    note = str(out.get("score_note") or "").strip().lower()
+    out["score_note"] = note if NOTE.match(note) else None
+    about = str(out.get("about") or "").strip()
+    if len(about) > ABOUT_MAX:  # cut at the last full sentence that fits
+        cut = about[:ABOUT_MAX]
+        about = cut[:cut.rfind(". ") + 1] if ". " in cut else cut.rstrip() + "…"
+    out["about"] = about or None
+    return out
 
 
 def _reason(body):
