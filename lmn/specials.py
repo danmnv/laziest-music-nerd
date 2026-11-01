@@ -154,9 +154,10 @@ def run():
                      int(os.environ.get("NOTES_APPLE_LIMIT", "200")), deadline)
     npath.write_text("{\n" + ",\n".join(json.dumps(k) + ": " + json.dumps(nt[k], ensure_ascii=False, separators=(",", ":"))
                                           for k in sorted(nt)) + "\n}\n")
-    cpath = DATA / "covers.json"
-    cv = notes.covers(archive, json.loads(cpath.read_text()) if cpath.exists() else {}, int(os.environ.get("COVERS_LIMIT", "1500")), deadline)
-    cpath.write_text("{\n" + ",\n".join(json.dumps(k) + ": " + json.dumps(cv[k]) for k in sorted(cv)) + "\n}\n")
+    apath = DATA / "albums.json"
+    al = notes.albums(archive, json.loads(apath.read_text()) if apath.exists() else {}, int(os.environ.get("ALBUMS_LIMIT", "1500")), deadline)
+    apath.write_text("{\n" + ",\n".join(json.dumps(k) + ": " + json.dumps(al[k], ensure_ascii=False, separators=(",", ":"))
+                                          for k in sorted(al)) + "\n}\n")
     lists = []
     for u in ups:
         label = list_kind(u["title"])

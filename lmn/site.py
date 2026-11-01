@@ -178,29 +178,43 @@ def critics_rows(rt, a=None):
     return rows
 
 
-def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, cover=None):
+def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, album=None):
     """A release page for a review the bot never posted a card for: what the archive knows, the artist's other
     reviews, and the reader's marks."""
     review = f"https://youtu.be/{a['video_id']}" if a.get("video_id") else a["url"]
     btns = [("▶ Видеообзор" if a.get("video_id") else "Обзор", review)]
     if a.get("video_id") and "theneedledrop.com" in a["url"]:
         btns.append(("Текст обзора на TND", a["url"]))
+    # what the bot's card shows for this album, from Deezer (data/albums.json, lmn/notes.py)
+    album = album or {}
+    if album.get("dz"):
+        btns.append(("Все платформы", f"https://album.link/https://www.deezer.com/album/{int(album['dz'])}"))
     btns += search_buttons(a["artist_name"], a["album"])
-    meta = " · ".join(x for x in [", ".join((a.get("genres") or [])[:5]), "обзор " + a["published"][:10],
-                                    "гостевой обзор" if a.get("guest") else None] if x)
+    year = album.get("y") if (album.get("y") or "9999") <= a["published"][:4] else None  # Deezer may only have a later reissue
+    by_date = sorted(artist_reviews, key=lambda x: x["published"])
+    nth = next((i for i, x in enumerate(by_date, 1) if x["id"] == a["id"]), 0)
+    meta = " · ".join(x for x in [", ".join((a.get("genres") or [])[:5]),
+                                    card.plural_tracks(len(album["t"])) if album.get("t") else None,
+                                    f"{album['min']} мин" if album.get("min") else None,
+                                    "обзор " + a["published"][:10], "гостевой обзор" if a.get("guest") else None,
+                                    f"{nth}-й из {len(by_date)} обзоров артиста" if nth and len(by_date) > 1 else None] if x)
     others = [x for x in artist_reviews if x["id"] != a["id"]]
     hist = (f'<h2>Фантано об этом артисте</h2>{history_list(artist_reviews, a["id"], 1)}' if others else "")
     brief = brief or {}
     rows = [(k, e(v)) for k, v in (("Кто", brief.get("who")), ("Бриф", brief.get("about") or brief.get("brief"))) if v]
     # Fantano's line only where there's no brief (as on bot-card pages)
     rows += notes_rows({**(note or {}), "blurb": None if brief.get("brief") else (note or {}).get("blurb")} if note else None, a["id"])
+    if album.get("t"):  # Fantano's favourites marked with ★, as on bot-card pages
+        fav = {"tracks": [{"title": t, "sec": sec} for t, sec in album["t"]], "ai": {"best_tracks": [f["t"] for f in (note or {}).get("fav") or []]}}
+        rows.append(("Треклист", "<ol>" + "".join(f"<li>{line.split('. ', 1)[1]}</li>" for line in card.tracklist(fav)) + "</ol>"
+                     + ('<span class="muted">★ — любимые у Фантано</span>' if fav["ai"]["best_tracks"] else "")))
     rows += lists_rows(lists) + critics_rows(rt, a)
     # the mood row stays hidden until app.js fills it from visitors' votes (/api/public)
     dl = (f"<dl>{''.join(f'<dt>{k}</dt><dd>{v}</dd>' for k, v in rows)}"
           '<dt class="moods-h" hidden>Когда слушать</dt><dd class="moods" hidden></dd></dl>')
     body = f"""<article class="release" data-id="{e(a['id'])}">
-{f'<img class="cover" src="{e(cover)}" alt="">' if cover else ''}
-<h1><a href="../a/{slug(a['artist_name'])}.html">{e(a['artist_name'])}</a> — {e(a['album'])}</h1>
+{f'<img class="cover" src="{e(album["cv"])}" alt="">' if album.get("cv") else ''}
+<h1><a href="../a/{slug(a['artist_name'])}.html">{e(a['artist_name'])}</a> — {e(a['album'])}{f' <span class="muted">({e(year)})</span>' if year else ''}</h1>
 <p>{score_badge(a)} <span class="muted">{e(meta)}</span></p>
 {dl}
 <p class="btns">{''.join(f'<a class="btn" href="{e(u)}">{e(n)}</a>' for n, u in btns)}</p>
@@ -336,7 +350,7 @@ def build():
     lists = specials.badges(sp)
     notes = load("notes.json", {})
     briefs = load("briefs.json", {})
-    covers = load("covers.json", {})
+    albums = load("albums.json", {})
     (OUT / "wtb.json").write_text(json.dumps([{k: r[k] for k in ("artist", "video_id", "date")} for r in sp.get("rankings", [])],
                                              ensure_ascii=False))  # the bot's artist lists link the "worst to best" video
     (OUT / "rt").mkdir(exist_ok=True)
@@ -346,7 +360,7 @@ def build():
         nt = notes.get(a["id"])
         br = briefs.get(a["id"])
         html_ = (release_page(a, rt, artists.get((a.get("artist") or {}).get("mbid") or ""), li, nt, br) if a["id"] in enriched
-                 else archive_page(a, by_artist[slug(a["artist_name"])], rt, li, nt, br, covers.get(a["id"]) or None))
+                 else archive_page(a, by_artist[slug(a["artist_name"])], rt, li, nt, br, albums.get(a["id"]) or None))
         (OUT / "r" / f"{a['id']}.html").write_text(html_)
         crit, sales = critics_parts(rt)
         nt = nt or {}

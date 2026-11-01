@@ -5,8 +5,9 @@ embed instead (30-second previews for everyone, the whole track for subscribers)
 
 Writes data/notes.json: {review id: {"video_id", "blurb", "fav": [{"t": title, "dz": Deezer track id, 0 if not on
 Deezer, null or missing if not found out yet; "am": Apple Music path like "us/album/x/123?i=456", 0 if not there
-either}]}}. Also data/covers.json: {review id: album cover URL from Deezer, 0 if Deezer has no such album}, for the
-site's archive pages (bot-card pages have their own covers).
+either}]}}. Also data/albums.json: {review id: the album on Deezer (cover, year, minutes, tracklist; see deezer_album),
+0 if Deezer has no such album}, for the site's archive pages, which otherwise know less than the bot's cards
+(bot-card pages have all of it from lmn/enrich.py).
 Built by lmn/specials.py's run (same list of uploads, one YouTube pass)."""
 import re
 import sys
@@ -85,39 +86,48 @@ def apple_track(artist, title, sleep=time.sleep):
     return 0
 
 
-def deezer_cover(artist, album):
-    """Deezer's 1000×1000 album cover URL, 0 when Deezer has no such album, None when the search failed.
-    (Album search, unlike track search, works with the artist:"..." field.)"""
+def deezer_album(artist, album, sleep=time.sleep):
+    """What the bot's card shows for an archive album, from Deezer: {"dz": album id, "cv": 1000×1000 cover URL, "y":
+    release year, "min": minutes, "t": [[title, seconds], ...]}; 0 when Deezer has no such album, None when a request
+    failed (asked again next run). Album search, unlike track search, works with the artist:"..." field."""
+    def get(url):
+        d = http.get_json(url)
+        if d.get("error"):  # e.g. the quota (50 requests per 5 seconds)
+            raise RuntimeError(d["error"])
+        return d
     try:
-        d = http.get_json("https://api.deezer.com/search/album?q=" + urllib.parse.quote(f'artist:"{artist}" album:"{album}"') + "&limit=10")
+        d = get("https://api.deezer.com/search/album?q=" + urllib.parse.quote(f'artist:"{artist}" album:"{album}"') + "&limit=10")
+        hit = next((x for x in d.get("data") or [] if norm((x.get("artist") or {}).get("name")) == norm(artist)
+                    and norm(x.get("title")).startswith(norm(album)[:20])), None)
+        if not hit:
+            return 0
+        sleep(SLEEP)
+        full = get(f"https://api.deezer.com/album/{int(hit['id'])}")
     except Exception as e:
         print(f"  ! deezer album {artist} - {album}: {e}", file=sys.stderr)
         return None
-    if d.get("error"):
-        print(f"  ! deezer album {artist} - {album}: {d['error']}", file=sys.stderr)
-        return None
-    for x in d.get("data") or []:
-        if norm((x.get("artist") or {}).get("name")) == norm(artist) and norm(x.get("title")).startswith(norm(album)[:20]) and x.get("cover_xl"):
-            return x["cover_xl"]
-    return 0
+    tracks = [[t.get("title") or "", int(t.get("duration") or 0)] for t in (full.get("tracks") or {}).get("data") or []]
+    out = {"dz": int(hit["id"]), "cv": full.get("cover_xl") or hit.get("cover_xl"), "y": (full.get("release_date") or "")[:4],
+           "min": round(int(full.get("duration") or 0) / 60) or None, "t": tracks}
+    return {k: v for k, v in out.items() if v}
 
 
-def covers(archive, old, limit=1500, deadline=None):
-    """{review id: cover URL or 0} for every archive review; at most limit lookups per run and none after deadline
-    (time.monotonic()), the rest next run."""
+def albums(archive, old, limit=1500, deadline=None):
+    """{review id: deezer_album(...) or 0} for every archive review; at most limit lookups per run and none after
+    deadline (time.monotonic()), the rest next run. Newest reviews first."""
     out, n = {}, 0
-    for a in sorted(archive, key=lambda x: x.get("published") or "", reverse=True):  # newest first
+    for a in sorted(archive, key=lambda x: x.get("published") or "", reverse=True):
         if not (a.get("artist_name") and a.get("album")) or a.get("track"):
             continue
         if old.get(a["id"]) is not None:
             out[a["id"]] = old[a["id"]]
         elif n < limit and not (deadline and time.monotonic() > deadline):
             n += 1
-            c = deezer_cover(a["artist_name"], a["album"])
+            x = deezer_album(a["artist_name"], a["album"])
             time.sleep(SLEEP)
-            if c is not None:
-                out[a["id"]] = c
-    print(f"covers: {sum(1 for v in out.values() if v)} found, {sum(1 for v in out.values() if v == 0)} not on Deezer; lookups {n}")
+            if x is not None:
+                out[a["id"]] = x
+    print(f"albums: {sum(1 for v in out.values() if v)} found on Deezer, {sum(1 for v in out.values() if v == 0)} not; lookups {n}")
     return out
 
 

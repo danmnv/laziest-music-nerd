@@ -63,23 +63,39 @@ class Build(unittest.TestCase):
             self.assertEqual(notes.build(ups, archive, out), out)
         am.assert_not_called()
 
-    def test_covers_newest_first_with_a_limit_and_remembered(self):
+    def test_albums_newest_first_with_a_limit_and_remembered(self):
         archive = [{"id": "a", "artist_name": "A", "album": "X", "published": "2020"}, {"id": "b", "artist_name": "B", "album": "Y", "published": "2021"},
                    {"id": "s", "artist_name": "C", "album": "Song", "published": "2022", "track": True}]
-        with mock.patch.object(notes, "deezer_cover", return_value="https://cdn/b.jpg") as dc, mock.patch.object(notes.time, "sleep"):
-            out = notes.covers(archive, {}, limit=1)
-            self.assertEqual(out, {"b": "https://cdn/b.jpg"})
-            dc.reset_mock()
-            dc.return_value = 0
-            self.assertEqual(notes.covers(archive, out, limit=5), {"b": "https://cdn/b.jpg", "a": 0})
-            dc.assert_called_once_with("A", "X")
+        b = {"dz": 9, "cv": "https://cdn/b.jpg"}
+        with mock.patch.object(notes, "deezer_album", return_value=b) as da, mock.patch.object(notes.time, "sleep"):
+            out = notes.albums(archive, {}, limit=1)
+            self.assertEqual(out, {"b": b})
+            da.reset_mock()
+            da.return_value = 0
+            self.assertEqual(notes.albums(archive, out, limit=5), {"b": b, "a": 0})
+            da.assert_called_once_with("A", "X")
+
+    def test_deezer_album_checks_the_artist_and_keeps_what_the_card_shows(self):
+        search = {"data": [{"id": 1, "title": "Kid A", "artist": {"name": "Someone"}},
+                           {"id": 2, "title": "Kid A", "artist": {"name": "Radiohead"}, "cover_xl": "https://cdn/s.jpg"}]}
+        album = {"id": 2, "cover_xl": "https://cdn/kida.jpg", "release_date": "2000-10-02", "duration": 2995,
+                 "tracks": {"data": [{"title": "Everything in Its Right Place", "duration": 251}, {"title": "Kid A", "duration": 284}]}}
+        with mock.patch.object(notes.http, "get_json", side_effect=[search, album]) as g:
+            out = notes.deezer_album("Radiohead", "Kid A", sleep=lambda s: None)
+        self.assertEqual(g.call_args_list[1].args[0], "https://api.deezer.com/album/2")
+        self.assertEqual(out, {"dz": 2, "cv": "https://cdn/kida.jpg", "y": "2000", "min": 50,
+                               "t": [["Everything in Its Right Place", 251], ["Kid A", 284]]})
+        with mock.patch.object(notes.http, "get_json", return_value={"data": []}):
+            self.assertEqual(notes.deezer_album("Radiohead", "Kid A", sleep=lambda s: None), 0)
+        with mock.patch.object(notes.http, "get_json", return_value={"error": {"code": 4, "message": "Quota limit exceeded"}}):
+            self.assertIsNone(notes.deezer_album("Radiohead", "Kid A", sleep=lambda s: None))
 
     def test_no_lookups_after_the_deadline(self):
         archive = [{"id": "nat", "artist_name": "The National", "album": "First Two Pages of Frankenstein"}]
         ups = [{"id": "v", "title": "The National - First Two Pages of Frankenstein ALBUM REVIEW", "desc": DESC}]
-        with mock.patch.object(notes, "deezer_track") as dz, mock.patch.object(notes, "deezer_cover") as dc:
+        with mock.patch.object(notes, "deezer_track") as dz, mock.patch.object(notes, "deezer_album") as dc:
             out = notes.build(ups, archive, {}, deadline=1)  # long past
-            self.assertEqual(notes.covers(archive, {}, deadline=1), {})
+            self.assertEqual(notes.albums(archive, {}, deadline=1), {})
         dz.assert_not_called()
         dc.assert_not_called()
         self.assertEqual(out["nat"]["fav"], [{"t": "EUCALYPTUS"}, {"t": "TROPIC MORNING NEWS"}])
