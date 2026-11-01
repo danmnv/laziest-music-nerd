@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from lmn import briefs, gemini, http, llm, site
+from lmn import briefs, deepl, gemini, http, llm, site
 
 ANSWER = {"brief": "Коротко.", "about": "Длинно. " * 100, "who": "Группа из Оксфорда.", "moods": ["для работы за столом", "не то"],
           "best_tracks": [], "artist": "Radiohead", "album": "Kid A", "score_note": ""}
@@ -22,11 +22,62 @@ class ParseAnswer(unittest.TestCase):
         self.assertTrue(out["about"].endswith("."))
         self.assertEqual(out["moods"], ["для работы за столом"])
 
+    def test_a_long_card_brief_keeps_whole_sentences_only_if_fantanos_view_stays(self):
+        long_ = dict(ANSWER, brief="Новый альбом группы, где она пробует синт-фанк и поп. Фантано считает запись интересной. " + "Ещё слова. " * 20)
+        out = gemini.parse_answer(json.dumps(long_))["brief"]
+        self.assertLessEqual(len(out), gemini.BRIEF_MAX)
+        self.assertTrue(out.startswith("Новый альбом группы, где она пробует синт-фанк и поп. Фантано считает запись интересной."))
+        self.assertTrue(out.endswith("."))
+        one = dict(ANSWER, brief="Новый альбом " + "очень " * 40 + "длинный; Фантано доволен.")
+        self.assertEqual(gemini.parse_answer(json.dumps(one))["brief"], one["brief"])  # cutting would lose his view
+
     def test_moods_are_the_same_list_as_the_bots(self):
         import re
         js = (Path(__file__).parent.parent / "worker/src/index.js").read_text()
         block = re.search(r"const MOODS = \[(.*?)\];", js, re.S).group(1)
         self.assertEqual(re.findall(r'"([^"]+)"', block), gemini.MOODS)
+
+
+class Translate(unittest.TestCase):
+    def test_one_request_for_all_and_the_same_order(self):
+        en = [{"brief": "A good one.", "about": "Long.", "who": "A band."}, {"brief": "A bad one.", "about": "", "who": ""}]
+        ru = [{"brief": "Хороший.", "about": "Длинно.", "who": "Группа."}, {"brief": "Плохой.", "about": "", "who": ""}]
+        answer = {"candidates": [{"content": {"parts": [{"text": json.dumps(ru, ensure_ascii=False)}]}}]}
+        with mock.patch.object(gemini, "generate", return_value=("gemini-3.5-flash", answer)) as g:
+            out = gemini.translate(en, api_key="k")
+        self.assertEqual(g.call_count, 1)
+        self.assertIn('"A bad one."', g.call_args.args[0]["contents"][0]["parts"][0]["text"])
+        self.assertEqual([x["brief"] for x in out], ["Хороший.", "Плохой."])
+        self.assertEqual(out[0]["tr"], "gemini-3.5-flash")
+        short = {"candidates": [{"content": {"parts": [{"text": json.dumps(ru[:1])}]}}]}
+        with mock.patch.object(gemini, "generate", return_value=("m", short)):
+            self.assertIsNone(gemini.translate(en, api_key="k"))  # a lost item would shift every brief after it
+
+    def test_english_prompt_for_groq(self):
+        seen = []
+
+        def fake(url, **kw):
+            seen.append(kw["json_body"]["messages"][0]["content"])
+            return chat(ANSWER)
+
+        llm._dead.clear()
+        with mock.patch.dict(os.environ, {"GROQ_API_KEY": "g"}), mock.patch.object(http, "get_json", side_effect=fake):
+            llm.ask("groq", "A - B", "text", lang="en", sleep=lambda s: None)
+        self.assertTrue(seen[0].startswith("You help run"))
+        self.assertIn("в наушниках, вдумчиво", seen[0])  # moods still from the Russian list
+
+
+class DeepL(unittest.TestCase):
+    def test_one_request_free_host_and_empty_fields_stay_empty(self):
+        en = [{"brief": "Good.", "about": "Long.", "who": ""}]
+        with mock.patch.object(http, "get_json", return_value={"translations": [{"text": "Хорошо."}, {"text": "Длинно."}, {"text": ""}]}) as g:
+            out = deepl.translate(en, api_key="abc:fx")
+        self.assertTrue(g.call_args.args[0].startswith("https://api-free.deepl.com/"))
+        self.assertEqual(g.call_args.kwargs["json_body"]["text"], ["Good.", "Long.", ""])
+        self.assertEqual(out, [{"brief": "Хорошо.", "about": "Длинно.", "who": "", "tr": "deepl"}])
+        with mock.patch.object(http, "get_json", side_effect=http.HttpError(456, "Quota exceeded", "u")):
+            self.assertIsNone(deepl.translate(en, api_key="abc:fx"))
+        self.assertIsNone(deepl.translate(en, api_key=""))
 
 
 class Providers(unittest.TestCase):
@@ -97,6 +148,11 @@ class Providers(unittest.TestCase):
 
 
 class Run(unittest.TestCase):
+    def setUp(self):
+        env = mock.patch.dict(os.environ, {"BRIEFS_LANG": "ru"})
+        env.start()
+        self.addCleanup(env.stop)
+
     def test_targets_and_saved_file(self):
         archive = [
             {"id": "a" * 24, "artist_name": "Radiohead", "album": "Kid A", "published": "2020-01-01", "score": 10},
@@ -168,6 +224,91 @@ class Run(unittest.TestCase):
             with mock.patch.object(briefs, "DATA", p), mock.patch.object(briefs.tnd, "fetch_texts", side_effect=OSError("down")):
                 briefs.run()
             self.assertEqual(json.loads((p / "briefs.json").read_text()), {})
+
+
+class English(unittest.TestCase):
+    """BRIEFS_LANG=en: written in English, translated by Gemini in batches."""
+    EN = {"brief": "Short, 7/10.", "about": "Longer.", "who": "", "moods": ["ночью"], "model": "g"}
+
+    def archive(self, n):
+        return [{"id": f"{i:024x}", "artist_name": f"A{i}", "album": f"B{i}", "published": f"2020-01-{i + 1:02d}", "score": 7}
+                for i in range(n)]
+
+    def fake_translate(self, items):
+        return [{"brief": f"Ru {x['brief']}", "about": "Подробно.", "who": "", "tr": "gm"} for x in items]
+
+    def run_briefs(self, p, summarize, translate, env=None):
+        with mock.patch.object(briefs, "DATA", p), mock.patch.dict(os.environ, {"BRIEFS_LANG": "en", **(env or {})}), \
+                mock.patch.object(briefs.tnd, "fetch_texts", side_effect=lambda ids: {i: "x " * 300 for i in ids}), \
+                mock.patch.object(briefs.llm, "available", return_value=True), \
+                mock.patch.object(briefs.llm, "summarize", side_effect=summarize) as s, \
+                mock.patch.object(briefs.gemini, "translate", side_effect=translate) as t:
+            briefs.run()
+        return s, t, json.loads((p / "briefs.json").read_text())
+
+    def test_batches_of_ten_and_the_rest_at_the_end(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(self.archive(12)))
+            s, t, out = self.run_briefs(p, lambda *a, **kw: dict(self.EN), self.fake_translate)
+            self.assertEqual([len(c.args[0]) for c in t.call_args_list], [10, 2])
+            self.assertEqual(s.call_args.kwargs, {"lang": "en", "verdict": "Fantano's score: 7/10."})
+            e = out[f"{0:024x}"]
+            self.assertEqual(e, {"brief": "Ru Short, 7/10.", "about": "Подробно.", "tr": "gm", "m": "g", "moods": ["ночью"],
+                                 "en": {"brief": "Short, 7/10.", "about": "Longer."}})
+
+    def test_failed_translation_waits_and_is_not_written_again(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(self.archive(3)))
+            _, t, out = self.run_briefs(p, lambda *a, **kw: dict(self.EN), lambda items: None)
+            self.assertEqual(t.call_count, 1)
+            self.assertEqual(briefs.untranslated(out), [f"{i:024x}" for i in range(3)])
+            s, t, out = self.run_briefs(p, lambda *a, **kw: dict(self.EN), self.fake_translate)
+            s.assert_not_called()
+            self.assertEqual(briefs.untranslated(out), [])
+            self.assertEqual(out[f"{2:024x}"]["brief"], "Ru Short, 7/10.")
+
+    def test_the_translation_budget_holds(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(self.archive(25)))
+            _, t, out = self.run_briefs(p, lambda *a, **kw: dict(self.EN), self.fake_translate, {"BRIEFS_TRANSLATE_MAX": "2"})
+            self.assertEqual(t.call_count, 2)
+            self.assertEqual(len(briefs.untranslated(out)), 5)
+
+    def test_old_russian_briefs_are_written_again_and_kept_if_that_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(self.archive(2)))
+            old = {"brief": "Калька.", "m": "openai/gpt-oss-120b"}
+            (p / "briefs.json").write_text(json.dumps({f"{0:024x}": old, f"{1:024x}": old}))
+            answers = iter([None, dict(self.EN)])  # newest first: 1 fails, 0 gets a new one
+            _, _, out = self.run_briefs(p, lambda *a, **kw: next(answers), lambda items: None)
+            self.assertEqual(out[f"{1:024x}"], old)
+            self.assertEqual(out[f"{0:024x}"]["brief"], "Калька.")  # on the site until the translation comes
+            self.assertEqual(briefs.untranslated(out), [f"{0:024x}"])
+            s, _, out = self.run_briefs(p, lambda *a, **kw: dict(self.EN), self.fake_translate)
+            self.assertEqual(s.call_count, 1)  # only 1 written again; 0 just translated
+            self.assertEqual(out[f"{0:024x}"]["brief"], "Ru Short, 7/10.")
+            self.assertEqual(out[f"{0:024x}"]["about"], "Подробно.")
+
+    def test_an_empty_translation_is_not_tried_forever(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(self.archive(1)))
+            for _ in range(3):
+                _, t, out = self.run_briefs(p, lambda *a, **kw: dict(self.EN), lambda items: [{"brief": "", "tr": "gm"} for _ in items])
+            self.assertEqual(t.call_count, 0)
+            self.assertEqual(out[f"{0:024x}"]["trf"], briefs.TR_FAIL_MAX)
+            self.assertEqual(briefs.untranslated(out), [])
+
+    def test_verdict_never_invents_a_score(self):
+        self.assertEqual(briefs.verdict({"score": 0}), "Fantano's score: 0/10.")
+        self.assertIn('"NOT GOOD"', briefs.verdict({"score": None, "not_good": True}))
+        self.assertIn('"CLASSIC"', briefs.verdict({"classic": True}))
+        self.assertEqual(briefs.verdict({}), "Fantano gave no score: don't write one.")
+        self.assertIn("NOT GOOD", gemini.PROMPT_EN.format(moods="[]", title="t", text="x", verdict=briefs.verdict({"not_good": True})))
 
 
 class Site(unittest.TestCase):

@@ -1,14 +1,15 @@
 name: Брифы для архива
 on:
-  # Только вручную: API Mistral платный (2026-11-01), ночной запуск получал бы отказ. Когда пополнишь баланс,
-  # запусти вручную с limit 3400; что не успеет за 5,5 часа, сохранится, остальное следующим запуском.
+  # Только вручную. Бриф пишет бесплатная модель по-английски (Groq; Mistral, если пополнить баланс), Gemini переводит
+  # по 10 за запрос, не больше 15 запросов за запуск, чтобы новым обзорам хватило дневной квоты Gemini.
+  # Что не успеет за 5,5 часа, сохранится, остальное следующим запуском.
   workflow_dispatch:
     inputs:
       limit:
-        description: "Сколько обзоров за запуск (весь архив — 3400; запуск сам остановится через 5,5 часа и сохранит сделанное)"
-        default: "300"
+        description: "Сколько обзоров за запуск (больше 150 Gemini за раз не переведёт, остальные переведутся в следующий запуск)"
+        default: "150"
       compare:
-        description: "Только сравнить модели на 10 обзорах (ничего не сохраняет)"
+        description: "Только сравнить три способа на 10 свежих обзорах без брифа (ничего не сохраняет)"
         type: boolean
         default: false
 
@@ -34,8 +35,12 @@ jobs:
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+          # not the first models: new reviews' briefs keep their quota
+          GEMINI_MODEL: gemini-3.5-flash,gemini-3.5-flash-lite
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
-          BRIEFS_LIMIT: ${{ inputs.limit || '300' }}
+          BRIEFS_LIMIT: ${{ inputs.limit || '150' }}
           BRIEFS_MINUTES: "330"   # GitHub stops a job after 6 hours; this leaves time to save
           BRIEFS_COMPARE: ${{ inputs.compare && '1' || '' }}
       - name: Сохранить

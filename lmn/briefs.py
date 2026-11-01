@@ -2,26 +2,32 @@
 written by a free model (lmn/llm.py: Mistral, then Groq, then Cerebras) from the text of the review on theneedledrop.com. Newest first, at most BRIEFS_LIMIT per run
 and BRIEFS_MINUTES of work; the rest next run.
 
-Writes data/briefs.json: {review id: {"brief", "about", "who", "moods", "m": model}}. Skipped: guest reviews (not Fantano's
+BRIEFS_LANG=en (the default): the model writes in English and Gemini translates TR_BATCH of them per request (at most
+BRIEFS_TRANSLATE_MAX requests a run, so new reviews keep Gemini's daily quota). The free models' own Russian was full of
+calques (tried 2026-11-01 on Groq's openai/gpt-oss-120b: «светло‑приемлемую семёрку»), so in this mode briefs written in
+Russian by them (no "tr") are written again. BRIEFS_LANG=ru: the model writes in Russian itself.
+
+Writes data/briefs.json: {review id: {"brief", "about", "who", "moods", "m": model, "tr": translating model, "en": the
+English}}; an entry with "en" and no "tr" waits for its translation. Skipped: guest reviews (not Fantano's
 opinion), single-song reviews, reviews whose card already has a Gemini brief; posts without a text are kept as
 {"skip": ...}, reviews no model answered for as {"fail": n} (left alone after FAIL_MAX runs).
 
-Run: python -m lmn.briefs (workflow «Брифы для архива»). BRIEFS_COMPARE=1 writes nothing and instead puts two Mistral
-models (and Groq, Cerebras when their keys are set) side by side on 10 reviews into the run's summary, to choose the model."""
+Run: python -m lmn.briefs (workflow «Брифы для архива»). BRIEFS_COMPARE=1 writes nothing and instead puts three ways
+of writing side by side on the 10 newest reviews without a brief (see compare)."""
 import json
 import os
 import sys
 import time
 from pathlib import Path
 
-from . import llm, tnd
+from . import gemini, llm, tnd
 
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 BATCH = 15
 MIN_TEXT = 500
 FAIL_MAX = 2  # runs in which no model gave a brief for this review: then it is left alone
 GIVE_UP = 5  # failures in a row: the key, the plan or the service is wrong, no use going on
-COMPARE = [("mistral", "mistral-small-latest"), ("mistral", "mistral-medium-latest"), ("groq", None), ("cerebras", None)]
+TR_BATCH = 10  # briefs per Gemini translation request
 
 
 def targets(archive, reviews, done):
@@ -44,14 +50,55 @@ def texts(items):
             yield a, (None if got is None else got.get(a["id"]) or "")
 
 
-def finished(v):
-    return bool(v.get("brief") or v.get("skip") or v.get("fail", 0) >= FAIL_MAX)
+def finished(v, lang="ru"):
+    if lang == "en" and v.get("brief") and not v.get("tr") and not v.get("en"):
+        return False  # written in Russian by a model that writes it poorly: again, in English and translated
+    return bool(v.get("brief") or v.get("en") or v.get("skip") or v.get("fail", 0) >= FAIL_MAX)
 
 
-def entry(out):
-    e = {"brief": (out.get("brief") or "").strip(), "about": (out.get("about") or "").strip(), "who": (out.get("who") or "").strip(), "moods": out.get("moods") or [],
-         "m": out.get("model")}
+def verdict(a):
+    """The score as the review gives it, for the English prompt: the models made one up when there was none
+    (Kid Rock's "NOT GOOD" came back as 0/10, 1/10 and 2/10)."""
+    if a.get("score") is not None:
+        return f"Fantano's score: {a['score']}/10."
+    if a.get("not_good"):
+        return 'Fantano gave no number, his verdict is "NOT GOOD": write that instead of a score.'
+    if a.get("classic"):
+        return 'Fantano gave no number, his verdict is "CLASSIC": write that instead of a score.'
+    return "Fantano gave no score: don't write one."
+
+
+def entry(out, lang="ru"):
+    text = {k: (out.get(k) or "").strip() for k in ("brief", "about", "who")}
+    e = {**(text if lang == "ru" else {"en": {k: v for k, v in text.items() if v}}), "moods": out.get("moods") or [], "m": out.get("model")}
     return {k: v for k, v in e.items() if v}
+
+
+TR_FAIL_MAX = 2  # runs in which Gemini gave no translation for this entry: then it is left alone
+
+
+def untranslated(data):
+    return [k for k, v in data.items() if v.get("en") and not v.get("tr") and v.get("trf", 0) < TR_FAIL_MAX]
+
+
+def translate(data, budget, final=False):
+    """Translates the English entries, TR_BATCH per Gemini request (the rest, fewer, only when final). Returns the
+    requests left; 0 after a failed one, so the rest wait for the next run."""
+    keys = untranslated(data)
+    while budget > 0 and (len(keys) >= TR_BATCH or (final and keys)):
+        chunk, keys = keys[:TR_BATCH], keys[TR_BATCH:]
+        budget -= 1
+        out = gemini.translate([data[k]["en"] for k in chunk])
+        if not out:
+            print("::warning::Gemini did not translate, the English ones wait for the next run")
+            return 0
+        for k, t in zip(chunk, out):
+            if t.get("brief"):
+                old = {f: v for f, v in data[k].items() if f not in ("brief", "about", "who", "trf")}  # an old Russian one goes now
+                data[k] = {**old, **{f: t[f] for f in ("brief", "about", "who", "tr") if t.get(f)}}
+            else:  # an empty one: not again and again, in every run's first batch
+                data[k] = {**data[k], "trf": data[k].get("trf", 0) + 1}
+    return budget
 
 
 def save(path, data):
@@ -60,22 +107,26 @@ def save(path, data):
 
 
 def compare(archive, reviews):
-    pool = targets(archive, reviews, set())
-    picked = pool[:5] + [a for a in pool[5:] if a.get("score") == 10 or a.get("classic")][:5]  # new ones and ones you know
-    cols = [(p, m) for p, m in COMPARE if (os.environ.get(next(x[2] for x in llm.PROVIDERS if x[0] == p)) or "").strip()]
+    """The 10 newest reviews without a brief, written in English by Groq and translated two ways, Gemini (one request
+    for all) and DeepL (DEEPL_API_KEY), to choose the translator. Writes nothing; each row is printed as a
+    "COMPARE {json}" log line and as a table in the run's summary. (Groq writing Russian itself, and Gemini writing the
+    brief alone, lost the first comparison on 2026-11-01.)"""
+    from . import deepl
+    picked = [(a, t) for a, t in texts(targets(archive, reviews, set())[:12]) if t and len(t) >= MIN_TEXT][:10]
     rows = []
-    for a, text in texts(picked):
-        title = f"{a['artist_name']} - {a['album']}"
-        if len(text) < MIN_TEXT:
-            continue
-        cells = []
-        for p, m in cols:
-            out = llm.ask(p, title, text, model=m) or {}
-            cells.append(f"{out.get('brief') or '—'}<br><br>{out.get('about') or '—'}<br><br>*{out.get('who') or ''}*")
-        rows.append(f"| {title} ({a.get('score') if a.get('score') is not None else 'classic' if a.get('classic') else '?'}) | "
-                    + " | ".join(c.replace("|", "/") for c in cells) + " |")
-    md = "| Обзор | " + " | ".join(m or p for p, m in cols) + " |\n|---|" + "---|" * len(cols) + "\n" + "\n".join(rows) + "\n"
-    print(md)
+    for a, text in picked:
+        rows.append({"id": a["id"], "title": f"{a['artist_name']} - {a['album']}", "verdict": verdict(a),
+                     "en": llm.ask("groq", f"{a['artist_name']} - {a['album']}", text, lang="en", verdict=verdict(a)) or {}})
+    tr = gemini.translate([r["en"] for r in rows]) or [{} for _ in rows]
+    dl = deepl.translate([r["en"] for r in rows]) or [{} for _ in rows]
+    for r, t, d in zip(rows, tr, dl):
+        r["gemini"], r["deepl"] = t, d
+        print("COMPARE " + json.dumps(r, ensure_ascii=False))
+
+    def cell(x):
+        return (f"{x.get('who') or '—'}<br><br>{x.get('brief') or '—'}<br><br>{x.get('about') or '—'}").replace("|", "/")
+    md = ("| Обзор | Перевод Gemini | Перевод DeepL |\n|---|---|---|\n"
+          + "\n".join(f"| {r['title']} | {cell(r['gemini'])} | {cell(r['deepl'])} |" for r in rows) + "\n")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a") as f:
@@ -90,9 +141,12 @@ def run():
         return compare(archive, reviews)
     path = DATA / "briefs.json"
     data = json.loads(path.read_text()) if path.exists() else {}
-    limit = int(os.environ.get("BRIEFS_LIMIT", "300"))
-    todo = targets(archive, reviews, {k for k, v in data.items() if finished(v)})
-    print(f"briefs: {sum(1 for v in data.values() if v.get('brief'))} done, {len(todo)} to do, this run up to {limit}")
+    limit = int(os.environ.get("BRIEFS_LIMIT") or "150")  # 150 = what 15 translation requests of 10 take
+    lang = os.environ.get("BRIEFS_LANG") or "en"
+    budget = int(os.environ.get("BRIEFS_TRANSLATE_MAX") or "15")
+    todo = targets(archive, reviews, {k for k, v in data.items() if finished(v, lang)})
+    print(f"briefs ({lang}): {sum(1 for v in data.values() if v.get('brief'))} done, {len(untranslated(data))} to translate, "
+          f"{len(todo)} to write, this run up to {limit}")
     made = failed = tried = 0
     streak = []  # (id, previous entry) of the failures in a row
     deadline = time.monotonic() + 60 * float(os.environ.get("BRIEFS_MINUTES", "100"))
@@ -111,13 +165,21 @@ def run():
             data[a["id"]] = {"skip": "no text" if not text else "short"}  # remembered, so it isn't fetched every run
             continue
         tried += 1
-        out = llm.summarize(f"{a['artist_name']} - {a['album']}", text)
+        title = f"{a['artist_name']} - {a['album']}"
+        out = llm.summarize(title, text, lang="en", verdict=verdict(a)) if lang == "en" else llm.summarize(title, text)
         if out and (out.get("brief") or "").strip():
-            data[a["id"]] = entry(out)
+            old = data.get(a["id"]) or {}
+            data[a["id"]] = entry(out, lang)
+            if lang == "en" and old.get("brief"):  # the old Russian one stays on the site until the translation comes
+                data[a["id"]].update({f: old[f] for f in ("brief", "about", "who") if old.get(f)})
             made += 1
             streak = []
+            if lang == "en":
+                budget = translate(data, budget)
             if made % 25 == 0:
                 save(path, data)  # a timeout later in the run keeps what is done
+        elif (data.get(a["id"]) or {}).get("brief"):  # an old Russian brief to write again: kept until a new one comes
+            failed += 1
         else:
             streak.append((a["id"], data.get(a["id"])))
             data[a["id"]] = {"fail": (data.get(a["id"]) or {}).get("fail", 0) + 1}  # given up after FAIL_MAX runs
@@ -130,8 +192,11 @@ def run():
                         data[k] = prev
                 print(f"::warning::no model answered {GIVE_UP} times in a row, stopping")
                 break
+    if lang == "en":
+        translate(data, budget, final=True)
     save(path, data)
-    print(f"briefs: made {made}, failed {failed}, total {sum(1 for v in data.values() if v.get('brief'))}")
+    print(f"briefs: made {made}, failed {failed}, total {sum(1 for v in data.values() if v.get('brief'))}, "
+          f"waiting for translation {len(untranslated(data))}")
 
 
 if __name__ == "__main__":

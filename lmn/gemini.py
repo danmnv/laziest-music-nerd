@@ -14,7 +14,8 @@ MODELS = [m.strip() for m in (os.environ.get("GEMINI_MODEL") or
 MODEL = MODELS[0]
 BUDGET_SEC = 240      # per review, all models and retries together, so a slow day can't eat the hourly run
 CALL_TIMEOUT = 90
-ABOUT_MAX = 560   # the site's longer brief ("about"); the prompt asks for 500
+ABOUT_MAX = 760   # the site's longer brief ("about"); the prompt asks for 700
+BRIEF_MAX = 240   # the card's short brief; the prompt asks for 220
 # When to listen; the same list and order as MOODS in worker/src/index.js (buttons carry the index, votes the words).
 MOODS = ["для тренировки", "для настроения", "для работы за столом", "для тусовки", "в дорогу", "на прогулку", "ночью",
          "перед сном", "когда грустно", "когда злишься", "в наушниках, вдумчиво", "фоном", "для романтики", "для бодрости"]
@@ -23,9 +24,9 @@ _unavailable = set()  # models found used up for today (or closed) during this r
 
 PROMPT = """Ты помогаешь вести русскоязычный Telegram-канал о музыкальных обзорах Anthony Fantano (The Needle Drop).
 {source} Ответь строго JSON-объектом с полями:
-- "brief": 1–2 предложения на русском, своими словами: что за релиз и что Фантано о нём думает. Не цитируй обзор, не переводи его дословно. До 220 символов.
-- "about": 3–4 предложения на русском, своими словами, для страницы сайта: что за релиз, что Фантано в нём хвалит, что ругает и к чему пришёл. Не цитируй обзор, не переводи его дословно. До 500 символов.
-- "who": 1 строка на русском о том, кто исполнитель (жанр/сцена, откуда, какой это по счёту релиз, если ясно из текста). Только факты из текста; если не ясно — пустая строка. До 140 символов.
+- "brief": 1–2 предложения на русском, своими словами: что за релиз и что Фантано о нём думает. Не цитируй обзор, не переводи его дословно. До 220 символов. Оценку пиши числом («7/10»), слова light, decent, strong не переводи.
+- "about": 4–5 предложений на русском, своими словами, для страницы сайта: что за релиз, что Фантано в нём хвалит (с названиями треков), что ругает и к чему пришёл. Не цитируй обзор, не переводи его дословно. До 700 символов.
+- "who": одна строка на русском строго по образцу «Ирландская пост-панк-группа из Дублина; пятый альбом.» или «Рэпер из Атланты, участник Migos; третий сольный альбом.»: откуда, жанр, кто (группа, рэпер, певица, продюсер), чей участник, если это важно; после точки с запятой — какой это релиз. Без имени исполнителя и названия релиза, без оценочных слов. Только факты из текста; чего нет в тексте — пропусти; если не ясно ничего — пустая строка. До 120 символов.
 - "moods": список из 1–2 вариантов ровно из этого набора: {moods}. Когда лучше всего слушать этот релиз: исходи из жанра, звучания и настроения, которые описывает обзор (тяжёлый и злой — не «фоном», тихий и грустный — не «для тусовки»).
 - "best_tracks": до 3 названий треков, которые Фантано выделил как лучшие, точно как они написаны в тексте. Если не выделил — пустой список.
 - "artist": имя исполнителя как в оригинале.
@@ -36,6 +37,55 @@ PROMPT = """Ты помогаешь вести русскоязычный Telegr
 Заголовок: {title}
 {text}"""
 SOURCE_TEXT = "Ниже — расшифровка его видеообзора."
+
+# The same answer in English, for models that write Russian poorly (lmn/llm.py); translate() then makes it Russian.
+PROMPT_EN = """You help run a Russian-language Telegram channel about Anthony Fantano's (The Needle Drop) music reviews.
+Below is the transcript of his video review. {verdict} Answer with a JSON object only, with the fields:
+- "brief": 1-2 sentences in English, in your own words: what the release is and what Fantano thinks of it. Don't quote the review. Up to 200 characters. Give the score exactly as stated above, never another one.
+- "about": 4-5 sentences in English, in your own words, for the website: what the release is, what Fantano praises (name the tracks), what he criticizes and where he lands. Don't quote the review. Up to 650 characters.
+- "who": one line in English, strictly in the pattern "Irish post-punk band from Dublin; fifth album." or "Atlanta rapper, member of Migos; third solo album.": where from, genre, what (band, rapper, singer, producer), whose member if it matters; after the semicolon, which release this is. No artist name, no release title, no opinions. Only facts from the text; leave out what the text doesn't say; if nothing is clear, an empty string. Up to 110 characters.
+- "moods": a list of 1-2 items copied exactly from this list: {moods}. When this release is best listened to, judging by the genre, sound and mood the review describes.
+- "best_tracks": up to 3 track titles Fantano singled out as the best, exactly as written in the text; else an empty list.
+- "artist": the artist's name as in the original.
+- "album": the release title as in the original.
+- "score_note": if Fantano gave the score with light, decent or strong (e.g. "a strong 7", "light to decent 6"), that word or pair in lowercase; else an empty string.
+Keep album, track and genre names in the original.
+Title: {title}
+Transcript:
+{text}"""
+
+TRANSLATE = """Переведи на русский тексты для русскоязычного канала о музыкальных обзорах Anthony Fantano. Пиши естественным,
+грамотным русским языком, как музыкальный журналист, а не дословно. Названия альбомов и треков, имена людей и названия групп
+оставляй в оригинале латиницей, без транслитерации. Жанры пиши по-русски, если у жанра есть привычное русское название
+(хип-хоп, пост-панк, индастриал-метал, синти-фанк, кантри); латиницей — только если его нет. Названия треков бери в
+кавычки-«ёлочки». Оценки пиши как в оригинале («7/10», «NOT GOOD», «CLASSIC»); слова light, decent, strong не переводи и
+не используй. Фамилию Fantano пиши «Фантано». Без сленга («выкатил», «залетел»). Ответь строго JSON-списком той же длины и
+в том же порядке, где у каждого элемента те же поля "brief", "about", "who" по-русски. "who" сохраняет образец
+оригинала: «Ирландская пост-панк-группа из Дублина; пятый альбом.»
+{items}"""
+
+
+def translate(items, api_key=None):
+    """English brief/about/who dicts -> the same list in Russian, in one Gemini request (its limit counts requests,
+    not words); None on any failure or a list of another length."""
+    api_key = (api_key or os.environ.get("GEMINI_API_KEY") or "").strip()
+    if not api_key or not items:
+        return None
+    src = [{k: (x.get(k) or "") for k in ("brief", "about", "who")} for x in items]
+    body = {"contents": [{"parts": [{"text": TRANSLATE.format(items=json.dumps(src, ensure_ascii=False, indent=1))}]}],
+            "generationConfig": {"responseMimeType": "application/json", "temperature": 0.3}}
+    model, raw = generate(body, api_key, budget=300)
+    if raw is None:
+        return None
+    try:
+        out = json.loads(raw["candidates"][0]["content"]["parts"][0]["text"])
+        if not isinstance(out, list) or len(out) != len(src) or not all(isinstance(x, dict) for x in out):
+            raise ValueError("not a list of the same length")
+        return [{"brief": trim_brief(str(x.get("brief") or "")), "about": trim_about(str(x.get("about") or "")),
+                 "who": str(x.get("who") or "").strip(), "tr": model} for x in out]
+    except (KeyError, IndexError, TypeError, ValueError, AttributeError) as e:
+        print(f"gemini {model}: bad translation {e!r}")
+        return None
 SOURCE_VIDEO = "Выше — сам его видеообзор на YouTube; ниже — описание видео."
 NOTE = re.compile(r"^(?:light|decent|strong)(?: to (?:light|decent|strong))?$")
 
@@ -104,12 +154,29 @@ def parse_answer(text):
     out["moods"] = [m for m in out.get("moods") or [] if m in MOODS][:2]
     note = str(out.get("score_note") or "").strip().lower()
     out["score_note"] = note if NOTE.match(note) else None
-    about = str(out.get("about") or "").strip()
-    if len(about) > ABOUT_MAX:  # cut at the last full sentence that fits
+    out["brief"] = trim_brief(str(out.get("brief") or "")) or None
+    out["about"] = trim_about(str(out.get("about") or "")) or None
+    return out
+
+
+def trim_brief(brief):
+    """Too long for the card: whole sentences that fit, if they still say what Fantano thinks; else as it is."""
+    brief = brief.strip()
+    if len(brief) > BRIEF_MAX:
+        cut = brief[:BRIEF_MAX]
+        cut = cut[:cut.rfind(". ") + 1] if ". " in cut else ""
+        if "Фантано" in cut:
+            brief = cut
+    return brief
+
+
+def trim_about(about):
+    """The site's brief cut at the last full sentence that fits."""
+    about = about.strip()
+    if len(about) > ABOUT_MAX:
         cut = about[:ABOUT_MAX]
         about = cut[:cut.rfind(". ") + 1] if ". " in cut else cut.rstrip() + "…"
-    out["about"] = about or None
-    return out
+    return about
 
 
 def _reason(body):

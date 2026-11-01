@@ -18,14 +18,14 @@ concurrency:
 jobs:
   specials:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Списки, рейтинги, фразы и любимые треки из роликов
-        timeout-minutes: 40
+        timeout-minutes: 55
         run: python -m lmn.specials
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
