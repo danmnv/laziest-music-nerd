@@ -190,7 +190,7 @@ async function onCallback(q, env) {
     if (a) await sendOtherAlbums(env, uid, arch, a.artist_name, true);
   } else if (parts[0] === "mb") {
     await answerNow();
-    await sendMbAlbum(env, uid, parts[1]);
+    await sendMbAlbum(env, uid, parts[1], q.message);
   } else if (parts[0] === "dz") {
     await answerNow();
     await sendDeezerAlbum(env, uid, parts[1]);
@@ -393,12 +393,21 @@ async function otherAlbums(env, arch, artistName) {
     mbid = hit && hit.id;
   }
   if (!mbid) return null;
-  const d = await mbJson(`release-group?artist=${mbid}&type=album|ep&limit=100`);
-  if (!d) return null;
+  // one page is 100 groups in MusicBrainz's own order, not by date: artists with many live albums need more pages
+  const groups = [];
+  for (let page = 0; page < 3; page++) {
+    const d = await mbJson(`release-group?artist=${mbid}&type=album|ep&limit=100&offset=${page * 100}`);
+    if (!d) {
+      if (!page) return null;
+      break;
+    }
+    groups.push(...(d["release-groups"] || []));
+    if (groups.length >= (d["release-group-count"] || 0) || !(d["release-groups"] || []).length) break;
+  }
   const reviewed = new Set(arch.filter((a) => nameKey(a.artist_name) === k).map((a) => nameKey(untitled(a.album))));
   const seen = new Set();
   const main = [], eps = [], extra = [];
-  const list = (d["release-groups"] || []).filter((x) => x["first-release-date"])
+  const list = groups.filter((x) => x["first-release-date"])
     .sort((a, b) => String(a["first-release-date"]).localeCompare(String(b["first-release-date"]))); // oldest first: a later live album or compilation with the same title loses
   for (const x of list) {
     const key = nameKey(untitled(x.title));
@@ -458,10 +467,17 @@ async function sendOtherAlbums(env, uid, arch, artist, extraOnly) {
 }
 
 // A release from MusicBrainz: its year and type from there, cover, length and links from Deezer.
-async function sendMbAlbum(env, uid, id) {
+// msg: the list message the button was on; when MusicBrainz is busy, the artist, title and year are read from it.
+async function sendMbAlbum(env, uid, id, msg) {
   if (!/^[0-9a-f-]{36}$/.test(id || "")) return;
   const g = await mbJson(`release-group/${id}?inc=artist-credits`);
-  if (!g || !g.title) return tg(env, "sendMessage", { chat_id: uid, text: "Не получилось открыть этот альбом." });
+  if (!g || !g.title) {
+    const x = fromListButton(msg, `mb:${id}`);
+    if (!x) return tg(env, "sendMessage", { chat_id: uid, text: "MusicBrainz сейчас не отвечает, попробуй через минуту." });
+    const dz = await deezerAlbum(x.artist, untitled(x.title));
+    return sendUnreviewed(env, uid, { ...x, genres: dz ? dz.genres : [], tracks: dz && dz.tracks, minutes: dz && dz.minutes,
+      cover: dz && dz.cover, link: dz && dz.link });
+  }
   const artist = ((g["artist-credit"] || [])[0] || {}).name || "";
   const dz = await deezerAlbum(artist, untitled(g.title));
   const second = g["secondary-types"] || [];
@@ -470,6 +486,17 @@ async function sendMbAlbum(env, uid, id) {
     artist, title: g.title, year: String(g["first-release-date"] || "").slice(0, 4), kind,
     genres: dz ? dz.genres : [], tracks: dz && dz.tracks, minutes: dz && dz.minutes, cover: dz && dz.cover, link: dz && dz.link,
   });
+}
+
+// "Radiohead — альбомы без обзора Фантано:" and the button "💿 The Bends · 1995 · EP" -> {artist, title, year, kind}
+function fromListButton(msg, data) {
+  const m = /^(.+?) — (?:альбомы без обзора|концертные)/.exec((msg && msg.text) || "");
+  const b = ((msg && msg.reply_markup && msg.reply_markup.inline_keyboard) || []).flat().find((x) => x.callback_data === data);
+  if (!m || !b) return null;
+  const [title, ...rest] = b.text.replace(/^💿 /, "").split(" · ");
+  if (!title || title.endsWith("…")) return null; // a cut title would find the wrong album
+  const year = /^\d{4}$/.test(rest[0] || "") ? rest.shift() : "";
+  return { artist: m[1], title, year, kind: rest[0] || "" };
 }
 
 // A card for an album without Fantano's review: cover, year, length, critics from Wikipedia, where to listen.

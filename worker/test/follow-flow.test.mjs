@@ -28,7 +28,7 @@ function d1(sqlite) {
   };
 }
 
-const [KIDA, BENDS, OKNOTOK, PABLO, TKOL, LUNG, UNDATED] = [1, 2, 3, 4, 5, 6, 7].map((n) => `0000000${n}-0000-4000-8000-000000000000`);
+const [KIDA, BENDS, OKNOTOK, PABLO, TKOL, LUNG, UNDATED, AMNESIAC] = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => `0000000${n}-0000-4000-8000-000000000000`);
 let mbDown = false;
 
 beforeEach(() => {
@@ -53,9 +53,13 @@ beforeEach(() => {
     }
     if (String(url).startsWith("https://site/rt/")) return new Response("not found", { status: 404 });
     if (String(url).startsWith("https://musicbrainz.org/") && mbDown) return new Response("busy", { status: 503 });
+    if (String(url).startsWith("https://musicbrainz.org/ws/2/release-group?artist=R&") && String(url).includes("offset=100")) {
+      return new Response(JSON.stringify({ "release-group-count": 101, "release-groups": [
+        { id: AMNESIAC, title: "Amnesiac", "first-release-date": "2001-06-04", "primary-type": "Album", "secondary-types": [] }] }));
+    }
     if (String(url).startsWith("https://musicbrainz.org/ws/2/release-group?artist=R&")) {
       const rg = (id, title, date, primary, second = []) => ({ id, title, "first-release-date": date, "primary-type": primary, "secondary-types": second });
-      return new Response(JSON.stringify({ "release-groups": [
+      return new Response(JSON.stringify({ "release-group-count": 101, "release-groups": [
         rg(KIDA, "Kid A", "2000-10-02", "Album"),
         rg(BENDS, "The Bends", "1995-03-13", "Album"),
         rg(OKNOTOK, "OK Computer OKNOTOK 1997 2017", "2017-06-23", "Album", ["Compilation"]),
@@ -234,6 +238,7 @@ test("an artist's albums without Fantano's review, and a card for one of them", 
   // studio albums newest first with the year of the first release, then EPs; reviewed Kid A and the undated one left out;
   // the compilation and the remixes wait behind their own button
   assert.deepEqual(other.reply_markup.inline_keyboard.map((r) => [r[0].text, r[0].callback_data]), [
+    ["💿 Amnesiac · 2001", `mb:${AMNESIAC}`], // from the second page
     ["💿 The Bends · 1995", `mb:${BENDS}`],
     ["💿 Pablo Honey · 1993", `mb:${PABLO}`],
     ["💿 My Iron Lung · 1994 · EP", `mb:${LUNG}`],
@@ -254,6 +259,11 @@ test("an artist's albums without Fantano's review, and a card for one of them", 
   const btns = c.reply_markup.inline_keyboard.flat();
   assert.ok(btns.some((b) => b.text === "Все платформы" && b.url === "https://album.link/https://www.deezer.com/album/20"));
   assert.ok(btns.some((b) => b.callback_data === "f:k"));
+  calls = [];
+  mbDown = true; // MusicBrainz busy: the card is made from the list button's title and year
+  await tgUpdate({ callback_query: { id: "q", from: { id: OWNER }, data: `mb:${BENDS}`, message: { message_id: 78, text: other.text, reply_markup: other.reply_markup } } });
+  assert.match(calls.find((x) => x.method === "sendPhoto").caption, /^<b>Radiohead — The Bends<\/b> \(1995\)\n⚪ Фантано не обозревал · Alternative · 12 треков/);
+  mbDown = false;
   calls = [];
   await press(OWNER, "dz:9"); // a reviewed album opened from Deezer gets the usual card
   assert.match(calls.find((x) => x.method === "sendPhoto").caption, /^<b>Radiohead — Kid A<\/b>/);
