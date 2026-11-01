@@ -135,9 +135,12 @@ test("/api/new-reviews needs the Actions secret", async () => {
 test("typing a name in the private chat searches Fantano's archive", async () => {
   await say(OWNER, "radiohead");
   const list = calls.find((c) => c.method === "sendMessage");
-  assert.equal(list.text, "Нашёл 2:");
+  assert.equal(list.text, "Radiohead — 2 обзора Фантано:");
   assert.deepEqual(list.reply_markup.inline_keyboard.map((r) => r[0].callback_data), ["a:k", "a:p"]);
-  assert.match(list.reply_markup.inline_keyboard[0][0].text, /🟢 10\/10 · Radiohead — Kid A · обзор 2020/);
+  assert.equal(list.reply_markup.inline_keyboard[0][0].text, "🟢 10/10 · Kid A · обзор 2020");
+  calls = [];
+  await press(OWNER, "ar:p"); // "Все обзоры артиста" on any of their cards
+  assert.equal(calls.find((c) => c.method === "sendMessage").text, "Radiohead — 2 обзора Фантано:");
   calls = [];
   await say(OWNER, "nothing like this");
   assert.match(calls[0].text, /Не нашёл обзора Фантано/);
@@ -152,6 +155,7 @@ test("one hit is sent as a full card: cover, length, all services, marks and fol
   assert.ok(btns.some((b) => b.text === "Все платформы" && b.url === "https://album.link/https://www.deezer.com/album/9"));
   assert.ok(btns.some((b) => b.callback_data === "m:k:done"));
   assert.ok(btns.some((b) => b.callback_data === "f:k"));
+  assert.ok(btns.some((b) => b.callback_data === "ar:k"));
   await press(OWNER, "f:k"); // an old review the bot never posted a card for
   assert.match(answers().at(-1).text, /Ты следишь за Radiohead/);
 });

@@ -4,7 +4,7 @@
 
 import { isDigestSunday } from "./digest.mjs";
 import { nameKey, followMatches } from "./follow.mjs";
-import { searchArchive, badge } from "./search.mjs";
+import { answerSearch, artistReviews, badge } from "./search.mjs";
 
 const STATUS_LABEL = { later: "• отложено", done: "✓ прослушано", nope: "✗ не понравилось" };
 const STATUS_ICON = { later: " •", done: " ✓", nope: " ✗" };
@@ -163,6 +163,9 @@ async function onCallback(q, env) {
       // the first follow: say where the list is, and give people who started the bot earlier the new menu button
       await tg(env, "sendMessage", { chat_id: uid, text: `${res.text}\nСписок и отписка — кнопка «${FOLLOWS_BUTTON}» внизу.`, reply_markup: MENU });
     }
+  } else if (parts[0] === "ar") {
+    const r = artistReviews(await archive(env), parts[1]);
+    if (r.total) await tg(env, "sendMessage", { chat_id: uid, ...artistMessage(r.artist, r.total, r.items, 0) });
   } else if (parts[0] === "a") {
     const a = (await archive(env)).find((x) => x.id === parts[1]);
     if (a) await sendAlbum(env, uid, a, "");
@@ -349,7 +352,7 @@ async function sendAlbum(env, uid, a, intro) {
     ],
     [allServices ? { text: "Все платформы", url: allServices } : { text: "🔎 Google", url: `https://www.google.com/search?q=${q}` }],
     [{ text: "• Отложить", callback_data: `m:${r.id}:later` }, { text: "✓ Прослушано", callback_data: `m:${r.id}:done` }, { text: "✗ Не понравилось", callback_data: `m:${r.id}:nope` }],
-    [{ text: "🔔 Следить за артистом", callback_data: `f:${r.id}` }],
+    [{ text: "🔔 Следить за артистом", callback_data: `f:${r.id}` }, { text: "Все обзоры артиста", callback_data: `ar:${r.id}` }],
   ] };
   if (cover) {
     const d = await tg(env, "sendPhoto", { chat_id: uid, photo: cover, caption: text, parse_mode: "HTML", reply_markup });
@@ -358,19 +361,40 @@ async function sendAlbum(env, uid, a, intro) {
   return tg(env, "sendMessage", { chat_id: uid, text, parse_mode: "HTML", reply_markup, link_preview_options: { is_disabled: true } });
 }
 
+function albumButtons(items, withArtist) {
+  return items.map((a) => [{
+    text: `${badge(a)} · ${withArtist ? short(a.artist_name) + " — " : ""}${short(a.album)} · обзор ${String(a.published).slice(0, 4)}${a.guest ? " · гость" : ""}`.slice(0, 120),
+    callback_data: `a:${a.id}`,
+  }]);
+}
+
+function plural(n, one, few, many) {
+  return n % 10 === 1 && n % 100 !== 11 ? one : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? few : many;
+}
+
+const reviewsWord = (n) => `${n} ${plural(n, "обзор", "обзора", "обзоров")}`;
+
+// One artist's reviews as buttons, newest first.
+function artistMessage(artist, total, items, others) {
+  const head = `${artist} — ${reviewsWord(total)} Фантано` + (total > items.length ? ` (показаны ${items.length} новых)` : "") + ":";
+  const tail = others ? `\n\nЕщё ${reviewsWord(others)} других артистов по этому запросу — уточни его, чтобы их увидеть.` : "";
+  return { text: head + tail, reply_markup: { inline_keyboard: albumButtons(items, false) } };
+}
+
+// A search answers with a card, one artist's albums, a few albums, or a choice of artists first.
 async function search(env, uid, query) {
-  const { total, items } = searchArchive(await archive(env), query);
-  if (!total) {
+  const r = answerSearch(await archive(env), query);
+  if (r.kind === "none") {
     return tg(env, "sendMessage", { chat_id: uid, text: `Не нашёл обзора Фантано по запросу «${query.slice(0, 100)}». Попробуй имя артиста или название альбома.` });
   }
-  if (total === 1) return sendAlbum(env, uid, items[0], "");
+  if (r.kind === "card") return sendAlbum(env, uid, r.item, "");
+  if (r.kind === "albums" && r.artist) return tg(env, "sendMessage", { chat_id: uid, ...artistMessage(r.artist, r.total, r.items, r.others) });
+  if (r.kind === "albums") return tg(env, "sendMessage", { chat_id: uid, text: `Нашёл ${r.total}:`, reply_markup: { inline_keyboard: albumButtons(r.items, true) } });
   return tg(env, "sendMessage", {
     chat_id: uid,
-    text: total > items.length ? `Нашёл ${total}, вот ${items.length} — уточни запрос, чтобы увидеть остальные:` : `Нашёл ${total}:`,
-    reply_markup: { inline_keyboard: items.map((a) => [{
-      text: `${badge(a)} · ${short(a.artist_name)} — ${short(a.album)} · обзор ${String(a.published).slice(0, 4)}${a.guest ? " · гость" : ""}`.slice(0, 120),
-      callback_data: `a:${a.id}`,
-    }]) },
+    text: `Нашёл ${reviewsWord(r.total)} у ${r.groups} ${plural(r.groups, "артиста", "артистов", "артистов")}. Выбери артиста` +
+      (r.groups > r.artists.length ? ` (показаны ${r.artists.length} с наибольшим числом обзоров) или уточни запрос:` : ":"),
+    reply_markup: { inline_keyboard: r.artists.map((x) => [{ text: `${short(x.name)} · ${reviewsWord(x.count)}`.slice(0, 120), callback_data: `ar:${x.id}` }]) },
   });
 }
 
