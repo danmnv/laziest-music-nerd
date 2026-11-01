@@ -224,7 +224,8 @@ async function onCallback(q, env) {
   } else if (parts[0] === "v") {
     const [, rid, idx, vote] = parts;
     const r = (await reviews(env)).find((x) => x.id === rid);
-    const mood = cardMoods(r, r && r.ai && r.ai.moods ? null : await criticsOf(env, rid))[Number(idx)] || null;
+    // the same rule as the card's buttons (cardMoods): the card's own guess if it has one, else the archive brief's
+    const mood = cardMoods(r, r && r.ai && r.ai.moods && r.ai.moods.length ? null : await criticsOf(env, rid))[Number(idx)] || null;
     if (mood && (vote === "y" || vote === "n")) {
       await env.DB.prepare("INSERT INTO mood_votes (user_id, review_id, mood, vote) VALUES (?,?,?,?) ON CONFLICT(user_id, review_id, mood) DO UPDATE SET vote=excluded.vote")
         .bind(uid, rid, mood, vote).run();

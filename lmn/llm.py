@@ -59,6 +59,9 @@ def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotoni
                     continue
                 _dead.add(name)
                 return None
+            if e.status == 404 and "model" in (e.body or ""):  # the picked model is gone too: no use asking this provider
+                _dead.add(name)
+                return None
             if e.status in (0, 429, 500, 502, 503, 504) and attempt < 2:
                 sleep(15 * (attempt + 1))  # rate limit or a hiccup: a bit later
                 continue

@@ -44,7 +44,9 @@ def deezer_track(artist, title):
     Deezer's track search answers nothing when the query has an artist:"..." field (checked from Actions 2026-11-01:
     artist:"Radiohead" track:"Karma Police" -> 0 results), so it searches the plain words, then track:"..." alone,
     and checks the artist itself."""
-    for q in (f"{artist} {title}", f'track:"{title}"'):
+    for i, q in enumerate((f"{artist} {title}", f'track:"{title}"')):
+        if i:
+            time.sleep(SLEEP)  # Deezer allows about 50 requests per 5 seconds
         try:
             d = http.get_json(f"https://api.deezer.com/search/track?q={urllib.parse.quote(q)}&limit=25")
         except Exception as e:
