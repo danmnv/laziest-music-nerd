@@ -637,9 +637,11 @@ async function sendUnreviewed(env, uid, x) {
 // Critics' and listeners' scores on Album of the Year: a link to its search only, nothing is fetched from AOTY.
 // The album's Bandcamp page when the card found one (new reviews), else Bandcamp's search for it: there is no
 // Bandcamp API, and its search page can't be read from a script (lmn/links.py).
-function bandcampButton(links, artist, album) {
+// fromVideo: Fantano's "Listen:" link when it is Bandcamp (rt.bc, lmn/notes.py), for archive reviews without a card's links
+function bandcampButton(links, artist, album, fromVideo) {
   const bc = links && links.bandcamp;
   if (bc && !bc.includes("bandcamp.com/search")) return { text: "Bandcamp", url: bc };
+  if (fromVideo && /^https:\/\/([a-z0-9-]+\.)?bandcamp\.com\//i.test(fromVideo)) return { text: "Bandcamp", url: fromVideo };
   return { text: "🔎 Bandcamp", url: `https://bandcamp.com/search?q=${encodeURIComponent(`${artist} ${album}`)}&item_type=a` };
 }
 
@@ -676,7 +678,7 @@ async function sendAlbum(env, uid, a, intro) {
   const brief = (full && full.ai && full.ai.brief) || (rt && rt.brief);
   const moods = cardMoods(full, rt);
   const words = [
-    brief ? `<b>Бриф:</b> ${esc(brief)}` : "",
+    brief ? `<b>Описание:</b> ${esc(brief)}` : "",
     rt && rt.blurb && !brief ? `💬 <i>${esc(rt.blurb)}</i>` : "",
     rt && rt.fav && rt.fav.length ? `★ Любимые у Фантано: ${esc(rt.fav.join(", "))}` : "",
     moods.length ? `<b>Когда слушать:</b> ${esc(moods.join(" / "))} <i>(догадка ИИ, поправь кнопками)</i>` : "",
@@ -692,7 +694,7 @@ async function sendAlbum(env, uid, a, intro) {
       vid ? { text: "▶ Видеообзор", url: `https://youtu.be/${vid}` } : { text: "Обзор", url: r.url },
       allServices ? { text: "Все платформы", url: allServices } : { text: "🔎 Google", url: `https://www.google.com/search?q=${q}` },
     ],
-    [bandcampButton(links, r.artist_name, r.album),
+    [bandcampButton(links, r.artist_name, r.album, rt && rt.bc),
       links.youtube_album ? { text: "YouTube (альбом)", url: links.youtube_album } : { text: "🔎 YouTube Music", url: `https://music.youtube.com/search?q=${q}` }],
     [aoty(r.artist_name, r.album)],
     MARK_ROW(r.id),

@@ -129,7 +129,7 @@ def _caption(r, ai, limit, drop=()):
     if before:
         lines.append(f"<b>Фантано раньше:</b> {before}")
     if ai.get("brief"):
-        lines.append(f"<b>Бриф:</b> {e(ai['brief'])}")
+        lines.append(f"<b>Описание:</b> {e(ai['brief'])}")
     if ai.get("moods") and "moods" not in drop:
         lines.append(f"<b>Когда слушать:</b> {e(' / '.join(ai['moods']))} <i>(догадка ИИ, поправь кнопками)</i>")
     tl = tracklist(r, limit) if limit != 0 else []

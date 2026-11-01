@@ -50,27 +50,37 @@ def texts(items):
             yield a, (None if got is None else got.get(a["id"]) or "")
 
 
+PROMPT_V = 2  # 2: no score in the text (2026-11-01); entries written by an older prompt are written again
+
+
 def finished(v, lang="ru"):
     if lang == "en" and v.get("brief") and not v.get("tr") and not v.get("en"):
         return False  # written in Russian by a model that writes it poorly: again, in English and translated
+    if lang == "en" and (v.get("brief") or v.get("en")) and v.get("p", 1) < PROMPT_V:
+        return False  # until then the site shows the old text with the score cut (gemini.drop_score)
     return bool(v.get("brief") or v.get("en") or v.get("skip") or v.get("fail", 0) >= FAIL_MAX)
 
 
+NO_SCORE = "The card shows it above your text: never write it."
+
+
 def verdict(a):
-    """The score as the review gives it, for the English prompt: the models made one up when there was none
-    (Kid Rock's "NOT GOOD" came back as 0/10, 1/10 and 2/10)."""
+    """The score as the review gives it, for the English prompt: for the model's sense of how much he liked it, not to
+    write (Daniil, 2026-11-01: a repeat of the card's score line). Without it the models made one up (Kid Rock's
+    "NOT GOOD" came back as 0/10, 1/10 and 2/10)."""
     if a.get("score") is not None:
-        return f"Fantano's score: {a['score']}/10."
+        return f"Fantano's score: {a['score']}/10. {NO_SCORE}"
     if a.get("not_good"):
-        return 'Fantano gave no number, his verdict is "NOT GOOD": write that instead of a score.'
+        return f'Fantano gave no number, his verdict is "NOT GOOD". {NO_SCORE}'
     if a.get("classic"):
-        return 'Fantano gave no number, his verdict is "CLASSIC": write that instead of a score.'
+        return f'Fantano gave no number, his verdict is "CLASSIC". {NO_SCORE}'
     return "Fantano gave no score: don't write one."
 
 
 def entry(out, lang="ru"):
     text = {k: (out.get(k) or "").strip() for k in ("brief", "about", "who")}
-    e = {**(text if lang == "ru" else {"en": {k: v for k, v in text.items() if v}}), "moods": out.get("moods") or [], "m": out.get("model")}
+    e = {**(text if lang == "ru" else {"en": {k: v for k, v in text.items() if v}}), "moods": out.get("moods") or [], "m": out.get("model"),
+         "p": PROMPT_V}
     return {k: v for k, v in e.items() if v}
 
 

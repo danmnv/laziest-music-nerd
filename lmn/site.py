@@ -9,7 +9,7 @@ import unicodedata
 import urllib.parse
 from pathlib import Path
 
-from . import card, ratings, specials, tnd
+from . import card, gemini, ratings, specials, tnd
 from .colors import color, label
 from .musicbrainz import norm
 
@@ -232,6 +232,8 @@ def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, 
     album = album or {}
     if album.get("dz"):
         btns.append(("Все платформы", f"https://album.link/https://www.deezer.com/album/{int(album['dz'])}"))
+    if (note or {}).get("bc"):  # Fantano's own "Listen:" link (lmn/notes.py)
+        btns.append(("Bandcamp", note["bc"]))
     btns += search_buttons(a["artist_name"], a["album"])
     year = album.get("y") if (album.get("y") or "9999") <= a["published"][:4] else None  # Deezer may only have a later reissue
     by_date = sorted(artist_reviews, key=lambda x: x["published"])
@@ -244,7 +246,7 @@ def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, 
     others = [x for x in artist_reviews if x["id"] != a["id"]]
     hist = (f'<h2>Фантано об этом артисте</h2>{history_list(artist_reviews, a["id"], 1)}' if others else "")
     brief = brief or {}
-    rows = [(k, e(v)) for k, v in (("Кто", brief.get("who")), ("Бриф", brief.get("about") or brief.get("brief"))) if v]
+    rows = [(k, e(v)) for k, v in (("Кто", brief.get("who")), ("Описание", brief.get("about") or brief.get("brief"))) if v]
     # Fantano's line only where there's no brief (as on bot-card pages)
     rows += notes_rows({**(note or {}), "blurb": None if brief.get("brief") else (note or {}).get("blurb")} if note else None, a["id"])
     if album.get("t"):  # Fantano's favourites marked with ★, as on bot-card pages
@@ -309,7 +311,7 @@ def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None, artis
     if before and not others:  # with other reviews, they are listed below as on archive pages, each linked to its page
         rows.append(("Фантано раньше", before))
     if ai.get("brief"):  # the site has room for the longer one; the card in Telegram keeps the short one
-        rows.append(("Бриф", e(ai.get("about") or ai["brief"])))
+        rows.append(("Описание", e(ai.get("about") or ai["brief"])))
     if ai.get("moods"):
         rows.append(("Когда слушать", '<span class="moods">' + e(" / ".join(ai["moods"])) + ' <span class="muted">(догадка ИИ)</span></span>'))
     dossier = []
@@ -331,6 +333,9 @@ def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None, artis
     rows += notes_rows({"blurb": None if ai.get("brief") else (note or {}).get("blurb")}, r["id"])
     rows += lists_rows(lists)
     rows += critics_rows(rt, r)
+    bc = (r.get("links") or {}).get("bandcamp") or ""
+    if (note or {}).get("bc") and (not bc or "bandcamp.com/search" in bc):
+        r = dict(r, links={**(r.get("links") or {}), "bandcamp": note["bc"]})
     top, alls = card.link_rows(r)
     btns = "".join(f'<a class="btn" href="{e(u)}">{e(n)}</a>' for n, u in top + alls + [
         ("Текст обзора на TND", r.get("tnd_url") or (r["url"] if "theneedledrop.com" in r["url"] else None)),
@@ -401,6 +406,11 @@ def build():
         li = lists.get(a["id"])
         nt = notes.get(a["id"])
         br = briefs.get(a["id"])
+        # the score is in the page's and the card's first lines: not again in the text (gemini.drop_score)
+        if br:
+            br = {**br, **{k: gemini.drop_score(br[k]) for k in ("brief", "about") if br.get(k)}}
+        if (a.get("ai") or {}).get("brief"):
+            a = {**a, "ai": {**a["ai"], **{k: gemini.drop_score(a["ai"][k]) for k in ("brief", "about") if a["ai"].get(k)}}}
         html_ = (release_page(a, rt, artists.get((a.get("artist") or {}).get("mbid") or ""), li, nt, br, by_artist[slug(a["artist_name"])])
                  if a["id"] in enriched
                  else archive_page(a, by_artist[slug(a["artist_name"])], rt, li, nt, br, albums.get(a["id"]) or None))
@@ -415,6 +425,7 @@ def build():
                  **({"lists": li[:4]} if li else {}), **({"blurb": nt["blurb"]} if nt.get("blurb") else {}),
                  **({"brief": bf} if bf else {}), **({"moods": bm} if bm else {}),
                  **({"video_id": nt["video_id"]} if nt.get("video_id") and not a.get("video_id") else {}),
+                 **({"bc": nt["bc"]} if nt.get("bc") else {}),
                  **({"fav": [track_name(f["t"], fav_titles(a, albums.get(a["id"]))) for f in nt["fav"]], "fav_play": any(f.get("dz") or f.get("am") for f in nt["fav"])} if nt.get("fav") else {})},
                 ensure_ascii=False))
     for k, items in by_artist.items():

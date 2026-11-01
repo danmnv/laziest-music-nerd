@@ -3,7 +3,7 @@ blurb he writes under "Listen:", and his FAV TRACKS (with Deezer track IDs, so t
 player for them; Deezer's widget plays 30-second previews). A track Deezer doesn't have gets Apple Music's official
 embed instead (30-second previews for everyone, the whole track for subscribers), found with the iTunes Search API.
 
-Writes data/notes.json: {review id: {"video_id", "blurb", "fav": [{"t": title, "dz": Deezer track id, 0 if not on
+Writes data/notes.json: {review id: {"video_id", "blurb", "bc": Fantano's "Listen:" link when it is Bandcamp, "fav": [{"t": title, "dz": Deezer track id, 0 if not on
 Deezer, null or missing if not found out yet; "am": Apple Music path like "us/album/x/123?i=456", 0 if not there
 either}]}}. Also data/albums.json: {review id: the album on Deezer (cover, year, minutes, tracklist; see deezer_album),
 0 if Deezer has no such album}, for the site's archive pages, which otherwise know less than the bot's cards
@@ -24,6 +24,13 @@ SLEEP = 0.15
 NOISE = re.compile(r"^(listen|buy this|more .*reviews?|subscribe|official site|tnd |support|patreon|amazon|turntable|"
                    r"twitter|instagram|tiktok|facebook|y'all know|what do you think|what should i review|love it\?|"
                    r"fav tracks?|least fav|edited by|team:|videos edited|written by|our sponsor|thanks? |shoutouts?)", re.I)
+
+
+def bandcamp(desc):
+    """The "Listen:" link of the description when it is a Bandcamp page (the album's, sometimes the artist's), or None."""
+    url = re.sub(r"^http://", "https://", parse_description(desc).get("listen_url") or "")  # old descriptions: http, Bandcamp serves https
+    host = re.sub(r"^https?://", "", url).split("/", 1)[0].lower()
+    return url if url.startswith("http") and (host == "bandcamp.com" or host.endswith(".bandcamp.com")) and "/search" not in url else None
 
 
 def blurb(desc):
@@ -180,7 +187,7 @@ def build(uploads, archive, old, deezer_limit=1500, apple_limit=200, deadline=No
                     am = apple_track(a["artist_name"], t)
                     if am is not None:
                         f["am"] = am
-        n = {"video_id": v["id"], "blurb": blurb(v["desc"]), "fav": fav}
+        n = {"video_id": v["id"], "blurb": blurb(v["desc"]), "fav": fav, "bc": bandcamp(v["desc"])}
         out[a["id"]] = {k: x for k, x in n.items() if x}
     print(f"notes: {len(out)} reviews, {sum(1 for n in out.values() if n.get('blurb'))} with a blurb, "
           f"{sum(1 for n in out.values() if n.get('fav'))} with fav tracks; Deezer lookups {lookups}, Apple lookups {apple}")

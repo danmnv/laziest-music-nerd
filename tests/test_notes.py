@@ -33,6 +33,16 @@ class Blurb(unittest.TestCase):
         self.assertTrue(notes.blurb(long).endswith("…"))
 
 
+class BandcampLink(unittest.TestCase):
+    def test_listen_line_on_bandcamp(self):
+        self.assertEqual(notes.bandcamp(DESC), "https://thenational.bandcamp.com/album/x")
+        self.assertIsNone(notes.bandcamp("Listen: https://open.spotify.com/album/x\n"))
+        self.assertIsNone(notes.bandcamp("Listen: https://notbandcamp.com.evil.io/x\n"))
+        self.assertIsNone(notes.bandcamp("Listen: https://bandcamp.com/search?q=x\n"))
+        self.assertIsNone(notes.bandcamp("no listen line"))
+        self.assertEqual(notes.bandcamp("Listen: http://x.bandcamp.com/album/y\n"), "https://x.bandcamp.com/album/y")
+
+
 class Build(unittest.TestCase):
     def setUp(self):  # never the network: a track not on Deezer would ask Apple
         patcher = mock.patch.object(notes, "apple_track", return_value=0)
@@ -46,6 +56,7 @@ class Build(unittest.TestCase):
             out = notes.build(ups, archive, {})
         self.assertEqual(out["nat"]["fav"], [{"t": "EUCALYPTUS", "dz": 111}, {"t": "TROPIC MORNING NEWS", "dz": 0, "am": 0}])
         self.assertEqual(out["nat"]["video_id"], "cuAbVa3NM5I")
+        self.assertEqual(out["nat"]["bc"], "https://thenational.bandcamp.com/album/x")
         with mock.patch.object(notes, "deezer_track") as dz:
             again = notes.build(ups, archive, out)
         dz.assert_not_called()  # both were looked up already, one simply isn't on Deezer
