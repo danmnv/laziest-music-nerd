@@ -7,6 +7,7 @@ import { nameKey, followMatches } from "./follow.mjs";
 import { answerSearch, artistReviews, badge } from "./search.mjs";
 import { criticsText } from "./critics.mjs";
 import { wikiCritics } from "./wiki.mjs";
+import { startLink, openFromStart } from "./links.mjs";
 
 const STATUS_LABEL = { later: "• отложено", done: "✓ прослушано", nope: "✗ не понравилось" };
 const STATUS_ICON = { later: " •", done: " ✓", nope: " ✗" };
@@ -73,10 +74,9 @@ export default {
         // Called by GitHub Actions after a new review: refresh every pinned list in private chats.
         if (req.headers.get("Authorization") !== `Bearer ${env.ACTIONS_SECRET}`) return new Response("forbidden", { status: 403 });
         const body = await req.json().catch(() => ({}));
+        // The pinned lists in private chats hold each person's «отложено» now, which a new review doesn't change.
         if (Array.isArray(body.items)) await setSetting(env, "list_items", JSON.stringify(body.items));
-        const { results } = await env.DB.prepare("SELECT user_id FROM users WHERE dm_pinned_id IS NOT NULL").all();
-        ctx.waitUntil((async () => { for (const u of results) await refreshDmList(env, u.user_id, false); })());
-        return json({ ok: true, users: results.length });
+        return json({ ok: true });
       }
       if (url.pathname === "/api/new-reviews" && req.method === "POST") {
         // Called by GitHub Actions right after cards are posted: remember each card's artist, message the followers.
@@ -105,7 +105,7 @@ export default {
 
   async scheduled(event, env, ctx) {
     if (event.cron === "0 7 * * SUN") ctx.waitUntil(sendDigest(env));
-    else ctx.waitUntil(sendReminders(env));
+    else ctx.waitUntil((async () => { await sendReminders(env); await migrateDmPins(env); })());
   },
 };
 
@@ -314,17 +314,6 @@ async function publicStats(env) {
 
 // ---------- pinned lists ----------
 
-// A card's button action ("a:<id>", "dz:<id>", "mb:<mbid>") as a link that opens it in the private chat:
-// t.me/<bot>?start=a_<id>. Start parameters allow only A-Z, a-z, 0-9, _ and -, up to 64 characters.
-export function startLink(env, open) {
-  return `https://t.me/${env.BOT_USERNAME}?start=${open.replace(":", "_")}`;
-}
-
-export function openFromStart(text) {
-  const m = /^\/start (a|dz|mb)_([A-Za-z0-9_-]{1,60})$/.exec(text);
-  return m ? `${m[1]}:${m[2]}` : null;
-}
-
 async function openCard(env, uid, open) {
   const [kind, id] = [open.slice(0, open.indexOf(":")), open.slice(open.indexOf(":") + 1)];
   if (kind === "dz") return sendDeezerAlbum(env, uid, id);
@@ -385,7 +374,7 @@ async function laterList(env, uid) {
   return renderLater(env, items);
 }
 
-export function renderLater(env, items) {
+function renderLater(env, items) {
   const lines = items.map((x) => `${x.badge ? x.badge + " · " : ""}<a href="${startLink(env, x.open)}">${esc(x.artist_name)} — ${esc(x.album)}</a>`);
   let n = lines.length;
   const tail = (k) => (k < lines.length ? `\n\nЕщё ${lines.length - k} — кнопка «${LATER_BUTTON}»` : "");
@@ -972,6 +961,17 @@ async function sendLater(env, uid) {
 }
 
 // ---------- reminders (daily cron) ----------
+
+// Until 2026-11-01 the pinned message in a private chat was the 60-day list. The daily cron turns a few of them a day
+// into the «отложено» list (a person's own mark or /start does it at once); a cursor in settings remembers the last one.
+async function migrateDmPins(env, perRun = 10) {
+  const after = Number((await getSetting(env, "dm_pins_v2_after")) || 0);
+  if (after < 0) return; // all done
+  const { results } = await env.DB.prepare("SELECT user_id FROM users WHERE dm_pinned_id IS NOT NULL AND user_id > ? ORDER BY user_id LIMIT ?")
+    .bind(after, perRun).all();
+  for (const u of results) await refreshDmList(env, u.user_id, false);
+  await setSetting(env, "dm_pins_v2_after", String(results.length < perRun ? -1 : results[results.length - 1].user_id));
+}
 
 async function sendReminders(env) {
   const cutoff = new Date(Date.now() - 21 * 864e5).toISOString();

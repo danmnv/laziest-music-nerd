@@ -429,7 +429,7 @@ test("a link from a pinned list: the card in the private chat, the «/start» it
 });
 
 test("start parameters: only a card's own kinds and safe characters", async () => {
-  const { openFromStart, startLink } = await import("../src/index.js");
+  const { openFromStart, startLink } = await import("../src/links.mjs");
   assert.equal(openFromStart("/start a_6ae16e7060a520b7b082e3e1"), "a:6ae16e7060a520b7b082e3e1");
   assert.equal(openFromStart("/start dz_302127"), "dz:302127");
   assert.equal(openFromStart("/start follow_k"), null);

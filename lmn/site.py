@@ -145,7 +145,8 @@ def track_name(t, titles=()):
             return x
     if not (t.isupper() and len(re.sub(r"[^A-Za-z]", "", t)) > 3):
         return t
-    return " ".join(w if ROMAN.match(w) else w[:1] + w[1:].lower() for w in t.split(" "))
+    return " ".join(w if ROMAN.match(w) else re.sub(r"[A-Za-z]", lambda m: m.group().upper(), w.lower(), count=1)
+                    for w in t.split(" "))  # the first letter, so "(LOVE SONG)" is "(Love Song)"
 
 
 def fav_section(n, titles=()):
