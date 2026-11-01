@@ -8,7 +8,7 @@ import worker from "../src/index.js";
 const OWNER = 1, OTHER = 2;
 const ARCHIVE = [
   { id: "k", url: "https://tnd/kid-a", published: "2020-01-01", artist_name: "Radiohead", album: "Kid A", score: 10, genres: ["art rock"] },
-  { id: "p", url: "https://tnd/pool", published: "2016-05-10", artist_name: "Radiohead", album: "A Moon Shaped Pool", score: 8, video_id: "vidvidvid01" },
+  { id: "p", url: "https://tnd/pool", published: "2016-05-10", artist_name: "Radiohead", album: "A Moon Shaped Pool", score: 8, video_id: "vidvidvid01", genres: ["art rock"] },
   { id: "x", url: "https://tnd/x", published: "2011-01-01", artist_name: "Obscure", album: "Nothing", score: null },
 ];
 let db, calls, env;
@@ -40,6 +40,7 @@ beforeEach(() => {
       calls.push({ method: String(url).split("/").pop(), ...JSON.parse(opts.body) });
       return new Response(JSON.stringify({ ok: true, result: { message_id: 500 + calls.length } }));
     }
+    if (String(url).endsWith("state.json")) return new Response(JSON.stringify({ channel_pinned_id: 2 }));
     if (String(url).endsWith("list.json")) return new Response(JSON.stringify({ items: [] }));
     if (String(url).endsWith("reviews.json")) return new Response(JSON.stringify([{ id: "old1", artist_name: "Shame", artist: { mbid: "S" } }]));
     if (String(url).endsWith("archive.json")) return new Response(JSON.stringify(ARCHIVE));
@@ -173,4 +174,18 @@ test("random pick is a full card too", async () => {
   const body = c.caption || c.text;
   assert.match(body, /^🎲 Случайный из архива:\n\n<b>Radiohead — /);
   assert.ok(c.reply_markup.inline_keyboard.flat().some((b) => b.callback_data && b.callback_data.startsWith("f:")));
+});
+
+test("a button press is answered before the slow follow-ups (similar albums, a full card)", async () => {
+  await say(OWNER, "/start");
+  calls = [];
+  await press(OWNER, "m:k:done"); // Kid A as listened: three similar cards follow
+  const first = calls.findIndex((c) => c.method === "answerCallbackQuery");
+  const firstCard = calls.findIndex((c) => c.method === "sendPhoto" || (c.method === "sendMessage" && /Понравилось/.test(c.text || "")));
+  assert.ok(first >= 0 && firstCard > first, `answer at ${first}, first similar message at ${firstCard}`);
+  assert.equal(answers().length, 1, "answered exactly once");
+  calls = [];
+  await press(OWNER, "a:k");
+  assert.equal(calls[0].method, "answerCallbackQuery");
+  assert.equal(answers().length, 1);
 });
