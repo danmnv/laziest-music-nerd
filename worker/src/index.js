@@ -70,8 +70,9 @@ const MENU_V = "4"; // a person whose keyboard is older gets the new one with a 
 const COMMANDS = [{ command: "listen", description: "Наверстать: обзоры после последнего прослушанного" },
   { command: "random", description: "Случайный альбом из архива с оценкой от 8" }, { command: "later", description: "Послушать потом" },
   { command: "liked", description: "Понравившееся" },
-  { command: "follows", description: "Мои артисты" }, { command: "help", description: "Как пользоваться ботом" }];
-const COMMANDS_V = "3";
+  { command: "follows", description: "Мои артисты" }, { command: "help", description: "Как пользоваться ботом" },
+  { command: "forget", description: "Удалить всё, что бот знает обо мне" }];
+const COMMANDS_V = "4";
 // Two buttons a row, short enough for a phone without "…". «♡ Понравилось» is its own mark, kept whatever the status
 // (owner, 2026-11-02: «Слушал» used to overwrite «отложено», which he used for the albums he liked); ♥ when it's on.
 const likeButton = (id, liked) => ({ text: liked ? "♥ Понравилось" : "♡ Понравилось", callback_data: `lk:${id}` });
@@ -205,6 +206,7 @@ async function onUpdate(u, env) {
   }
   if (!text.startsWith("/start")) await maybeNewMenu(env, uid);
   if (text === "/help" || text === HELP_BUTTON) return sendHelp(env, uid);
+  if (text === "/forget") return askForget(env, uid);
   if (text === "/listen" || text === QUEUE_BUTTON || text === OLD_QUEUE_BUTTON) return sendQueue(env, uid, {});
   if (text === "/random" || text === RANDOM_BUTTON) return sendRandom(env, uid);
   if (text === "/later" || text === LATER_BUTTON || text === OLD_LATER_BUTTON) return sendLater(env, uid);
@@ -259,6 +261,10 @@ function helpText(env) {
     "• <b>Отметки.</b> «Слушал», «Понравилось», «Послушать потом», «Не моё»: кнопки видят все, а твои отметки только ты. На сайте они видны после входа через Telegram.\n" +
     "• <b>Артисты.</b> «🔔 Следить» под карточкой: когда у артиста выйдет новый альбом, а потом обзор Фантано на него, напишу сюда. Список — кнопка «" + FOLLOWS_BUTTON + "».\n" +
     "• <b>Случайный.</b> «" + RANDOM_BUTTON + "»: альбом с оценкой от 8, который ты ещё не отмечал(а).\n\n" +
+    // what is stored, in plain words (the owner, 2026-11-02); the ID itself can't be encrypted, the bot writes to it
+    "<b>Что я храню.</b> Твой Telegram ID (без имени, ника и фото) и то, что ты нажимал(а) здесь и в канале: отметки, «Понравилось», голоса «Вайб для», артистов. " +
+    "Всё лежит в зашифрованной базе Cloudflare. Другим видны только средняя оценка и голоса по альбому, без того, кто голосовал, и только когда проголосовали хотя бы 3 человека. " +
+    "/forget удалит всё это; из зашифрованных резервных копий оно пропадёт само в течение 90 дней.\n\n" +
     "Неофициальный проект. Не связан с Anthony Fantano и The Needle Drop.";
 }
 
@@ -396,6 +402,14 @@ async function onCallback(q, env) {
     }
     if (q.message) await tg(env, "deleteMessage", { chat_id: uid, message_id: q.message.message_id });
     await openQueueCard(env, uid, prev.id, later ? "l" : "c");
+  } else if (parts[0] === "fg") { // /forget: fg:y deletes everything about this person, fg:n keeps it
+    if (parts[1] === "y") await forgetUser(env, uid);
+    answer = parts[1] === "y" ? "Удалено" : "Ничего не удалено";
+    await answerNow();
+    if (q.message) await tg(env, "deleteMessage", { chat_id: uid, message_id: q.message.message_id });
+    await tg(env, "sendMessage", { chat_id: uid, ...(parts[1] === "y"
+      ? { text: "Готово: я больше ничего о тебе не храню. Если захочешь вернуться, нажми /start.", reply_markup: { remove_keyboard: true } }
+      : { text: "Хорошо, всё осталось как было." }) });
   } else if (parts[0] === "a") {
     await answerNow();
     const a = (await archive(env)).find((x) => x.id === parts[1]);
@@ -594,6 +608,26 @@ async function dropDmPin(env, uid) {
   await tg(env, "unpinChatMessage", { chat_id: uid, message_id: user.dm_pinned_id });
   await tg(env, "deleteMessage", { chat_id: uid, message_id: user.dm_pinned_id });
   await env.DB.prepare("UPDATE users SET dm_pinned_id=NULL WHERE user_id=?").bind(uid).run();
+}
+
+// /forget: asked once with a button, so a stray tap on the command deletes nothing
+async function askForget(env, uid) {
+  return tg(env, "sendMessage", { chat_id: uid,
+    text: "Удалить всё, что я о тебе храню? Это твой Telegram ID, отметки, «Понравилось», голоса «Вайб для», артисты, за которыми ты следишь, и место в «Наверстать». Вернуть это будет нельзя.",
+    reply_markup: { inline_keyboard: [[{ text: "Да, удалить всё", callback_data: "fg:y" }, { text: "Отмена", callback_data: "fg:n" }]] } });
+}
+
+// Every row about one person. A table with a user_id column that is added later must be added here too
+// (worker/test/forget.test.mjs checks schema.sql for that).
+const USER_TABLES = ["marks", "likes", "mood_votes", "follows", "follow_sent", "users"];
+const USER_SETTINGS = ["menu", "qpos", "qfrom"];
+async function forgetUser(env, uid) {
+  await dropDmPin(env, uid); // a pinned list left in the chat, while users still knows its message
+  await env.DB.batch([
+    ...USER_TABLES.map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id=?`).bind(uid)),
+    ...USER_SETTINGS.map((k) => env.DB.prepare("DELETE FROM settings WHERE key=?").bind(`${k}:${uid}`)),
+  ]);
+  if (isOwner(env, uid)) await refreshOwnerLists(env); // the owner's marks also leave the channel's pinned list
 }
 
 async function refreshOwnerLists(env) {
