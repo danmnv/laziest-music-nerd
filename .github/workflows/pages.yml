@@ -15,7 +15,7 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false   # a run after a check that changed nothing ends in seconds; it must not cancel a real build
 
 jobs:
   build:
