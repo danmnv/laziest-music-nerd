@@ -1,5 +1,5 @@
 """Turn a parsed TND post into a full card record. Each source is optional: one failing source only empties its own fields."""
-from . import gemini, links, listen, musicbrainz as mb, tnd
+from . import gemini, links, listen, musicbrainz as mb, notes, tnd
 
 
 def _try(name, fn, default=None):
@@ -121,4 +121,6 @@ def archive_entry(rev):
                                    "video_id")}
     if rev.get("track"):
         out["track"] = True
+    if out.get("published"):  # UTC with Z, like the rest of the archive (notes.use_video_dates), so dates sort as strings
+        out["published"] = notes.utc(out["published"])
     return out

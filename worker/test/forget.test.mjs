@@ -74,6 +74,10 @@ test("«Да, удалить всё» leaves no row about the person and keeps e
   await press("fg:y");
   assert.deepEqual(rowsOf(ME), { users: 0, marks: 0, likes: 0, mood_votes: 0, follows: 0, follow_sent: 0 });
   assert.equal(settingsOf(ME), 0);
+  // the vote stays, without the person: a negative ID no Telegram account has (the owner, 2026-11-02)
+  const kept = db.prepare("SELECT user_id, review_id, mood, vote FROM mood_votes WHERE user_id < 0").all();
+  assert.equal(kept.length, 1);
+  assert.deepEqual([kept[0].review_id, kept[0].mood, kept[0].vote], ["k", "ночь", "y"]);
   assert.deepEqual(rowsOf(OTHER), { users: 1, marks: 1, likes: 1, mood_votes: 1, follows: 1, follow_sent: 1 });
   assert.equal(settingsOf(OTHER), 3);
   // the old pinned list in the chat goes too, and the menu keyboard is taken away
@@ -86,7 +90,8 @@ test("every table with a user_id column is wiped by /forget", () => {
   const withUser = SCHEMA.split("CREATE TABLE IF NOT EXISTS ").slice(1)
     .filter((t) => /\buser_id\b/.test(t.split("\n);")[0])).map((t) => t.split(" ")[0]).sort();
   const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
-  const listed = JSON.parse(src.match(/const USER_TABLES = (\[[^\]]*\])/)[1]).sort();
+  const listed = [...JSON.parse(src.match(/const USER_TABLES = (\[[^\]]*\])/)[1]),
+    ...JSON.parse(src.match(/const ANON_TABLES = (\[[^\]]*\])/)[1])].sort();
   assert.deepEqual(withUser, listed);
 });
 

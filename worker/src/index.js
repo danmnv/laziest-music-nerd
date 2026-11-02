@@ -262,18 +262,16 @@ function helpText(env) {
     "• <b>Отметки.</b> «Слушал», «Понравилось», «Послушать потом», «Не моё»: кнопки видят все, а твои отметки только ты. На сайте они видны после входа через Telegram.\n" +
     "• <b>Артисты.</b> «🔔 Следить» под карточкой: когда у артиста выйдет новый альбом, а потом обзор Фантано на него, напишу сюда. Список — кнопка «" + FOLLOWS_BUTTON + "».\n" +
     "• <b>Случайный.</b> «" + RANDOM_BUTTON + "»: альбом с оценкой от 8, который ты ещё не отмечал(а).\n\n" +
-    // what is stored, what for and how to remove it, in plain words (the owner, 2026-11-02: "тогда более чем честно");
-    // keep it in step with USER_TABLES / USER_SETTINGS below. The ID itself can't be encrypted, the bot writes to it.
-    "<b>Что я храню, зачем и как удалить.</b>\n" +
-    "• <b>Telegram ID</b>, без имени, ника и фото, чтобы отвечать тебе и присылать уведомления. С ним дата первого запуска, номер сообщения, которое я закрепил здесь, и какое меню ты уже видел(а).\n" +
-    "• <b>Отметки</b> «Слушал», «Не моё», «Послушать потом» и оценки на сайте: для твоих списков, «Наверстать», «Случайного» и напоминания через 3 недели. Убрать: нажми ту же кнопку ещё раз, оценку на сайте поставь «—».\n" +
-    "• <b>«Понравилось»</b>: для списка «" + LIKED_BUTTON + "». Убрать: нажми ♥ ещё раз.\n" +
-    "• <b>Голоса «Вайб для»</b>: чтобы у альбома был вайб, который выбрали люди, а не только догадка ИИ. Голос можно поменять, удалить только через /forget.\n" +
-    "• <b>Артисты</b>, за которыми ты следишь, и какие уведомления уже ушли: чтобы написать о новом альбоме или обзоре и не написать дважды. Отписаться: «" + FOLLOWS_BUTTON + "»; список ушедших уведомлений удаляет только /forget.\n" +
-    "• <b>Место в «Наверстать»</b>, где ты остановился(-ась): чтобы продолжить с него.\n" +
-    "На сайте вход через Telegram браузер помнит 90 дней, «Выйти» его стирает.\n" +
-    "Всё лежит в зашифрованной базе Cloudflare, никому не передаётся и не продаётся. Другим видны только средняя оценка и голоса по альбому, без того, кто голосовал, и только когда проголосовали хотя бы 3 человека. " +
-    "/forget удалит всё сразу; из зашифрованных резервных копий оно пропадёт само в течение 90 дней.\n\n" +
+    // what is stored, what for and how to remove it, as short as it can be (the owner, 2026-11-02: "тогда более чем честно",
+    // "прям очень коротко"); keep it in step with forgetUser. The ID itself can't be encrypted, the bot writes to it.
+    "<b>Что я храню и зачем.</b>\n" +
+    "• Telegram ID без имени, ника и фото и служебное (дата запуска, какие уведомления ушли): чтобы отвечать и присылать уведомления.\n" +
+    "• Отметки (и оценки на сайте): для списков, «Наверстать» и напоминаний. Убрать: нажми ещё раз, оценку — «—».\n" +
+    "• «Понравилось»: для списка. Убрать: нажми ♥ ещё раз.\n" +
+    "• Артисты: чтобы писать о новых альбомах. Убрать: «" + FOLLOWS_BUTTON + "».\n" +
+    "• Место в «Наверстать»: чтобы продолжить с него.\n" +
+    "• Голоса «Вайб для»: для вайба альбома. Другие видят только итог, когда проголосовали хотя бы 3 человека.\n" +
+    "Всё в зашифрованной базе Cloudflare, никому не передаётся. /forget удалит всё сразу, а голоса за вайб оставит без ID; из резервных копий данные уйдут за 90 дней.\n\n" +
     "Неофициальный проект. Не связан с Anthony Fantano и The Needle Drop.";
 }
 
@@ -626,17 +624,22 @@ async function dropDmPin(env, uid) {
 // /forget: asked once with a button, so a stray tap on the command deletes nothing
 async function askForget(env, uid) {
   return tg(env, "sendMessage", { chat_id: uid,
-    text: "Удалить всё, что я о тебе храню? Это твой Telegram ID, отметки и оценки, «Понравилось», голоса «Вайб для», артисты, за которыми ты следишь, и место в «Наверстать». Вернуть это будет нельзя.",
+    text: "Удалить всё, что я о тебе храню? Это твой Telegram ID, отметки и оценки, «Понравилось», артисты, за которыми ты следишь, и место в «Наверстать». Голоса «Вайб для» останутся, но без ID. Вернуть это будет нельзя.",
     reply_markup: { inline_keyboard: [[{ text: "Да, удалить всё", callback_data: "fg:y" }, { text: "Отмена", callback_data: "fg:n" }]] } });
 }
 
 // Every row about one person. A table with a user_id column that is added later must be added here too
 // (worker/test/forget.test.mjs checks schema.sql for that).
-const USER_TABLES = ["marks", "likes", "mood_votes", "follows", "follow_sent", "users"];
+const USER_TABLES = ["marks", "likes", "follows", "follow_sent", "users"];
+// Kept without the person (the owner, 2026-11-02): their votes move to a random negative ID that no Telegram account
+// has, one per forgotten person, so an album's "at least 3 people" still counts them once.
+const ANON_TABLES = ["mood_votes"];
 const USER_SETTINGS = ["menu", "qpos", "qfrom"];
 async function forgetUser(env, uid) {
   await dropDmPin(env, uid); // a pinned list left in the chat, while users still knows its message
+  const anon = -(Math.floor(Math.random() * 2 ** 50) + 1);
   await env.DB.batch([
+    ...ANON_TABLES.map((t) => env.DB.prepare(`UPDATE ${t} SET user_id=? WHERE user_id=?`).bind(anon, uid)),
     ...USER_TABLES.map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id=?`).bind(uid)),
     ...USER_SETTINGS.map((k) => env.DB.prepare("DELETE FROM settings WHERE key=?").bind(`${k}:${uid}`)),
   ]);
