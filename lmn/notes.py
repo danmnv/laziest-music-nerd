@@ -187,8 +187,8 @@ def use_video_dates(uploads, archive, nts):
     2026-11-02: catching up in TND's order jumps around). For each archive review with a known video (its own
     video_id or the one in notes.json), "published" becomes the video's upload time and the site's time is kept in
     "tnd_published"; reviews without a video keep the site's. Every date ends up in UTC with Z. Returns how many
-    entries changed."""
-    when = {v["id"]: v["date"] for v in uploads if v.get("date")}
+    entries changed. uploads: the channel's videos, or {video id: upload time}."""
+    when = uploads if isinstance(uploads, dict) else {v["id"]: v["date"] for v in uploads if v.get("date")}
     changed = 0
     for a in archive:
         if not a.get("published"):
@@ -257,3 +257,23 @@ def build(uploads, archive, old, deezer_limit=1500, apple_limit=200, deadline=No
     print(f"notes: {len(out)} reviews, {sum(1 for n in out.values() if n.get('blurb'))} with a blurb, "
           f"{sum(1 for n in out.values() if n.get('fav'))} with fav tracks; Deezer lookups {lookups}, Apple lookups {apple}")
     return out
+
+
+def apply_dates(path, data_dir):
+    """python -m lmn.notes dates <video_dates.json>: the step after the specials run. Re-run on every push retry from
+    a fresh archive.json, so it never fights check.py's appends."""
+    import json
+    from pathlib import Path
+    data_dir = Path(data_dir)
+    archive = json.loads((data_dir / "archive.json").read_text())
+    nts = json.loads((data_dir / "notes.json").read_text())
+    moved = use_video_dates(json.loads(Path(path).read_text()), archive, nts)
+    print(f"archive: {moved} dates changed to the review videos'")
+    if moved:
+        (data_dir / "archive.json").write_text(json.dumps(archive, ensure_ascii=False, indent=1) + "\n")
+
+
+if __name__ == "__main__":
+    import os
+    if sys.argv[1:2] == ["dates"]:
+        apply_dates(sys.argv[2], os.environ.get("DATA_DIR", "data"))

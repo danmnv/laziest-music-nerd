@@ -229,6 +229,18 @@ class VideoDates(unittest.TestCase):
         self.assertEqual([a["id"] for a in sorted(archive, key=lambda a: a["published"])], ["c", "d", "b", "a", "e"])
         self.assertEqual(notes.use_video_dates(ups, archive, {"a": {"video_id": "va"}}), 0, "a second run changes nothing")
 
+    def test_the_step_after_specials_works_on_the_fresh_archive_file(self):
+        import json, tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "archive.json").write_text(json.dumps([{"id": "a", "published": "2026-10-26T12:30:00.000-04:00"},
+                                                        {"id": "new", "published": "2026-11-02T03:43:57Z", "video_id": "vn"}]))
+            (d / "notes.json").write_text(json.dumps({"a": {"video_id": "va"}}))
+            (d / "dates.json").write_text(json.dumps({"va": "2026-10-23T03:00:00Z"}))
+            notes.apply_dates(d / "dates.json", d)
+            self.assertEqual([x["published"] for x in json.loads((d / "archive.json").read_text())], ["2026-10-23T03:00:00Z", "2026-11-02T03:43:57Z"])
+
 
 if __name__ == "__main__":
     unittest.main()
