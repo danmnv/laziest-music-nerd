@@ -57,3 +57,21 @@ jobs:
             sleep $((i * 5))
           done
           echo "::error::Не смог сохранить особые видео в main"; exit 1
+      - name: Даты обзоров по видео на YouTube
+        # its own commit on a fresh archive.json: check.py appends to it twice an hour, so each retry starts from
+        # origin/main again and recomputes instead of rebasing a stale copy
+        if: ${{ hashFiles('video_dates.json') != '' }}
+        run: |
+          cd "$GITHUB_WORKSPACE/.data"
+          git config user.name "laziest-music-nerd-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for i in 1 2 3 4; do
+            git fetch -q origin main && git reset -q --hard origin/main
+            (cd "$GITHUB_WORKSPACE" && python -m lmn.notes dates video_dates.json)
+            git add data/archive.json
+            git diff --cached --quiet && exit 0
+            git commit -q -m "data: даты обзоров архива по видео на YouTube"
+            git push -q origin HEAD:main && exit 0
+            sleep $((i * 5))
+          done
+          echo "::error::Не смог сохранить даты архива в main"; exit 1

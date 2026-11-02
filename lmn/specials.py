@@ -160,6 +160,9 @@ def run():
                      int(os.environ.get("NOTES_APPLE_LIMIT", "200")), start + 60 * minutes)
     npath.write_text("{\n" + ",\n".join(json.dumps(k) + ": " + json.dumps(nt[k], ensure_ascii=False, separators=(",", ":"))
                                           for k in sorted(nt)) + "\n}\n")
+    # upload times for lmn.notes dates, a later step that applies them to a fresh archive.json (check.py writes it
+    # too, twice an hour); kept outside data/, so this run's commit never touches archive.json
+    Path(os.environ.get("VIDEO_DATES", "video_dates.json")).write_text(json.dumps({u["id"]: u["date"] for u in ups if u.get("date")}))
     lists = []
     for u in ups:
         label = list_kind(u["title"])

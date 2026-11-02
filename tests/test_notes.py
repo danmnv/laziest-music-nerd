@@ -209,5 +209,38 @@ class DeezerTrack(unittest.TestCase):
         self.assertEqual(out["nat"]["fav"], [{"t": "EUCALYPTUS", "dz": 7}, {"t": "TROPIC MORNING NEWS", "dz": 0, "am": 0}])
 
 
+
+class VideoDates(unittest.TestCase):
+    def test_archive_is_ordered_by_the_video_not_by_the_site(self):
+        archive = [
+            {"id": "a", "published": "2026-10-26T12:30:00.000-04:00"},                    # video found through notes.json
+            {"id": "b", "published": "2026-10-26T12:36:00.000-04:00", "video_id": "vb"},  # its own video_id
+            {"id": "c", "published": "2026-10-20T08:00:00.000-04:00"},                    # no video: the site's time, in UTC
+            {"id": "d", "published": "2026-10-21T08:00:00.000-04:00", "video_id": "vd"},  # a wrong match, 200 days off
+            {"id": "e", "published": "2026-10-29T23:04:17Z", "video_id": "ve"},           # a card from YouTube: as it is
+        ]
+        ups = [{"id": "va", "date": "2026-10-23T03:00:00Z"}, {"id": "vb", "date": "2026-10-21T15:00:00Z"},
+               {"id": "vd", "date": "2026-04-04T15:00:00Z"}, {"id": "ve", "date": "2026-10-29T23:04:17Z"}]
+        self.assertEqual(notes.use_video_dates(ups, archive, {"a": {"video_id": "va"}}), 4)
+        got = {a["id"]: (a["published"], a.get("tnd_published")) for a in archive}
+        self.assertEqual(got, {"a": ("2026-10-23T03:00:00Z", "2026-10-26T16:30:00Z"), "b": ("2026-10-21T15:00:00Z", "2026-10-26T16:36:00Z"),
+                               "c": ("2026-10-20T12:00:00Z", None), "d": ("2026-10-21T12:00:00Z", None),
+                               "e": ("2026-10-29T23:04:17Z", None)})
+        self.assertEqual([a["id"] for a in sorted(archive, key=lambda a: a["published"])], ["c", "d", "b", "a", "e"])
+        self.assertEqual(notes.use_video_dates(ups, archive, {"a": {"video_id": "va"}}), 0, "a second run changes nothing")
+
+    def test_the_step_after_specials_works_on_the_fresh_archive_file(self):
+        import json, tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "archive.json").write_text(json.dumps([{"id": "a", "published": "2026-10-26T12:30:00.000-04:00"},
+                                                        {"id": "new", "published": "2026-11-02T03:43:57Z", "video_id": "vn"}]))
+            (d / "notes.json").write_text(json.dumps({"a": {"video_id": "va"}}))
+            (d / "dates.json").write_text(json.dumps({"va": "2026-10-23T03:00:00Z"}))
+            notes.apply_dates(d / "dates.json", d)
+            self.assertEqual([x["published"] for x in json.loads((d / "archive.json").read_text())], ["2026-10-23T03:00:00Z", "2026-11-02T03:43:57Z"])
+
+
 if __name__ == "__main__":
     unittest.main()

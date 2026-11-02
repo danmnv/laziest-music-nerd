@@ -171,6 +171,46 @@ def albums(archive, old, limit=1500, deadline=None, today=None):
     return out
 
 
+VIDEO_GAP_DAYS = 45  # theneedledrop.com posts a review 1 hour to 23 days after the video (median 38 h, 2026); a wider gap is a wrong match
+
+
+def utc(iso):
+    """An ISO time as "YYYY-MM-DDTHH:MM:SSZ" in UTC, so that dates sort as plain strings (TND writes -04:00, YouTube Z)."""
+    t = datetime.datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=datetime.timezone.utc)
+    return t.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def use_video_dates(uploads, archive, nts):
+    """Order the archive by when the review video came out, not by when theneedledrop.com posted it (the owner,
+    2026-11-02: catching up in TND's order jumps around). For each archive review with a known video (its own
+    video_id or the one in notes.json), "published" becomes the video's upload time and the site's time is kept in
+    "tnd_published"; reviews without a video keep the site's. Every date ends up in UTC with Z. Returns how many
+    entries changed. uploads: the channel's videos, or {video id: upload time}."""
+    when = uploads if isinstance(uploads, dict) else {v["id"]: v["date"] for v in uploads if v.get("date")}
+    changed = 0
+    for a in archive:
+        if not a.get("published"):
+            continue
+        before = (a["published"], a.get("tnd_published"))
+        site = a.get("tnd_published") or a["published"]
+        vid = a.get("video_id") or (nts.get(a["id"]) or {}).get("video_id")
+        date = when.get(vid)
+        if date and abs(datetime.datetime.fromisoformat(utc(date)[:-1]) - datetime.datetime.fromisoformat(utc(site)[:-1])) \
+                <= datetime.timedelta(days=VIDEO_GAP_DAYS):
+            a["published"] = utc(date)
+            if utc(date) != utc(site):
+                a["tnd_published"] = utc(site)
+            else:
+                a.pop("tnd_published", None)
+        else:
+            a["published"] = utc(site)
+            a.pop("tnd_published", None)
+        changed += (a["published"], a.get("tnd_published")) != before
+    return changed
+
+
 def build(uploads, archive, old, deezer_limit=1500, apple_limit=200, deadline=None):
     """Notes for every archive review with a matching video; Deezer IDs looked up at most deezer_limit times per run
     (the rest next week), Apple Music paths at most apple_limit times, and no lookup after deadline (time.monotonic()), so
@@ -217,3 +257,23 @@ def build(uploads, archive, old, deezer_limit=1500, apple_limit=200, deadline=No
     print(f"notes: {len(out)} reviews, {sum(1 for n in out.values() if n.get('blurb'))} with a blurb, "
           f"{sum(1 for n in out.values() if n.get('fav'))} with fav tracks; Deezer lookups {lookups}, Apple lookups {apple}")
     return out
+
+
+def apply_dates(path, data_dir):
+    """python -m lmn.notes dates <video_dates.json>: the step after the specials run. Re-run on every push retry from
+    a fresh archive.json, so it never fights check.py's appends."""
+    import json
+    from pathlib import Path
+    data_dir = Path(data_dir)
+    archive = json.loads((data_dir / "archive.json").read_text())
+    nts = json.loads((data_dir / "notes.json").read_text())
+    moved = use_video_dates(json.loads(Path(path).read_text()), archive, nts)
+    print(f"archive: {moved} dates changed to the review videos'")
+    if moved:
+        (data_dir / "archive.json").write_text(json.dumps(archive, ensure_ascii=False, indent=1) + "\n")
+
+
+if __name__ == "__main__":
+    import os
+    if sys.argv[1:2] == ["dates"]:
+        apply_dates(sys.argv[2], os.environ.get("DATA_DIR", "data"))
