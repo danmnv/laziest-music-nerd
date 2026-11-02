@@ -1,0 +1,52 @@
+name: tests
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+  workflow_dispatch:  # to run the key check (doctor) by hand, e.g. after a Worker deploy
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m unittest discover -s tests -v
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Worker code parses
+        run: node --check worker/src/index.js
+      - name: Worker logic tests
+        run: node --test worker/test/*.test.mjs
+  live-dry-run:
+    # Runs the real pipeline against live TND/MusicBrainz/Deezer without sending anything to Telegram.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Проверка ключей
+        run: python -m lmn.doctor
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL: ${{ secrets.TELEGRAM_CHANNEL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      - run: |
+          mkdir -p /tmp/data && echo '{"seeded": true}' > /tmp/data/state.json
+          python -m lmn.check
+        env:
+          MODE: dry
+          DATA_DIR: /tmp/data
+          DRY_LIMIT: "4"
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          # no GEMINI_API_KEY here on purpose: the free daily quota is for real cards

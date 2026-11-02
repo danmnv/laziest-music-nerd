@@ -1,0 +1,69 @@
+name: Брифы для архива
+on:
+  # Каждый день (Даниил, 02.11.2026: от новых обзоров к старым, пока не кончится архив) и вручную. Бриф пишет бесплатная модель по-английски (Groq; Mistral, если пополнить баланс), Gemini переводит
+  # по 10 за запрос, не больше 15 запросов за запуск, чтобы новым обзорам хватило дневной квоты Gemini.
+  # Что не успеет за 5,5 часа, сохранится, остальное следующим запуском.
+  schedule:
+    - cron: "30 9 * * *"   # каждый день в 9:30 UTC, после того как у Gemini обновился дневной лимит (полночь по Калифорнии)
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Сколько обзоров за запуск (больше 150 Gemini за раз не переведёт, остальные переведутся в следующий запуск)"
+        default: "150"
+      compare:
+        description: "Только сравнить другие модели Groq с нынешней на 2 обзорах (ничего не сохраняет)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: briefs
+  cancel-in-progress: false
+
+jobs:
+  briefs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v5
+      - name: Данные из приватного репозитория
+        # data/*.json live in a private repo (the datasets are not to be downloadable in one click); the code is public
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ vars.DATA_REPO || 'danmnv/laziest-music-nerd-data' }}
+          token: ${{ secrets.DATA_TOKEN }}
+          path: .data
+      - run: ln -sfn .data/data data
+        working-directory: .
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Брифы по текстам обзоров с theneedledrop.com
+        timeout-minutes: 345
+        run: python -m lmn.briefs
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # not the first models: new reviews' briefs keep their quota
+          GEMINI_MODEL: gemini-3.5-flash,gemini-3.5-flash-lite
+          BRIEFS_LIMIT: ${{ inputs.limit || '150' }}
+          BRIEFS_MINUTES: "330"   # GitHub stops a job after 6 hours; this leaves time to save
+          BRIEFS_COMPARE: ${{ inputs.compare && '1' || '' }}
+      - name: Сохранить
+        if: ${{ always() && !inputs.compare }}
+        run: |
+          cd "$GITHUB_WORKSPACE/.data"   # the data repo: commits go there
+          git config user.name "laziest-music-nerd-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          [ -f data/briefs.json ] && git add data/briefs.json
+          git diff --cached --quiet && exit 0
+          git commit -q -m "data: брифы для архива"
+          for i in 1 2 3 4; do  # the hourly check may have pushed meanwhile
+            git pull --rebase -q origin main && git push -q origin HEAD:main && exit 0
+            git rebase --abort 2>/dev/null || true
+            sleep $((i * 5))
+          done
+          echo "::error::Не смог сохранить брифы в main"; exit 1

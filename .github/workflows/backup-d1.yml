@@ -1,0 +1,140 @@
+name: Бэкап базы D1
+# Copies the bot's user data (follows, marks, mood votes, scores) out of Cloudflare D1 once a day.
+# The repo is public and anyone signed in to GitHub can download its artifacts, so the dump is
+# encrypted before upload. Key = the BACKUP_KEY secret: random, used for nothing else, survives a bot-token rotation.
+# Until it is added, the key falls back to sha256(bot token:backup)[:48] (warning in the run): such a backup
+# opens only with the bot token it was made under. The file name says which key: *.key.gpg or *.tok.gpg.
+# Once a week (Sunday, or any manual run) the bot also sends the owner, in the private chat with the bot, the whole
+# repo as a git bundle and this D1 file (only with BACKUP_KEY): a copy outside GitHub and Cloudflare, no 90-day limit.
+# Restore: restore-d1.yml. Short-term undo needs no backup at all: D1 Time Travel keeps 7 days (free plan).
+on:
+  schedule:
+    - cron: "23 1 * * *"   # раз в день, 4:23 по Москве, когда ботом почти никто не пользуется (экспорт ненадолго блокирует базу)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency: d1-backup   # own group: GitHub cancels a pending run when another queues in the same group
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    if: ${{ vars.CLOUDFLARE_READY == '1' || github.event_name == 'workflow_dispatch' }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      BACKUP_KEY: ${{ secrets.BACKUP_KEY }}
+      TELEGRAM_OWNER_ID: ${{ secrets.TELEGRAM_OWNER_ID }}
+      WRANGLER: npx --yes wrangler@4.45.0
+      DB: laziest-music-nerd
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Выгрузить базу
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/b" && cd "$RUNNER_TEMP/b"
+          $WRANGLER d1 export "$DB" --remote --output dump.sql
+          grep -q 'CREATE TABLE.*users' dump.sql || { echo "::error::В выгрузке нет таблицы users"; exit 1; }
+      - name: Проверить, что выгрузка читается
+        # Loads the dump into an empty local SQLite and compares row counts with the live base.
+        # Prints only ok / not ok per table: no IDs, no marks, and no row counts either. The repo is public,
+        # and "users: 5" in a log would tell anyone how many people use the bot (owner, 2026-11-02).
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/b"
+          sqlite3 check.db < dump.sql
+          bad=0
+          for t in $(sqlite3 check.db "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name"); do
+            local_n=$(sqlite3 check.db "SELECT COUNT(*) FROM \"$t\"")
+            live_n=$($WRANGLER d1 execute "$DB" --remote --json --command "SELECT COUNT(*) AS n FROM \"$t\"" | jq -r '.[0].results[0].n')
+            # The bot keeps writing while we compare, so live may have grown a little; fewer rows in the backup than
+            # a minute later is fine, an empty backup of a non-empty table is not.
+            if [ "$local_n" = 0 ] && [ "$live_n" != 0 ]; then bad=1; echo "$t: в бэкапе пусто, а в базе нет"
+            else echo "$t: ок"; fi
+          done
+          echo "Бэкап проверен: все таблицы на месте" > "$GITHUB_STEP_SUMMARY"
+          [ $bad = 0 ] || { echo "::error::Бэкап неполный"; exit 1; }
+          rm check.db
+      - name: Зашифровать
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/b"
+          if [ -n "$BACKUP_KEY" ]; then KEY="$BACKUP_KEY"; KIND=key
+          else
+            echo "::warning::Нет секрета BACKUP_KEY: бэкап зашифрован ключом из токена бота. Как добавить: docs/backup.md"
+            KEY=$(printf '%s' "$TELEGRAM_BOT_TOKEN:backup" | sha256sum | cut -c1-48); KIND=tok
+          fi
+          gzip -9 dump.sql
+          printf '%s' "$KEY" | gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-fd 0 \
+            --symmetric --cipher-algo AES256 --output "d1-$(date -u +%F).sql.gz.$KIND.gpg" dump.sql.gz
+          rm dump.sql.gz
+          ls -l
+      - uses: actions/upload-artifact@v5
+        with:
+          name: d1-backup
+          path: ${{ runner.temp }}/b/*.gpg
+          retention-days: 90   # максимум для публичного репозитория
+          if-no-files-found: error
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # the whole history goes into the bundle
+          path: repo
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ vars.DATA_REPO || 'danmnv/laziest-music-nerd-data' }}
+          token: ${{ secrets.DATA_TOKEN }}
+          fetch-depth: 0
+          path: datarepo
+      - name: Копия владельцу в Telegram
+        # Sunday or manual run. Two files, sent silently to the owner's private chat with the bot:
+        #  1. both repos as git bundles (the public code repo, the private data repo; full history): enough to put the project back up
+        #     anywhere, see docs/restore-everything.md. Not encrypted: it's the public repo.
+        #  2. the D1 backup, only when encrypted with BACKUP_KEY: a bot-token-key file would open for anyone
+        #     holding the token, and the token is what sends it.
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_EVENT_NAME" != schedule ] || [ "$(date -u +%u)" = 7 ] || { echo "Не воскресенье: в Telegram не шлю"; exit 0; }
+          OWNER="$TELEGRAM_OWNER_ID"
+          if [ -z "$OWNER" ]; then
+            OWNER=$($WRANGLER d1 execute "$DB" --remote --json --command "SELECT value FROM settings WHERE key='owner_id'" | jq -r '.[0].results[0].value // empty')
+          fi
+          [ -n "$OWNER" ] || { echo "::warning::Не знаю владельца бота: копию в Telegram не отправил"; exit 0; }
+          echo "::add-mask::$OWNER"
+          DAY=$(date -u +%F)
+          # send FILE CAPTION [ADD_FILE_ID]: sends the file; with ADD_FILE_ID the caption then gets the file's id,
+          # which restore-d1.yml takes to fetch the file back.
+          send() {
+            R=$(curl -sS "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendDocument" -F chat_id="$OWNER" \
+                  -F disable_notification=true -F document=@"$1" -F parse_mode=HTML -F caption="$2")
+            [ "$(echo "$R" | jq -r .ok)" = true ] || { echo "::warning::Telegram не принял $1: $(echo "$R" | jq -r .description)"; return 0; }
+            echo "Отправлено в Telegram: $(basename "$1")" >> "$GITHUB_STEP_SUMMARY"
+            [ -n "${3:-}" ] || return 0
+            curl -sS "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/editMessageCaption" --data-urlencode chat_id="$OWNER" \
+              --data-urlencode message_id="$(echo "$R" | jq -r .result.message_id)" --data-urlencode parse_mode=HTML \
+              --data-urlencode caption="$2"$'\n'"Код для восстановления (поле «Telegram» в workflow восстановления):"$'\n'"<code>$(echo "$R" | jq -r .result.document.file_id)</code>" \
+              | jq -c '{ok, description}'
+          }
+
+          B="$RUNNER_TEMP/laziest-music-nerd-$DAY.bundle"
+          git -C repo bundle create "$B" HEAD --branches --tags
+          if [ "$(stat -c %s "$B")" -gt 49000000 ]; then
+            # Bots may send up to 50 MB. Past that: the current files without history.
+            echo "::warning::Бандл больше 49 МБ: шлю только текущие файлы, без истории"
+            B="$RUNNER_TEMP/laziest-music-nerd-$DAY.zip"
+            git -C repo archive --format=zip -9 -o "$B" HEAD
+          fi
+          send "$B" "📦 Весь проект Laziest Music Nerd · $DAY"$'\n'"Код, данные и история. Если всё пропадёт: пришли этот файл Claude и попроси поднять проект заново (docs/restore-everything.md)."
+          D="$RUNNER_TEMP/laziest-music-nerd-data-$DAY.bundle"   # data/*.json: the private repo, with its history
+          git -C datarepo bundle create "$D" HEAD --branches --tags
+          send "$D" "🗂 Данные Laziest Music Nerd (приватный репозиторий data) · $DAY"
+
+          F=$(ls "$RUNNER_TEMP"/b/*.gpg | head -1)
+          case "$F" in
+            *.key.gpg) send "$F" "🔐 Данные людей из бота · $DAY"$'\n'"Зашифровано ключом BACKUP_KEY. Перешли оба файла в «Избранное»." id ;;
+            *) echo "::warning::Без BACKUP_KEY бэкап базы в Telegram не шлю (только проект)" ;;
+          esac

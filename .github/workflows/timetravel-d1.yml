@@ -1,0 +1,55 @@
+name: Откатить базу D1 (Time Travel)
+# Cloudflare keeps every change to D1 for 7 days (free plan; 30 on paid), free of charge and with no setup.
+# This rolls the bot's base back to a moment in that window. The rollback itself can be undone:
+# the bookmark of the state right before it is printed in the run summary.
+# Mistake older than 7 days, or the base itself deleted: restore-d1.yml (daily backups, kept 90 days).
+on:
+  workflow_dispatch:
+    inputs:
+      when:
+        description: "Куда откатить: время UTC, например 2026-11-02T08:00:00Z, или закладка из прошлого запуска. Пусто = только показать текущую закладку"
+        required: false
+      confirm:
+        description: "Чтобы откатить, впиши ОТКАТИТЬ"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency: d1-change   # one restore/rollback at a time; a separate group, so a pending backup is never cancelled
+
+jobs:
+  timetravel:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WRANGLER: npx --yes wrangler@4.45.0
+      DB: laziest-music-nerd
+      WHEN: ${{ inputs.when }}
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Текущая закладка
+        run: |
+          set -euo pipefail
+          INFO=$($WRANGLER d1 time-travel info "$DB" --json)
+          echo "$INFO"
+          echo "Закладка базы сейчас: \`$(echo "$INFO" | jq -r .bookmark)\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: Откатить
+        if: ${{ inputs.when != '' }}
+        run: |
+          set -euo pipefail
+          [ "$CONFIRM" = "ОТКАТИТЬ" ] || { echo "::error::Впиши ОТКАТИТЬ в поле подтверждения. Ничего не изменено."; exit 1; }
+          if [[ "$WHEN" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]]; then
+            TS=$(date -u -d "$WHEN" +%s)
+            $WRANGLER d1 time-travel restore "$DB" --timestamp="$TS" --json | tee out.json
+          else
+            $WRANGLER d1 time-travel restore "$DB" --bookmark="$WHEN" --json | tee out.json
+          fi
+          {
+            echo "### Откат сделан"
+            echo "Вернуть как было до отката: запусти этот же workflow с закладкой \`$(jq -r '.previous_bookmark // empty' out.json)\`."
+          } >> "$GITHUB_STEP_SUMMARY"

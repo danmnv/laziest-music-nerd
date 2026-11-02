@@ -1,0 +1,155 @@
+name: Восстановить базу D1 из бэкапа
+# Run by hand only. Two modes:
+#   test — loads a backup into a temporary, separate database, checks it, deletes it. The bot's base is not touched.
+#   live — REPLACES the bot's base with the backup. Undo: D1 Time Travel; the bookmark to return to is printed first.
+# For a mistake made within the last 7 days, Time Travel alone is simpler: see docs/backup.md.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "test — проверить бэкап, база бота не трогается; live — заменить базу бота бэкапом"
+        type: choice
+        options: [test, live]
+        default: test
+      run_id:
+        description: "Номер запуска «Бэкап базы D1» (из его адреса). Пусто = последний удачный"
+        required: false
+      tg_file:
+        description: "Telegram: код из подписи к файлу бэкапа в личке с ботом. Пусто = бэкап из GitHub"
+        required: false
+      confirm:
+        description: "Для live впиши ЗАМЕНИТЬ"
+        required: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency: d1-change   # one restore/rollback at a time; a separate group, so a pending backup is never cancelled
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      BACKUP_KEY: ${{ secrets.BACKUP_KEY }}
+      GH_TOKEN: ${{ github.token }}
+      WRANGLER: npx --yes wrangler@4.45.0
+      MODE: ${{ inputs.mode || 'test' }}
+      LIVE_DB: laziest-music-nerd
+      TEST_DB: laziest-music-nerd-restore-test
+    steps:
+      - name: Проверить подтверждение
+        if: ${{ env.MODE == 'live' && inputs.confirm != 'ЗАМЕНИТЬ' }}
+        run: |
+          echo "::error::Для live нужно вписать ЗАМЕНИТЬ в поле подтверждения. Ничего не изменено."
+          exit 1
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Бэкап из Telegram
+        if: ${{ inputs.tg_file != '' }}
+        env:
+          TG_FILE: ${{ inputs.tg_file }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/b" && cd "$RUNNER_TEMP/b"
+          P=$(curl -sS "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getFile" --data-urlencode file_id="$TG_FILE" | jq -r '.result.file_path // empty')
+          [ -n "$P" ] || { echo "::error::Telegram не нашёл файл по этому коду. Скопируй код из подписи к файлу целиком."; exit 1; }
+          curl -sS -o tg.gpg "https://api.telegram.org/file/bot$TELEGRAM_BOT_TOKEN/$P"
+          echo "Бэкап из Telegram" >> "$GITHUB_STEP_SUMMARY"
+      - name: Какой бэкап
+        if: ${{ inputs.tg_file == '' }}
+        id: pick
+        run: |
+          set -euo pipefail
+          RID="${{ inputs.run_id }}"
+          if [ -z "$RID" ]; then
+            RID=$(gh run list -R "$GITHUB_REPOSITORY" --workflow backup-d1.yml --status success -L 1 --json databaseId -q '.[0].databaseId')
+          fi
+          [ -n "$RID" ] || { echo "::error::Не нашёл ни одного удачного бэкапа"; exit 1; }
+          echo "Бэкап из запуска $RID: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RID" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "rid=$RID" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v5
+        if: ${{ inputs.tg_file == '' }}
+        with:
+          name: d1-backup
+          run-id: ${{ steps.pick.outputs.rid }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/b
+      - name: Расшифровать
+        run: |
+          set -euo pipefail
+          umask 077
+          cd "$RUNNER_TEMP/b"
+          F=$(ls *.gpg | head -1)
+          echo "Файл: $F" | tee -a "$GITHUB_STEP_SUMMARY"
+          # BACKUP_KEY first; older backups (*.tok.gpg, or made before BACKUP_KEY existed) use the bot-token key.
+          ok=0
+          for KEY in "$BACKUP_KEY" "$(printf '%s' "$TELEGRAM_BOT_TOKEN:backup" | sha256sum | cut -c1-48)"; do
+            [ -n "$KEY" ] || continue
+            if printf '%s' "$KEY" | gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 0 --decrypt "$F" 2>/dev/null > dump.sql.gz; then ok=1; break; fi
+          done
+          [ $ok = 1 ] || { echo "::error::Не расшифровывается ни BACKUP_KEY, ни ключом из токена бота. Бэкап *.tok.gpg, сделанный до смены токена, открывается только старым токеном."; exit 1; }
+          gunzip -f dump.sql.gz
+          # D1 runs a file as one batch: transaction statements inside it fail.
+          sed -i -E '/^(BEGIN TRANSACTION|COMMIT);$/d' dump.sql
+          sqlite3 ref.db < dump.sql
+          sqlite3 ref.db "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name" > tables.txt
+          echo "Таблиц в бэкапе: $(wc -l < tables.txt)"
+      - name: "test: залить во временную базу"
+        if: ${{ env.MODE == 'test' }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/b"
+          $WRANGLER d1 delete "$TEST_DB" -y >/dev/null 2>&1 || true   # left over from a failed run
+          $WRANGLER d1 create "$TEST_DB" >/dev/null
+          echo "TARGET=$TEST_DB" >> "$GITHUB_ENV"
+          $WRANGLER d1 execute "$TEST_DB" --remote --yes --file dump.sql
+      - name: "live: запомнить, куда откатиться"
+        if: ${{ env.MODE == 'live' }}
+        run: |
+          set -euo pipefail
+          INFO=$($WRANGLER d1 time-travel info "$LIVE_DB" --json)
+          echo "$INFO"
+          BM=$(echo "$INFO" | jq -r '.bookmark // empty')
+          [ -n "$BM" ] || { echo "::error::Не получил закладку Time Travel: без неё не заменяю базу"; exit 1; }
+          {
+            echo "### Откат этой замены"
+            echo "База до замены = закладка Time Travel \`$BM\` (хранится 7 дней)."
+            echo "Вернуть: workflow «Откатить базу D1 (Time Travel)» с этой закладкой."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: "live: заменить базу бота"
+        if: ${{ env.MODE == 'live' }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/b"
+          echo "TARGET=$LIVE_DB" >> "$GITHUB_ENV"
+          # Drop every table the live base has now (also ones added after the backup), then load the backup,
+          # then schema.sql re-creates any table the backup is too old to have (CREATE ... IF NOT EXISTS).
+          $WRANGLER d1 execute "$LIVE_DB" --remote --json --command \
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'" \
+            | jq -r '.[0].results[].name' > live_tables.txt
+          { echo "PRAGMA defer_foreign_keys = true;"; sed 's/.*/DROP TABLE IF EXISTS "&";/' live_tables.txt; cat dump.sql; } > replace.sql
+          $WRANGLER d1 execute "$LIVE_DB" --remote --yes --file replace.sql
+          $WRANGLER d1 execute "$LIVE_DB" --remote --yes --file "$GITHUB_WORKSPACE/worker/schema.sql"
+      - name: Сверить строки
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/b"
+          bad=0
+          while read -r t; do
+            want=$(sqlite3 ref.db "SELECT COUNT(*) FROM \"$t\"")
+            got=$($WRANGLER d1 execute "$TARGET" --remote --json --command "SELECT COUNT(*) AS n FROM \"$t\"" | jq -r '.[0].results[0].n')
+            # ok / not ok only: row counts in a public log would tell how many people use the bot
+            if [ "$want" = "$got" ]; then echo "$t: совпадает" | tee -a "$GITHUB_STEP_SUMMARY"
+            else echo "$t: НЕ совпадает" | tee -a "$GITHUB_STEP_SUMMARY"; bad=1; fi
+          done < tables.txt
+          [ $bad = 0 ] || { echo "::error::Число строк не совпало"; exit 1; }
+          echo "✅ Восстановление сходится" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: "test: удалить временную базу"
+        if: ${{ always() && env.MODE == 'test' }}
+        run: $WRANGLER d1 delete "$TEST_DB" -y || true

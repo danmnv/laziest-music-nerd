@@ -1,0 +1,21 @@
+// The critics/charts lines of a bot card, from the site's rt/<id>.json (built from data/ratings.json; source:
+// the album's Wikipedia article). Kept out of index.js: named exports of the Worker's entry module count as entrypoints.
+
+function esc(s) {
+  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+export function criticsText(rt) {
+  if (!rt) return "";
+  const src = rt.wp_url ? ` (<a href="${esc(rt.wp_url)}">Википедия</a>)` : "";
+  const lines = [];
+  // Fantano's year/decade lists and verified "worst to best" places (lmn/specials.py), each linking to its video:
+  // a paragraph of its own, apart from the other critics (owner, 2026-11-01)
+  const lists = rt.lists && rt.lists.length ? "🏆 " + rt.lists.map((b) => `<a href="${esc(b.url)}">${esc(b.text)}</a>`).join(" · ") : "";
+  if (rt.contested) lines.push(`⚡ Спорно: ${esc(rt.contested)}`); // Fantano vs the critics' average, 4+ points apart
+  // the outlets are the primary source of the scores; the charts line names the article it comes from (owner, 2026-11-01)
+  if (rt.crit && rt.crit.length) lines.push(`Критики: ${esc(rt.crit.join(" · "))}`);
+  if (rt.sales && rt.sales.length) lines.push(`Чарты и продажи: ${esc(rt.sales.join(" · "))}${src}`);
+  const out = [lists, lines.join("\n")].filter(Boolean).join("\n\n");
+  return out ? "\n" + out : "";
+}

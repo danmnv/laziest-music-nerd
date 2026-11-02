@@ -1,0 +1,90 @@
+name: Сайт
+on:
+  push:
+    branches: [main]
+    paths: [site_src/**, lmn/**, .github/workflows/pages.yml]
+  workflow_run:
+    workflows: ["Проверка новых обзоров", "Оценки критиков из Википедии", "Досье артистов", "Особые видео Фантано", "Брифы для архива", "Ссылки на Apple Music", "Деплой Cloudflare Worker"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.decide.outputs.go }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+      - name: Данные из приватного репозитория
+        # data/*.json live in a private repo (the datasets are not to be downloadable in one click); the code is public
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ vars.DATA_REPO || 'danmnv/laziest-music-nerd-data' }}
+          token: ${{ secrets.DATA_TOKEN }}
+          path: .data
+      - run: ln -sfn .data/data data
+        working-directory: .
+      - name: Есть ли что публиковать
+        id: decide
+        # After an hourly check, rebuild only if it committed something: the data repo got a commit after that run started.
+        run: |
+          last=$(git -C .data log -1 --format=%ct)
+          started=$(date -d "${{ github.event.workflow_run.run_started_at }}" +%s 2>/dev/null || echo 0)
+          if [ "${{ github.event_name }}" = "workflow_run" ] && [ "$last" -lt "$started" ]; then
+            echo "go=false" >> "$GITHUB_OUTPUT"; echo "Проверка ничего не изменила, сайт тот же"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-python@v6
+        if: steps.decide.outputs.go == 'true'
+        with:
+          python-version: "3.12"
+      - run: python -m lmn.site
+        if: steps.decide.outputs.go == 'true'
+      - name: Копия сайта на Cloudflare Pages
+        # The site's address without the owner's name (2026-11-02). Non-blocking: if it fails, the previous deploy stays up.
+        id: cf
+        if: steps.decide.outputs.go == 'true'
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -o pipefail
+          npx --yes wrangler@4.45.0 pages project create laziest-music-nerd --production-branch main || true
+          npx --yes wrangler@4.45.0 pages deploy _site --project-name laziest-music-nerd --branch main --commit-dirty=true | tee cf.log
+          # wrangler prints this deploy's own address, https://<hash>.<project>.pages.dev; the site lives at <project>.pages.dev
+          url=$(grep -oE 'https://[a-z0-9-]+\.[a-z0-9-]+\.pages\.dev' cf.log | tail -1 | sed -E 's#^https://[^.]+\.#https://#')
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Сайт на Cloudflare: $url" >> "$GITHUB_STEP_SUMMARY"
+      - name: Старый адрес ведёт на новый
+        # Since 2026-11-02 the site lives on Cloudflare. The GitHub copy keeps old links in Telegram working: every page
+        # sends the reader to the same page there. Even when the Cloudflare step above fails this run, the previous
+        # deploy there is still up, and the Worker only accepts requests from the new address anyway.
+        if: steps.decide.outputs.go == 'true'
+        run: python -m lmn.redirect _site https://laziest-music-nerd.pages.dev
+      - uses: actions/upload-pages-artifact@v4
+        if: steps.decide.outputs.go == 'true'
+        with:
+          path: _site
+  deploy:
+    needs: build
+    if: needs.build.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

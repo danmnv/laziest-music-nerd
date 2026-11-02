@@ -1,0 +1,22 @@
+name = "laziest-music-nerd"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+DATA_URL = "https://raw.githubusercontent.com/danmnv/laziest-music-nerd-data/main/data/reviews.json"  # private repo: read with the DATA_TOKEN secret
+SITE_URL = "https://laziest-music-nerd.pages.dev"  # moved from danmnv.github.io 2026-11-02; also the CORS origin
+DIGEST = "0"      # «Лучшее за две недели» по воскресеньям: выключено (Даниил, 02.11.2026), "1" — включить
+SITE_LIVE = "1"   # the site is up (2026-11-01): album titles and lists link to its pages
+CHANNEL = "@laziestmusicnerd"
+BOT_USERNAME = "laziest_music_nerd_bot"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "laziest-music-nerd"
+database_id = "REPLACED_BY_DEPLOY_WORKFLOW"
+
+# Secrets (set by the deploy workflow, never in this file):
+# TELEGRAM_BOT_TOKEN, WEBHOOK_SECRET, ACTIONS_SECRET, SESSION_SECRET, OWNER_ID
+
+[triggers]
+crons = ["0 9 * * *", "0 7 * * SUN", "30 * * * *"]   # напоминания — каждый день в 12:00 МСК; дайджест — воскресенье 10:00 МСК, по чётным неделям; новые альбомы артистов, за которыми следят, — каждый час
