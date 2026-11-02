@@ -2,6 +2,7 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createHmac } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import worker from "../src/index.js";
 
@@ -53,7 +54,7 @@ beforeEach(() => {
   seed(ME, 33);
   seed(OTHER, null);
   calls = [];
-  env = { DB: d1(db), WEBHOOK_SECRET: "w", BOT_USERNAME: "bot", CHANNEL: "@chan", TELEGRAM_BOT_TOKEN: "t", OWNER_ID: "1" };
+  env = { DB: d1(db), WEBHOOK_SECRET: "w", BOT_USERNAME: "bot", CHANNEL: "@chan", TELEGRAM_BOT_TOKEN: "t", OWNER_ID: "1", SESSION_SECRET: "s" };
   globalThis.fetch = async (url, opts) => {
     calls.push({ method: String(url).split("/").pop(), ...JSON.parse(opts.body) });
     return new Response(JSON.stringify({ ok: true, result: { message_id: 600 } }));
@@ -94,4 +95,28 @@ test("the help says what is stored and how to delete it", async () => {
   const help = calls.find((c) => c.method === "sendMessage" && c.text.includes("Что я храню"));
   assert.ok(help && help.text.includes("/forget"));
   assert.ok(help.text.length < 4096);
+});
+
+// The help promises that a mark can be taken back; taking it back must leave no row (the owner, 2026-11-02)
+test("a mark pressed again in the bot is deleted, not emptied", async () => {
+  await press("m:k:later");
+  assert.equal(rowsOf(ME).marks, 0);
+  assert.equal(rowsOf(OTHER).marks, 1);
+});
+
+async function site(body) {
+  const exp = Math.floor(Date.now() / 1000) + 3600;
+  const token = `${ME}.${exp}.` + createHmac("sha256", "s").update(`${ME}.${exp}`).digest("hex");
+  const r = await worker.fetch(new Request("https://w/api/mark", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(body) }),
+    { ...env, SITE_URL: "https://site.example/" }, { waitUntil: (p) => p });
+  assert.equal(r.status, 200);
+}
+
+test("on the site a second press and «—» clear the mark and the score", async () => {
+  await site({ review_id: "k", score: 7 });
+  assert.deepEqual({ ...db.prepare("SELECT status, score FROM marks WHERE user_id=?").get(ME) }, { status: "later", score: 7 });
+  await site({ review_id: "k", status: null });
+  assert.deepEqual({ ...db.prepare("SELECT status, score FROM marks WHERE user_id=?").get(ME) }, { status: null, score: 7 });
+  await site({ review_id: "k", score: null });
+  assert.equal(rowsOf(ME).marks, 0);
 });
