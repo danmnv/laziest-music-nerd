@@ -66,7 +66,7 @@ def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotoni
         _last[name] = clock()
         try:
             raw = http.get_json(url, json_body=body, method="POST", headers={"Authorization": f"Bearer {key}"},
-                                timeout=90, retries=0)
+                                timeout=float(os.environ.get(f"{name.upper()}_TIMEOUT") or 90), retries=0)
         except http.HttpError as e:
             print(f"{name} {model}: HTTP {e.status} {(e.body or '')[:200]}")
             if e.status in (401, 403):
@@ -86,7 +86,7 @@ def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotoni
             if e.status == 404 and "model" in (e.body or ""):  # the picked model is gone too: no use asking this provider
                 _dead.add(name)
                 return None
-            if e.status == 0 and name == "selectel":  # no answer in 90 s (Kimi K2.6 thinks longer, 2026-11-03): paid
+            if e.status == 0 and name == "selectel":  # no answer in time (Kimi K2.6 took >90 s, 2026-11-03): paid
                 return None                           # per token, a retry would only wait again; the next review goes on
             daily = e.status == 429 and "per day" in (e.body or "")  # the day's quota: waiting a minute won't help
             if e.status in (0, 429, 500, 502, 503, 504) and attempt < 2 and not daily:

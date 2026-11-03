@@ -63,6 +63,7 @@ jobs:
           BRIEFS_COMPARE_N: ${{ inputs.compare_n }}
           # Selectel's paid router (2026-11-03): only in a comparison until the owner picks a model
           SELECTEL_API_KEY: ${{ inputs.compare && secrets.SELECTEL_API_KEY || '' }}
+          SELECTEL_TIMEOUT: ${{ inputs.compare && '300' || '' }}   # a comparison waits for slow thinking models too
       - name: Сохранить
         if: ${{ always() && !inputs.compare }}
         run: |
