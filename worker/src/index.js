@@ -697,11 +697,12 @@ async function moveDupMarks(env, budget) {
 const good = (a) => !a.guest && (a.classic || (a.score != null && a.score >= 8)) && a.artist_name && a.album;
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
-// Our own site's page for the album, a line under the links, worded so it can't be taken for the artist's or the
-// album's site (owner, 2026-11-02). Empty while the site is off.
+// Our own site's page for the album, a line right under the links, worded so it can't be taken for the artist's or the
+// album's site (owner, 2026-11-02) and set apart by 🌐 rather than a blank line (owner, 2026-11-03), as on the channel's
+// card (lmn/card.py SITE_MARK). Empty while the site is off.
 function siteLine(env, r) {
   return env.SITE_URL && env.SITE_LIVE === "1" && r.id
-    ? `\n\n<a href="${env.SITE_URL}/r/${encodeURIComponent(r.id)}.html">Этот альбом на нашем сайте</a>` : ""; // apart from the links: it read as one of them
+    ? `\n🌐 <a href="${env.SITE_URL}/r/${encodeURIComponent(r.id)}.html">Этот альбом на нашем сайте</a>` : "";
 }
 
 // The album in Deezer's search. Plain words first: Deezer's field search (artist:"…" album:"…") answers nothing for
@@ -1057,7 +1058,10 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   ].filter(Boolean).join("\n");
   // Fantano reviewed the album twice (lmn/rereviews.py): the later score is the current one, the other is named under it
   const first = a.first || r.first, redo = a.redo || r.redo; // on the archive's entry, not on a posted card's record
-  const again = first ? `\n🔁 Первый обзор (${first.y}): ${badge(first)}` : redo ? `\n🔁 Позже переоценил (${redo.y}): ${badge(redo)}` : "";
+  // the words link to that review's video (owner, 2026-11-03; the site gives its id in rt), the button opens its card
+  const other = first || redo;
+  const againWords = other ? `${first ? "Первый обзор" : "Позже переоценил"} (${other.y})` : "";
+  const again = other ? `\n🔁 ${rt && rt.again_vid ? `<a href="https://youtu.be/${esc(rt.again_vid)}">${againWords}</a>` : againWords}: ${badge(other)}` : "";
   const head = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}${again}`;
   const q = encodeURIComponent(`${r.artist_name} ${r.album}`);
   const vid = r.video_id || (rt && rt.video_id); // most archive reviews have it only in rt (lmn/notes.py: the video's page)

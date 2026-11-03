@@ -258,7 +258,7 @@ test("with the site up, the card's last line is our site's page, named as ours (
   const c = calls.find((x) => x.method === "sendPhoto");
   assert.match(c.caption, /^<b>Radiohead — Kid A<\/b>/); // the title itself is text: a link's text can't be copied
   // apart from the links by a blank line: it read as one of them (owner, 2026-11-02)
-  assert.match(c.caption, /<\/blockquote>\n<b>Ссылки:<\/b> [^\n]+\n\n<a href="https:\/\/site\/r\/[^"]+\.html">Этот альбом на нашем сайте<\/a>$/);
+  assert.match(c.caption, /<\/blockquote>\n<b>Ссылки:<\/b> [^\n]+\n🌐 <a href="https:\/\/site\/r\/[^"]+\.html">Этот альбом на нашем сайте<\/a>$/);
 });
 
 test("one hit is sent as a full card: cover, length, links, marks and follow", async () => {

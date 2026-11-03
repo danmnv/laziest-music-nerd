@@ -101,7 +101,7 @@ class ParseTest(unittest.TestCase):
         with mock.patch.object(card, "SITE_LIVE", True):
             cap = card.caption(r)
             self.assertIn("<b>Fontaines D.C. — Dopamine Chamber</b>", cap)  # copyable: not a link
-            self.assertTrue(cap.endswith(f'\n\n<a href="{card.SITE_URL}/r/{r["id"]}.html">Этот альбом на нашем сайте</a>'))
+            self.assertTrue(cap.endswith(f'\n🌐 <a href="{card.SITE_URL}/r/{r["id"]}.html">Этот альбом на нашем сайте</a>'))
 
     def test_pin_intro_is_the_same_in_the_worker(self):
         # The owner's marks edit the pin through the Worker, new reviews through check.py: two texts would make it flip
