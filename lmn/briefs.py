@@ -162,7 +162,8 @@ def compare(archive, reviews, data):
             out = llm.ask(provider, title, text, model=model, lang=lang, verdict=verdict(a)) or {}
             u = out.get("usage") or {}
             row[m] = {"model": out.get("model"), "sec": round(time.monotonic() - t0),  # the model that really answered
-                      "in": u.get("prompt_tokens"), "out": u.get("completion_tokens")}
+                      "in": u.get("prompt_tokens"), "out": u.get("completion_tokens"),
+                      "cost": u.get("cost")}  # Selectel's own charge in roubles, surcharges included (2026-11-03)
             print(f"compare {title} / {m}: {row[m]['sec']} s, {'ok' if out.get('brief') else 'no answer'}", flush=True)
             got = {k: out[k] for k in ("brief", "about", "who", "en") if out.get(k)}
             if lang == "en":
@@ -178,7 +179,8 @@ def compare(archive, reviews, data):
         print("COMPARE " + json.dumps(r, ensure_ascii=False))
 
     def cell(x):
-        cost = f"<br><br><sub>{x['sec']} с, {x['in']} → {x['out']} токенов</sub>" if x.get("in") else ""
+        rub = f", {x['cost']:.2f} ₽" if isinstance(x.get("cost"), (int, float)) else ""
+        cost = f"<br><br><sub>{x['sec']} с, {x['in']} → {x['out']} токенов{rub}</sub>" if x.get("in") else ""
         en = x.get("en") or {}
         en = f"<br><br><i>EN: {en.get('who') or '—'}<br><br>{en.get('brief') or '—'}<br><br>{en.get('about') or '—'}</i>" if en else ""
         return (f"{x.get('who') or '—'}<br><br>{x.get('brief') or '—'}<br><br>{x.get('about') or '—'}{en}{cost}").replace("|", "/")
