@@ -158,9 +158,13 @@ def _caption(r, ai, limit, drop=()):
         paras[-1] += "\n" + quote
     else:
         paras.append(links_line(r))
-    if SITE_LIVE:  # our site, worded so it can't be taken for the artist's or the album's; apart from the links (owner, 2026-11-02)
-        paras.append(f'<a href="{page_url(r)}">Этот альбом на нашем сайте</a>')
+    if SITE_LIVE:  # our site, worded so it can't be taken for the artist's or the album's (owner, 2026-11-02); right under
+        # the links with no blank line, set apart by its own mark instead (owner, 2026-11-03)
+        paras[-1] += f'\n{SITE_MARK} <a href="{page_url(r)}">Этот альбом на нашем сайте</a>'
     return "\n\n".join(p for p in paras if p)
+
+
+SITE_MARK = "🌐"  # the line with our site's page, on the channel's and the bot's cards
 
 
 CARD_CRITICS = 3  # outlets on a channel card, in ratings.PRIORITY order (Pitchfork first), then Metacritic

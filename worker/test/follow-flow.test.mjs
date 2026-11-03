@@ -258,7 +258,7 @@ test("with the site up, the card's last line is our site's page, named as ours (
   const c = calls.find((x) => x.method === "sendPhoto");
   assert.match(c.caption, /^<b>Radiohead — Kid A<\/b>/); // the title itself is text: a link's text can't be copied
   // apart from the links by a blank line: it read as one of them (owner, 2026-11-02)
-  assert.match(c.caption, /<\/blockquote>\n<b>Ссылки:<\/b> [^\n]+\n\n<a href="https:\/\/site\/r\/[^"]+\.html">Этот альбом на нашем сайте<\/a>$/);
+  assert.match(c.caption, /<\/blockquote>\n<b>Ссылки:<\/b> [^\n]+\n🌐 <a href="https:\/\/site\/r\/[^"]+\.html">Этот альбом на нашем сайте<\/a>$/);
 });
 
 test("one hit is sent as a full card: cover, length, links, marks and follow", async () => {
@@ -298,7 +298,7 @@ test("one hit is sent as a full card: cover, length, links, marks and follow", a
   assert.ok(links.some(([t, u]) => t === "оценки на AOTY" && u === "https://www.albumoftheyear.org/search/?q=Radiohead%20Kid%20A"));
   assert.ok(btns.some((b) => b.callback_data === "m:k:done"));
   assert.ok(btns.some((b) => b.callback_data === "f:k"));
-  assert.ok(btns.some((b) => b.callback_data === "ar:k"));
+  assert.ok(btns.some((b) => b.text === "💿 Альбомы артиста" && b.callback_data === "da:k"));
   await press(OWNER, "f:k"); // an old review the bot never posted a card for
   assert.match(answers().at(-1).text, /Ты следишь за Radiohead/);
 });
@@ -323,20 +323,24 @@ test("without a Deezer match the card is text, with the same links", async () =>
 test("an artist's albums without Fantano's review, and a card for one of them", async () => {
   await say(OWNER, "radiohead");
   const list = calls.find((c) => c.method === "sendMessage");
-  assert.deepEqual(list.reply_markup.inline_keyboard.at(-2)[0], { text: "💿 Другие альбомы (без обзора Фантано)", callback_data: "da:k" });
+  assert.deepEqual(list.reply_markup.inline_keyboard.at(-2)[0], { text: "💿 Все альбомы артиста", callback_data: "da:k" });
   assert.deepEqual(list.reply_markup.inline_keyboard.at(-1)[0], { text: "🎬 Radiohead: от худшего к лучшему (2017)", url: "https://youtu.be/uu8sC7YDOZg" });
   calls = [];
   await press(OWNER, "da:k");
   const other = calls.find((c) => c.method === "sendMessage");
-  assert.equal(other.text, "Radiohead — альбомы без обзора Фантано:");
-  // studio albums newest first with the year of the first release, then EPs; reviewed Kid A and the undated one left out;
-  // the compilation and the remixes wait behind their own button
-  assert.deepEqual(other.reply_markup.inline_keyboard.map((r) => [r[0].text, r[0].callback_data]), [
+  assert.equal(other.text, "Radiohead — альбомы:");
+  // the whole list, newest first by the first release's year (owner, 2026-11-03: the artist first, not Fantano): the
+  // reviewed ones with their score open the review, the others their card; the undated one left out; the compilation
+  // and the remixes wait behind their own button
+  assert.deepEqual(other.reply_markup.inline_keyboard.map((r) => [r[0].text, r[0].callback_data || r[0].url]), [
+    ["🟢 8/10 · A Moon Shaped Pool · обзор 2016", "a:p"],
     ["💿 Amnesiac · 2001", `mb:${AMNESIAC}`], // from the second page
+    ["🟢 10/10 · Kid A · 2000", "a:k"], // MusicBrainz's year of the album, not the review's
     ["💿 The Bends · 1995", `mb:${BENDS}`],
-    ["💿 Pablo Honey · 1993", `mb:${PABLO}`],
     ["💿 My Iron Lung · 1994 · EP", `mb:${LUNG}`],
-    ["Ещё: концертные, сборники, ремиксы (2)", "dx:k"]]);
+    ["💿 Pablo Honey · 1993", `mb:${PABLO}`],
+    ["Ещё: концертные, сборники, ремиксы (2)", "dx:k"],
+    ["🎬 Radiohead: от худшего к лучшему (2017)", "https://youtu.be/uu8sC7YDOZg"]]);
   calls = [];
   await press(OWNER, "dx:k");
   const extra = calls.find((c) => c.method === "sendMessage");
@@ -361,16 +365,23 @@ test("an artist's albums without Fantano's review, and a card for one of them", 
   calls = [];
   await press(OWNER, "dz:9"); // a reviewed album opened from Deezer gets the usual card
   assert.match(calls.find((x) => x.method === "sendPhoto").caption, /^<b>Radiohead — Kid A<\/b>/);
+  calls = [];
+  // «💿 Альбомы артиста» on a card of an album without a review: the artist's name comes from the saved card
+  db.prepare("INSERT INTO unreviewed (id, artist_name, album) VALUES ('dz77', 'Radiohead', 'The Bends')").run();
+  await press(OWNER, "ua:dz77");
+  assert.match(calls.find((x) => x.method === "sendMessage").text, /^Radiohead — альбомы:/);
 });
 
 test("when MusicBrainz is down, the list comes from Deezer: albums only, the first edition's year", async () => {
   mbDown = true;
   await press(OWNER, "da:k");
   const other = calls.find((c) => c.method === "sendMessage");
-  assert.equal(other.text, "Radiohead — альбомы без обзора Фантано:");
-  // reviewed Kid A, the later Bends edition and the single are left out; newest first; no extras button
-  assert.deepEqual(other.reply_markup.inline_keyboard.map((r) => [r[0].text, r[0].callback_data]),
-    [["💿 OK Computer OKNOTOK 1997 2017 · 2017", "dz:22"], ["💿 The Bends · 1995", "dz:20"]]);
+  assert.equal(other.text, "Radiohead — альбомы:");
+  // the later Bends edition and the single are left out; newest first; no extras button
+  assert.deepEqual(other.reply_markup.inline_keyboard.map((r) => [r[0].text, r[0].callback_data || r[0].url]),
+    [["💿 OK Computer OKNOTOK 1997 2017 · 2017", "dz:22"], ["🟢 8/10 · A Moon Shaped Pool · обзор 2016", "a:p"],
+     ["🟢 10/10 · Kid A · 2000", "a:k"], ["💿 The Bends · 1995", "dz:20"],
+     ["🎬 Radiohead: от худшего к лучшему (2017)", "https://youtu.be/uu8sC7YDOZg"]]);
   calls = [];
   await press(OWNER, "dz:20");
   assert.match(calls.find((x) => x.method === "sendPhoto").caption, /^<b>Radiohead — The Bends<\/b> \(1995\)/);
@@ -398,7 +409,7 @@ test("a reviewed album: Fantano's line, favourites with a player on the site, n-
   const text = c.caption || c.text;
   assert.match(text, /1-й из 2 обзоров артиста\n\n💬 <i>Radiohead return &amp; shine\.<\/i>\n★ Любимые у Фантано: DAYDREAMING, TRUE LOVE WAITS/);
   const btns = c.reply_markup.inline_keyboard.flat();
-  assert.ok(btns.some((b) => b.text === "🔔 Следить") && btns.some((b) => b.text === "📚 Все обзоры"));
+  assert.ok(btns.some((b) => b.text === "🔔 Следить") && btns.some((b) => b.text === "💿 Альбомы артиста" && b.callback_data === "da:p"));
   assert.ok(!cardLinks(c).some(([t]) => /любимые треки/.test(t))); // the player is on the site, not linked from the bot (owner, 2026-11-02)
   // the Apple link found from Actions (lmn/apple.py, in rt): Apple's search isn't asked (it often refuses the Worker)
   assert.ok(cardLinks(c).some(([t, u]) => t === "Apple Music" && u === "https://music.apple.com/us/album/a-moon-shaped-pool/5"));

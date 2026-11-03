@@ -335,6 +335,13 @@ async function onCallback(q, env) {
     const arch = await archive(env);
     const a = arch.find((x) => x.id === parts[1]);
     if (a) await sendOtherAlbums(env, uid, arch, a.artist_name, false);
+  } else if (parts[0] === "ua" || parts[0] === "ux") {
+    // «💿 Альбомы артиста» on the card of an artist without reviews (ux: its «Ещё» list): the artist's name was saved
+    // with the card's ID
+    await answerNow();
+    const row = await env.DB.prepare("SELECT artist_name FROM unreviewed WHERE id=?").bind(parts[1]).first();
+    if (row) await sendOtherAlbums(env, uid, await archive(env), row.artist_name, parts[0] === "ux", parts[1]);
+    else await tg(env, "sendMessage", { chat_id: uid, text: "Не нашёл этого артиста. Открой карточку альбома заново." });
   } else if (parts[0] === "dx") {
     await answerNow();
     const arch = await archive(env);
@@ -697,11 +704,12 @@ async function moveDupMarks(env, budget) {
 const good = (a) => !a.guest && (a.classic || (a.score != null && a.score >= 8)) && a.artist_name && a.album;
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
-// Our own site's page for the album, a line under the links, worded so it can't be taken for the artist's or the
-// album's site (owner, 2026-11-02). Empty while the site is off.
+// Our own site's page for the album, a line right under the links, worded so it can't be taken for the artist's or the
+// album's site (owner, 2026-11-02) and set apart by 🌐 rather than a blank line (owner, 2026-11-03), as on the channel's
+// card (lmn/card.py SITE_MARK). Empty while the site is off.
 function siteLine(env, r) {
   return env.SITE_URL && env.SITE_LIVE === "1" && r.id
-    ? `\n\n<a href="${env.SITE_URL}/r/${encodeURIComponent(r.id)}.html">Этот альбом на нашем сайте</a>` : ""; // apart from the links: it read as one of them
+    ? `\n🌐 <a href="${env.SITE_URL}/r/${encodeURIComponent(r.id)}.html">Этот альбом на нашем сайте</a>` : "";
 }
 
 // The album in Deezer's search. Plain words first: Deezer's field search (artist:"…" album:"…") answers nothing for
@@ -824,10 +832,12 @@ async function otherAlbums(env, arch, artistName) {
   const reviewed = new Set(arch.filter((a) => nameKey(a.artist_name) === k).map((a) => nameKey(untitled(a.album))));
   const seen = new Set();
   const main = [], eps = [], extra = [];
+  const years = {}; // the release year of each reviewed album, for the artist's whole list
   const list = groups.filter((x) => x["first-release-date"])
     .sort((a, b) => String(a["first-release-date"]).localeCompare(String(b["first-release-date"]))); // oldest first: a later live album or compilation with the same title loses
   for (const x of list) {
     const key = nameKey(untitled(x.title));
+    if (key && reviewed.has(key) && !years[key]) years[key] = x["first-release-date"].slice(0, 4);
     if (!key || reviewed.has(key) || seen.has(key)) continue;
     seen.add(key);
     const second = x["secondary-types"] || [];
@@ -835,7 +845,7 @@ async function otherAlbums(env, arch, artistName) {
                    kind: second.length ? (KIND_RU[second[0]] || second[0].toLowerCase()) : x["primary-type"] === "EP" ? "EP" : "" };
     (second.length ? extra : x["primary-type"] === "EP" ? eps : main).push(item);
   }
-  return { main: main.reverse().concat(eps.reverse()), extra: extra.reverse() }; // newest first
+  return { main: main.reverse().concat(eps.reverse()), extra: extra.reverse(), years }; // newest first
 }
 
 // The same from Deezer, when MusicBrainz doesn't answer: albums only, one per title.
@@ -848,39 +858,59 @@ async function deezerOtherAlbums(arch, artistName) {
   const reviewed = new Set(arch.filter((a) => nameKey(a.artist_name) === k).map((a) => nameKey(untitled(a.album))));
   const seen = new Set();
   const out = [];
+  const years = {};
   const list = (d.data || []).filter((x) => x.record_type === "album")
     .sort((a, b) => String(a.release_date).localeCompare(String(b.release_date))); // oldest first: the original edition wins
   for (const x of list) {
     const key = nameKey(untitled(x.title));
+    if (key && reviewed.has(key) && !years[key]) years[key] = String(x.release_date || "").slice(0, 4);
     if (!key || reviewed.has(key) || seen.has(key)) continue;
     seen.add(key);
     out.push({ dz: x.id, title: x.title, year: String(x.release_date || "").slice(0, 4), kind: "" });
   }
-  return { main: out.reverse(), extra: [] };
+  return { main: out.reverse(), extra: [], years };
 }
 
-async function sendOtherAlbums(env, uid, arch, artist, extraOnly) {
-  const anchor = arch.find((a) => nameKey(a.artist_name) === nameKey(artist));
+// «💿 Альбомы артиста»: the artist's albums, newest first, the reviewed ones with Fantano's score and the others
+// plain (owner, 2026-11-03: the artist first, not Fantano). extraOnly: live albums, compilations, remixes.
+// key: the card ID (unreviewed table) of an artist without reviews, for the «Ещё» button when there is no review to
+// anchor it to.
+async function sendOtherAlbums(env, uid, arch, artist, extraOnly, key = null) {
+  const k = nameKey(artist);
+  const anchor = arch.find((a) => nameKey(a.artist_name) === k);
   const res = (await otherAlbums(env, arch, artist)) || (extraOnly ? null : await deezerOtherAlbums(arch, artist));
-  if (!res) return tg(env, "sendMessage", { chat_id: uid, text: `Не нашёл дискографию ${artist}.` });
-  const items = extraOnly ? res.extra : res.main;
-  if (!items.length) {
-    return tg(env, "sendMessage", { chat_id: uid, text: extraOnly ? `У ${artist} больше ничего нет.` : `У ${artist} нет альбомов, которые Фантано не обозревал.` });
+  if (extraOnly) {
+    if (!res || !res.extra.length) return tg(env, "sendMessage", { chat_id: uid, text: `У ${artist} больше ничего нет.` });
+    return tg(env, "sendMessage", { chat_id: uid, text: `${artist} — концертные, сборники, ремиксы и прочее:`,
+      reply_markup: { inline_keyboard: res.extra.slice(0, 30).map((x) => [discButton(x)]) } });
   }
-  const shown = items.slice(0, 30);
-  const rows = shown.map((x) => [{
-    text: `💿 ${short(x.title)}${x.year ? " · " + x.year : ""}${x.kind ? " · " + x.kind : ""}`.slice(0, 120),
-    callback_data: x.dz ? `dz:${x.dz}` : `mb:${x.id}`,
-  }]);
-  if (!extraOnly && res.extra.length && anchor) {
-    rows.push([{ text: `Ещё: концертные, сборники, ремиксы (${res.extra.length})`, callback_data: `dx:${anchor.id}` }]);
-  }
-  const what = extraOnly ? "концертные, сборники, ремиксы и прочее" : "альбомы без обзора Фантано";
-  return tg(env, "sendMessage", {
-    chat_id: uid,
-    text: `${artist} — ${what}${items.length > shown.length ? ` (показаны ${shown.length} новых из ${items.length})` : ""}:`,
-    reply_markup: { inline_keyboard: rows },
+  // the reviews (not the earlier of two reviews of one album, not single songs), at the album's release year when the
+  // discography knows it, else the review's year
+  const reviewed = arch.filter((a) => nameKey(a.artist_name) === k && !a.redo && !a.track).map((a) => {
+    const rel = res && res.years && (res.years[nameKey(untitled(a.album))] || res.years[nameKey(untitled(a.album).replace(/\s*[([]?\b(redux|revisited|re-?review)\b[)\]]?\s*$/i, ""))]);
+    return { a, year: rel || String(a.published).slice(0, 4), reviewYear: !rel };
   });
+  const all = [...reviewed, ...((res && res.main) || []).map((x) => ({ x, year: x.year || "" }))]
+    .sort((p, q) => String(q.year).localeCompare(String(p.year)));
+  if (!all.length) return tg(env, "sendMessage", { chat_id: uid, text: `Не нашёл дискографию ${artist}.` });
+  const shown = all.slice(0, 40);
+  const rows = shown.map((it) => [it.a
+    ? { text: `${badge(it.a)} · ${short(it.a.album)} · ${it.reviewYear ? "обзор " : ""}${it.year}`.slice(0, 120), callback_data: `a:${it.a.id}` }
+    : discButton(it.x)]);
+  if (res && res.extra.length && (anchor || key)) {
+    rows.push([{ text: `Ещё: концертные, сборники, ремиксы (${res.extra.length})`, callback_data: anchor ? `dx:${anchor.id}` : `ux:${key}` }]);
+  }
+  const video = anchor ? await rankingVideo(env, anchor.artist_name) : null;
+  if (video) rows.push([video]);
+  const note = !res ? " Остальную дискографию сейчас не получить: MusicBrainz и Deezer не ответили." : "";
+  // the score badges mark Fantano's reviews, as everywhere in the bot
+  const head = `${artist} — альбомы${all.length > shown.length ? ` (показаны ${shown.length} новых из ${all.length})` : ""}:` + note;
+  return tg(env, "sendMessage", { chat_id: uid, text: head, reply_markup: { inline_keyboard: rows } });
+}
+
+function discButton(x) {
+  return { text: `💿 ${short(x.title)}${x.year ? " · " + x.year : ""}${x.kind ? " · " + x.kind : ""}`.slice(0, 120),
+           callback_data: x.dz ? `dz:${x.dz}` : `mb:${x.id}` };
 }
 
 // A release from MusicBrainz: its year and type from there, cover, length and links from Deezer.
@@ -907,7 +937,7 @@ async function sendMbAlbum(env, uid, id, msg) {
 
 // "Radiohead — альбомы без обзора Фантано:" and the button "💿 The Bends · 1995 · EP" -> {artist, title, year, kind}
 function fromListButton(msg, data) {
-  const m = /^(.+?) — (?:альбомы без обзора|концертные)/.exec((msg && msg.text) || "");
+  const m = /^(.+?) — (?:альбомы без обзора|альбомы[ :(]|концертные)/.exec((msg && msg.text) || "");
   const b = ((msg && msg.reply_markup && msg.reply_markup.inline_keyboard) || []).flat().find((x) => x.callback_data === data);
   if (!m || !b) return null;
   const [title, ...rest] = b.text.replace(/^💿 /, "").split(" · ");
@@ -958,6 +988,12 @@ function queueRows(id, liked, section) {
 }
 
 // A card that went out as a photo when it could, else as text.
+// The artist's whole list of albums, the reviewed ones with Fantano's score (sendOtherAlbums). «Все обзоры» read as
+// the whole archive, and a list of reviews only kept the bot Fantano-centric (owner, 2026-11-03).
+function artistButton(id) {
+  return { text: "💿 Альбомы артиста", callback_data: `da:${id}` };
+}
+
 async function sendCard(env, uid, { text, reply_markup, cover }) {
   if (cover) {
     const r = await tg(env, "sendPhoto", { chat_id: uid, photo: cover, caption: text, parse_mode: "HTML", reply_markup });
@@ -993,7 +1029,12 @@ async function unreviewedCard(env, x, arch) {
       .bind(x.key, x.artist, x.title, x.year || null).run();
     rows.push(...MARK_ROWS(x.key, !!x.liked)); // x.liked: this person liked it (sendUnreviewed)
   }
-  if (known) rows.push([{ text: "🔔 Следить", callback_data: `f:${known.id}` }, { text: "📚 Все обзоры", callback_data: `ar:${known.id}` }]);
+  if (known) {
+    rows.push([{ text: "🔔 Следить", callback_data: `f:${known.id}` }, artistButton(known.id)]);
+  } else if (x.key) {
+    // an artist Fantano never reviewed: their albums from MusicBrainz / Deezer (owner, 2026-11-03: The Doors had no way on)
+    rows.push([{ text: "💿 Альбомы артиста", callback_data: `ua:${x.key}` }]);
+  }
   return { text, reply_markup: { inline_keyboard: rows }, cover: x.cover };
 }
 
@@ -1057,7 +1098,10 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   ].filter(Boolean).join("\n");
   // Fantano reviewed the album twice (lmn/rereviews.py): the later score is the current one, the other is named under it
   const first = a.first || r.first, redo = a.redo || r.redo; // on the archive's entry, not on a posted card's record
-  const again = first ? `\n🔁 Первый обзор (${first.y}): ${badge(first)}` : redo ? `\n🔁 Позже переоценил (${redo.y}): ${badge(redo)}` : "";
+  // the words link to that review's video (owner, 2026-11-03; the site gives its id in rt), the button opens its card
+  const other = first || redo;
+  const againWords = other ? `${first ? "Первый обзор" : "Позже переоценил"} (${other.y})` : "";
+  const again = other ? `\n🔁 ${rt && rt.again_vid ? `<a href="https://youtu.be/${esc(rt.again_vid)}">${againWords}</a>` : againWords}: ${badge(other)}` : "";
   const head = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}${again}`;
   const q = encodeURIComponent(`${r.artist_name} ${r.album}`);
   const vid = r.video_id || (rt && rt.video_id); // most archive reviews have it only in rt (lmn/notes.py: the video's page)
@@ -1079,8 +1123,9 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   const liked = await isLiked(env, uid, r.id);
   const reply_markup = { inline_keyboard: [
     ...(opts.queue ? queueRows(r.id, liked, opts.queue) : MARK_ROWS(r.id, liked)),
-    [{ text: "🔔 Следить", callback_data: `f:${r.id}` }, { text: "📚 Все обзоры", callback_data: `ar:${r.id}` }],
-    ...(first || redo ? [[{ text: first ? `🔁 Первый обзор (${first.y})` : `🔁 Обзор ${redo.y}`, callback_data: `a:${(first || redo).id}` }]] : []),
+    [{ text: "🔔 Следить", callback_data: `f:${r.id}` }, artistButton(r.id)],
+    // the other review's button only when its line can't link the video (owner, 2026-11-03: the link is enough)
+    ...(other && !(rt && rt.again_vid) ? [[{ text: first ? `🔁 Первый обзор (${first.y})` : `🔁 Обзор ${redo.y}`, callback_data: `a:${other.id}` }]] : []),
     // the AI's mood guess gets the channel card's vote (да / нет, «другое» asks all four); without one, a button asks
     ...moods.map((m) => [{ text: `для ${vibe(m)}: да`, callback_data: `w:${r.id}:${MOODS.indexOf(m)}:y` }, { text: "нет", callback_data: `w:${r.id}:${MOODS.indexOf(m)}:n` }]),
     [{ text: moods.length ? "Вайб: другое" : "✨ Вайб для чего?", callback_data: `mq:${r.id}` }],
@@ -1308,7 +1353,7 @@ async function rankingVideo(env, artist) {
 function artistMessage(artist, total, items, others, video = null) {
   const head = `${artist} — ${reviewsWord(total)} Фантано` + (total > items.length ? ` (показаны ${items.length} новых)` : "") + ":";
   const tail = others ? `\n\nЕщё ${reviewsWord(others)} других артистов по этому запросу — уточни его, чтобы их увидеть.` : "";
-  const more = items.length ? [[{ text: "💿 Другие альбомы (без обзора Фантано)", callback_data: `da:${items[0].id}` }]] : [];
+  const more = items.length ? [[{ text: "💿 Все альбомы артиста", callback_data: `da:${items[0].id}` }]] : [];
   return { text: head + tail, reply_markup: { inline_keyboard: albumButtons(items, false).concat(more, video ? [[video]] : []) } };
 }
 

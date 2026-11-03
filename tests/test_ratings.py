@@ -161,3 +161,18 @@ class ScheduleTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BareTitle(unittest.TestCase):
+    def test_second_search_without_a_bracket(self):
+        from lmn.ratings import bare_title
+        self.assertEqual(bare_title("American Football", "American Football (LP3)"), None)  # what's left is the artist
+        self.assertEqual(bare_title("Kanye West", "The Life of Pablo (Redux)"), "The Life of Pablo")
+        self.assertEqual(bare_title("Childish Gambino", "Atavista (3.15.20 REDUX)"), "Atavista")
+        self.assertIsNone(bare_title("Igorrr", "Steroids (Crouching Tiger Hidden Gabber Megamix)"))  # another version
+        self.assertIsNone(bare_title("JPEGMAFIA", "100% PROD I.V. (Instrumentals)"))
+        self.assertIsNone(bare_title("Rico Nasty", "Half Blood (BloodLuxe)"))
+        self.assertIsNone(bare_title("X", "Self-Titled (LP 2)"))  # the first self-titled album's scores would be wrong
+        self.assertIsNone(bare_title("X", "Plain Title"))
+        for sequel in ("Album (Vol. 2)", "Album (Part II)", "Album (Pt. 2)", "Album (Chapter 2)", "Album (2)", "Album (II)", "Album (LP 2)"):
+            self.assertIsNone(bare_title("X", sequel), sequel)  # the first volume's scores would be wrong

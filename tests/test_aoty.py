@@ -85,6 +85,12 @@ class Rereviews(unittest.TestCase):
         self.assertFalse(any(k in by["v"] or k in by["v0"] for k in ("first", "redo")), "Terminal Redux is its own album")
         self.assertEqual(rereviews.link(archive), 0, "a second run changes nothing")
 
+    def test_has_scores(self):
+        self.assertFalse(site.has_scores({"wp": None}))
+        self.assertFalse(site.has_scores(None))
+        self.assertTrue(site.has_scores({"aoty": 77}))
+        self.assertTrue(site.has_scores({"charts": {"US": 1}}))
+
     def test_pages_name_the_other_review(self):
         self.assertEqual(site.again_rows({"first": {"id": "p1", "y": "2016", "score": 6}}),
                          [("Первый обзор", '<a href="p1.html">6/10 (2016)</a>')])

@@ -194,6 +194,13 @@ def lists_rows(badges):
     return [("У Фантано в списках", "<br>".join(f'🏆 <a href="{e(b["url"])}">{e(b["text"])}</a>' for b in badges))]
 
 
+def has_scores(rt):
+    """A ratings entry with anything the critics line shows: outlets, Metacritic, AOTY, AnyDecentMusic, charts."""
+    rt = rt or {}
+    return bool(rt.get("critics") or rt.get("metacritic") is not None or rt.get("aoty") is not None
+                or rt.get("adm") is not None or rt.get("charts") or rt.get("certs"))
+
+
 def again_rows(a):
     """Fantano reviewed the album twice (lmn/rereviews.py): the other review, linked to its page."""
     if a.get("first"):
@@ -432,8 +439,17 @@ def build():
     (OUT / "wtb.json").write_text(json.dumps([{k: r[k] for k in ("artist", "video_id", "date")} for r in sp.get("rankings", [])],
                                              ensure_ascii=False))  # the bot's artist lists link the "worst to best" video
     (OUT / "rt").mkdir(exist_ok=True)
+    def album_rt(i):
+        return aoty.merge(ratings.get(i), aoty_data.get(i))
+
     for a in by_id.values():
-        rt = aoty.merge(ratings.get(a["id"]), aoty_data.get(a["id"]))
+        rt = album_rt(a["id"])
+        other = (a.get("first") or a.get("redo") or {}).get("id")
+        if other and not has_scores(rt):
+            # the critics' scores belong to the album, not to one of Fantano's two reviews of it: Wikipedia and AOTY often
+            # know only the first title («The Life of Pablo», not «… (Redux)»)
+            rt = album_rt(other) or rt
+        again_vid = ((notes.get(other) or {}).get("video_id") or (by_id.get(other) or {}).get("video_id")) if other else None
         li = lists.get(a["id"])
         nt = notes.get(a["id"])
         bc = (bandcamp.get(a["id"]) or {}).get("u")
@@ -454,7 +470,7 @@ def build():
         bf = (a.get("ai") or {}).get("brief") or (br or {}).get("brief")
         bm = (br or {}).get("moods") if not (a.get("ai") or {}).get("moods") else None  # the bot's mood vote for archive cards
         am = apple.get(a["id"]) if isinstance(apple.get(a["id"]), str) else None
-        if crit or sales or li or nt or bf or bm or am:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
+        if crit or sales or li or nt or bf or bm or am or again_vid:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
             (OUT / "rt" / f"{a['id']}.json").write_text(json.dumps(
                 {"crit": crit[:4], "sales": sales[:4], "wp_url": (rt or {}).get("wp_url"), "contested": contested(a, rt),
                  **({"lists": li[:4]} if li else {}), **({"blurb": nt["blurb"]} if nt.get("blurb") else {}),
@@ -462,6 +478,7 @@ def build():
                  **({"video_id": nt["video_id"]} if nt.get("video_id") and not a.get("video_id") else {}),
                  **({"bc": nt["bc"]} if nt.get("bc") else {}),
                  **({"apple": am} if am else {}),
+                 **({"again_vid": again_vid} if again_vid else {}),  # the other review's video: the bot's «🔁 Первый обзор» links it
                  **({"fav": [track_name(f["t"], fav_titles(a, deezer_found(albums.get(a["id"])))) for f in nt["fav"]], "fav_play": any(f.get("dz") or f.get("am") for f in nt["fav"])} if nt.get("fav") else {})},
                 ensure_ascii=False))
     for k, items in by_artist.items():

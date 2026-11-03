@@ -89,6 +89,27 @@ def clean_album(artist, album):
     return a or None
 
 
+# A bracket at the end of a title that names another version of the album, or a sequel («Vol. 2», «Part II», «(2)»):
+# the plain title's article is another album, and its scores are not this one's
+VERSION_WORDS = re.compile(r"^\s*(\d+|[ivx]+)\s*$|\bpart\b|\bpt\b|\bvol\b|volume|chapter|\bact\b|\bside\b|\bdisc\b|\blp\s*\d|"
+                           r"luxe|expanded|remix|mix\b|megamix|instrumental|live|demo|acoustic|edition|version|reissue|remaster|"
+                           r"anniversary|commentary|karaoke|a cappella|acapella|dub\b|chopped|slowed", re.I)
+
+
+def bare_title(artist, album):
+    """The title without a bracket at its end («American Football (LP3)» -> «American Football»), for a second search
+    when Wikipedia knows the album under its plain name (owner, 2026-11-03: «терять оценки неприятно»). None when there
+    is no such bracket, when it names another version (a remix, live, instrumentals: those would get the original's
+    scores), or when what is left is "Self-Titled" (an artist's second self-titled album would get the first's)."""
+    m = re.fullmatch(r"(.+?)\s*[\(\[]([^\(\)\[\]]+)[\)\]]", album or "")
+    if not m or VERSION_WORDS.search(m.group(2)):
+        return None
+    bare = m.group(1).strip()
+    if not norm(bare) or norm(bare) in ("selftitled", "st", norm(artist)):
+        return None
+    return bare
+
+
 def template(text, names):
     """First {{name ...}} template (balanced braces) in wikitext, or None."""
     low = text.lower()
@@ -393,13 +414,18 @@ def run():
         if done >= limit:
             break
         pub = datetime.fromisoformat(r["published"])
-        if not due(store.get(r["id"]), pub, now):
-            continue
         album = None if r.get("track") else clean_album(r.get("artist_name"), r.get("album"))
-        entry = {"checked": now.isoformat(timespec="seconds"), "wp": None}
+        bare = bare_title(r.get("artist_name"), album) if album else None
+        old = store.get(r["id"]) or {}
+        # a title with a bracket not yet searched without it is due now (once), whatever its age
+        if not due(old or None, pub, now) and not (bare and not old.get("wp") and not old.get("bare_tried")):
+            continue
+        entry = {"checked": now.isoformat(timespec="seconds"), "wp": None, **({"bare_tried": True} if bare else {})}
         if album and r.get("artist_name"):
             try:
                 title, text, revid = find_article(r["artist_name"], album)
+                if not title and bare:
+                    title, text, revid = find_article(r["artist_name"], bare)
             except Exception as ex:  # a network error must not stop the whole batch or wipe old data
                 print(f"  ! {r['artist_name']} — {album}: {str(ex)[:80]}", file=sys.stderr)
                 done += 1
@@ -411,7 +437,6 @@ def run():
                 except Exception as ex:  # odd wikitext in one article must not stop the batch
                     print(f"  ! parse {title}: {ex!r}"[:120], file=sys.stderr)
                 found += 1
-        old = store.get(r["id"]) or {}
         if old.get("wp") and not entry["wp"]:
             entry = dict(old, checked=entry["checked"])  # keep what we had; search can miss on a bad day
         store[r["id"]] = entry
