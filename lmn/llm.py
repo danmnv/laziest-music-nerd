@@ -55,7 +55,8 @@ def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotoni
         return None
     moods = json.dumps(gemini.AI_MOODS, ensure_ascii=False)
     prompt = (gemini.PROMPT_EN.format(moods=moods, title=title, text=text[:max_text], verdict=verdict) if lang == "en" else
-              gemini.PROMPT_RU.format(moods=moods, title=title, text=text[:max_text], verdict=verdict))
+              gemini.PROMPT_RU.format(moods=moods, title=title, text=text[:max_text], verdict=verdict,
+                                      en=gemini.EN_FIELD if lang == "both" else ""))
     body = {"model": model, "messages": [{"role": "user", "content": prompt}],
             "response_format": {"type": "json_object"}, "temperature": 0.4, **EXTRA_BODY.get(name, {})}
     for attempt in range(3):

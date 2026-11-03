@@ -6,6 +6,8 @@ BRIEFS_LANG=en (the default): the model writes in English and Gemini translates 
 BRIEFS_TRANSLATE_MAX requests a run, so new reviews keep Gemini's daily quota). The free models' own Russian was full of
 calques (tried 2026-11-01 on Groq's openai/gpt-oss-120b: «светло‑приемлемую семёрку»), so in this mode briefs written in
 Russian by them (no "tr") are written again. BRIEFS_LANG=ru: the model writes in Russian itself.
+BRIEFS_LANG=both: the model writes the Russian texts and their English ("en") in one answer (a paid model on
+Selectel's router, 2026-11-03), so no Gemini translation.
 
 Writes data/briefs.json: {review id: {"brief", "about", "who", "moods", "m": model, "tr": translating model, "en": the
 English}}; an entry with "en" and no "tr" waits for its translation. Skipped: guest reviews (not Fantano's
@@ -55,9 +57,9 @@ PROMPT_V = 2  # 2: no score in the text (2026-11-01); entries written by an olde
 
 
 def finished(v, lang="ru"):
-    if lang == "en" and v.get("brief") and not v.get("tr") and not v.get("en"):
+    if lang in ("en", "both") and v.get("brief") and not v.get("tr") and not v.get("en"):
         return False  # written in Russian by a model that writes it poorly: again, in English and translated
-    if lang == "en" and (v.get("brief") or v.get("en")) and v.get("p", 1) < PROMPT_V:
+    if lang in ("en", "both") and (v.get("brief") or v.get("en")) and v.get("p", 1) < PROMPT_V:
         return False  # until then the site shows the old text with the score cut (gemini.drop_score)
     return bool(v.get("brief") or v.get("en") or v.get("skip") or v.get("fail", 0) >= FAIL_MAX)
 
@@ -79,8 +81,12 @@ def verdict(a):
 
 
 def entry(out, lang="ru"):
+    """lang "both": the model wrote the Russian texts and their English ("en") in one answer, so it is its own
+    translator ("tr")."""
     text = {k: (out.get(k) or "").strip() for k in ("brief", "about", "who")}
-    e = {**(text if lang == "ru" else {"en": {k: v for k, v in text.items() if v}}), "moods": out.get("moods") or [], "m": out.get("model"),
+    if lang == "both":
+        text = {**text, "en": out.get("en") or {}, "tr": out.get("model")}
+    e = {**(text if lang != "en" else {"en": {k: v for k, v in text.items() if v}}), "moods": out.get("moods") or [], "m": out.get("model"),
          "p": PROMPT_V}
     return {k: v for k, v in e.items() if v}
 
@@ -127,8 +133,9 @@ def compare(archive, reviews, data):
     written and translated, and asks each of BRIEFS_COMPARE_MODELS:
     - a plain name is a Groq model (each has its own free daily quota, 2026-11-02): it writes in English and Gemini
       translates them all in one request, like the real run;
-    - "selectel:<model>" goes to Selectel's router and writes in Russian itself (gemini.PROMPT_RU), as a paid model
-      would in the real run, with its tokens and seconds for the cost (2026-11-03);
+    - "selectel:<model>" goes to Selectel's router and writes the Russian and the English texts itself in one answer
+      (gemini.PROMPT_RU with EN_FIELD), as a paid model would in the real run, with its tokens and seconds for the
+      cost (2026-11-03);
     - "selectel:list" only lists the router's models (their ids for the names above); "selectel:list:<regex>" only
       those whose id matches."""
     n = int(os.environ.get("BRIEFS_COMPARE_N") or "2")
@@ -143,19 +150,19 @@ def compare(archive, reviews, data):
     rows, en = [], []
     for a, text in picked:
         title = f"{a['artist_name']} - {a['album']}"
-        row = {"id": a["id"], "title": title, CURRENT: {f: data[a["id"]].get(f) for f in ("who", "brief", "about", "m")}}
+        row = {"id": a["id"], "title": title, CURRENT: {f: data[a["id"]].get(f) for f in ("who", "brief", "about", "en", "m")}}
         for m in models:
             if sum(1 for r in rows if not r[m].get("model")) >= 2:  # no answer twice: a slow or broken model, not tried again
                 row[m] = {}
                 continue
-            provider, model, lang = ("selectel", m.split(":", 1)[1], "ru") if m.startswith("selectel:") else ("groq", m, "en")
+            provider, model, lang = ("selectel", m.split(":", 1)[1], "both") if m.startswith("selectel:") else ("groq", m, "en")
             t0 = time.monotonic()
             out = llm.ask(provider, title, text, model=model, lang=lang, verdict=verdict(a)) or {}
             u = out.get("usage") or {}
             row[m] = {"model": out.get("model"), "sec": round(time.monotonic() - t0),  # the model that really answered
                       "in": u.get("prompt_tokens"), "out": u.get("completion_tokens")}
             print(f"compare {title} / {m}: {row[m]['sec']} s, {'ok' if out.get('brief') else 'no answer'}", flush=True)
-            got = {k: out[k] for k in ("brief", "about", "who") if out.get(k)}
+            got = {k: out[k] for k in ("brief", "about", "who", "en") if out.get(k)}
             if lang == "en":
                 en.append((row, m, got))
             else:
@@ -170,7 +177,9 @@ def compare(archive, reviews, data):
 
     def cell(x):
         cost = f"<br><br><sub>{x['sec']} с, {x['in']} → {x['out']} токенов</sub>" if x.get("in") else ""
-        return (f"{x.get('who') or '—'}<br><br>{x.get('brief') or '—'}<br><br>{x.get('about') or '—'}{cost}").replace("|", "/")
+        en = x.get("en") or {}
+        en = f"<br><br><i>EN: {en.get('who') or '—'}<br><br>{en.get('brief') or '—'}<br><br>{en.get('about') or '—'}</i>" if en else ""
+        return (f"{x.get('who') or '—'}<br><br>{x.get('brief') or '—'}<br><br>{x.get('about') or '—'}{en}{cost}").replace("|", "/")
     cols = [CURRENT] + models
     md = ("| Обзор | " + " | ".join(cols) + " |\n|---|" + "---|" * len(cols) + "\n"
           + "\n".join(f"| {r['title']} | " + " | ".join(cell(r[c]) for c in cols) + " |" for r in rows) + "\n")

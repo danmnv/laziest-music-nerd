@@ -443,13 +443,25 @@ class CompareModels(unittest.TestCase):
                 mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": "", "BRIEFS_COMPARE_MODELS": "selectel:deepseek/x"}):
             rows = briefs.compare(archive, [], data)
         tr.assert_not_called()  # no translation: the model wrote Russian
-        self.assertEqual(asked[0][:3], ("selectel", "deepseek/x", "ru"))
+        self.assertEqual(asked[0][:3], ("selectel", "deepseek/x", "both"))
         self.assertIn("7/10", asked[0][3])  # the verdict goes to the Russian prompt too
         self.assertEqual({k: rows[0]["selectel:deepseek/x"][k] for k in ("brief", "in", "out")},
                          {"brief": "Сразу по-русски.", "in": 9000, "out": 700})
 
 
 class Selectel(unittest.TestCase):
+    def test_both_languages_in_one_answer_need_no_translation(self):
+        out = gemini.parse_answer(json.dumps(dict(ANSWER, en={"brief": "Dense and noisy. He gives it a 7/10.", "who": "Oxford band; fourth album.", "x": 1})))
+        self.assertEqual(out["en"], {"brief": "Dense and noisy.", "who": "Oxford band; fourth album."})  # the score cut here too
+        e = briefs.entry({**out, "model": "m1"}, "both")
+        self.assertEqual((e["brief"], e["tr"], e["en"]["who"]), ("Коротко.", "m1", "Oxford band; fourth album."))
+        self.assertTrue(briefs.finished(e, "both"))
+        self.assertEqual(briefs.untranslated({"k": e}), [])  # its own translation: Gemini is not asked
+        with mock.patch.dict(os.environ, {"SELECTEL_API_KEY": "k"}), mock.patch.object(llm.http, "get_json", return_value=chat(ANSWER)) as get:
+            llm.ask("selectel", "A - B", "text", model="m1", lang="both", sleep=lambda s: None)
+        self.assertIn('"en": объект', get.call_args.kwargs["json_body"]["messages"][0]["content"])
+
+
     def test_skipped_until_a_model_is_set_then_asked_in_russian_with_low_reasoning(self):
         llm._dead.clear()
         llm._spent.clear()
@@ -464,6 +476,7 @@ class Selectel(unittest.TestCase):
         body = get.call_args.kwargs["json_body"]
         self.assertEqual((body["model"], body["reasoning"]), ("m1", {"effort": "low"}))
         self.assertIn("на русском", body["messages"][0]["content"])
+        self.assertNotIn('"en": объект', body["messages"][0]["content"])  # English only when asked for both
         self.assertIn("7/10", body["messages"][0]["content"])
         self.assertEqual((out["brief"], out["usage"]["completion_tokens"]), ("Коротко.", 3))  # a fenced answer is read too
 

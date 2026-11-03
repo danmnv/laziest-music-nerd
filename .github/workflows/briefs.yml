@@ -58,6 +58,7 @@ jobs:
           BRIEFS_LIMIT: ${{ inputs.limit || '150' }}
           BRIEFS_MINUTES: "330"   # GitHub stops a job after 6 hours; this leaves time to save
           BRIEFS_COMPARE: ${{ inputs.compare && '1' || '' }}
+          PYTHONUNBUFFERED: "1"   # the log shows each line as it comes, also when a run is stopped
           BRIEFS_COMPARE_MODELS: ${{ inputs.compare_models }}
           BRIEFS_COMPARE_N: ${{ inputs.compare_n }}
           # Selectel's paid router (2026-11-03): only in a comparison until the owner picks a model
