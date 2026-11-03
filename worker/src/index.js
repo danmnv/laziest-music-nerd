@@ -6,7 +6,7 @@ import { isDigestSunday } from "./digest.mjs";
 import { nameKey, followMatches } from "./follow.mjs";
 import { answerSearch, artistReviews, badge } from "./search.mjs";
 import { criticsText } from "./critics.mjs";
-import { dupAliases, remapStatements, aliasKey } from "./dups.mjs";
+import { dupAliases, remapStatements } from "./dups.mjs";
 import { wikiCritics } from "./wiki.mjs";
 import { startLink, openFromStart } from "./links.mjs";
 import { PAGE, OLD_DAYS, QFROM_MINUTES, lastHeard, after, before, nextAfter, laterReviews, daysOld, line as queueLine } from "./queue.mjs";
@@ -681,18 +681,17 @@ async function archiveById(env, id) {
   return arch.find((x) => x.id === want);
 }
 
-// Marks, likes, vibe votes and «already told» rows saved under a double post's id go to its first post. Runs from the
-// daily cron once per change of the list, as one D1 batch. Budget: the archive, a setting, the batch, a setting.
+// Marks, likes, vibe votes, «already told» rows and «Наверстать» places saved under a double post's id go to its first
+// post. Runs every day, as one D1 batch (it changes nothing when there is nothing to move): an old card's button can
+// still write under the double post's id. Budget: the archive and the batch.
 async function moveDupMarks(env, budget) {
-  if (budget.left < 4) return;
+  if (budget.left < 2) return;
   await archive(env);
   const alias = (archiveCache && archiveCache.alias) || {};
-  const key = aliasKey(alias);
-  budget.left -= 2;
-  if (!key || (await getSetting(env, "dups_moved")) === key) return;
+  budget.left -= 1;
+  if (!Object.keys(alias).length) return;
   await env.DB.batch(remapStatements(alias).map(([sql, b]) => env.DB.prepare(sql).bind(...b)));
-  await setSetting(env, "dups_moved", key);
-  budget.left -= 2;
+  budget.left -= 1;
 }
 
 const good = (a) => !a.guest && (a.classic || (a.score != null && a.score >= 8)) && a.artist_name && a.album;

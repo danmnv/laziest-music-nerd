@@ -20,11 +20,8 @@ export function remapStatements(alias) {
       out.push([`UPDATE OR IGNORE ${t} SET review_id=? WHERE review_id=?`, [orig, dup]]);
       out.push([`DELETE FROM ${t} WHERE review_id=?`, [dup]]);
     }
+    // a «Наверстать» place saved on the double post (settings qpos:<uid> = review id)
+    out.push(["UPDATE settings SET value=? WHERE key LIKE 'qpos:%' AND value=?", [orig, dup]]);
   }
   return out;
-}
-
-// a short fingerprint of the alias list, so the move runs once per change of the list
-export function aliasKey(alias) {
-  return Object.entries(alias || {}).sort().map(([d, o]) => `${d}>${o}`).join(",");
 }
