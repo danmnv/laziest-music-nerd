@@ -10,6 +10,7 @@ export function searchArchive(archive, query, limit = 8) {
   const hits = [];
   for (const a of archive) {
     if (!a.artist_name && !a.album) continue;
+    if (a.redo) continue; // reviewed again later: the search shows the later review, whose card names this one
     const artist = nameKey(a.artist_name), hay = artist + "|" + nameKey(a.album);
     if (!words.every((w) => hay.includes(w))) continue;
     hits.push({ a, rank: artist === whole ? 0 : artist.startsWith(whole) ? 1 : 2 });

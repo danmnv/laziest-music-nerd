@@ -665,7 +665,8 @@ async function archive(env) {
   if (archiveCache && Date.now() - archiveCache.at < 600e3) return archiveCache.data;
   const r = await dataFile(env, "archive.json", 3600);
   if (!r.ok) return archiveCache ? archiveCache.data : [];
-  archiveCache = { at: Date.now(), data: await r.json() };
+  // a review theneedledrop.com posted twice is left out everywhere (lmn/rereviews.py marks the second post)
+  archiveCache = { at: Date.now(), data: (await r.json()).filter((a) => !a.dup_of) };
   return archiveCache.data;
 }
 
@@ -1030,7 +1031,10 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
     rt && rt.blurb && !brief ? `💬 <i>${esc(rt.blurb)}</i>` : "",
     fav.length && !list.length ? `★ Любимые у Фантано: ${esc(fav.join(", "))}` : "", // with a tracklist, ★ marks them there
   ].filter(Boolean).join("\n");
-  const head = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}`;
+  // Fantano reviewed the album twice (lmn/rereviews.py): the later score is the current one, the other is named under it
+  const first = a.first || r.first, redo = a.redo || r.redo; // on the archive's entry, not on a posted card's record
+  const again = first ? `\n🔁 Первый обзор (${first.y}): ${badge(first)}` : redo ? `\n🔁 Позже переоценил (${redo.y}): ${badge(redo)}` : "";
+  const head = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}${again}`;
   const q = encodeURIComponent(`${r.artist_name} ${r.album}`);
   const vid = r.video_id || (rt && rt.video_id); // most archive reviews have it only in rt (lmn/notes.py: the video's page)
   const linkLine = linkItems([
@@ -1052,6 +1056,7 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   const reply_markup = { inline_keyboard: [
     ...(opts.queue ? queueRows(r.id, liked, opts.queue) : MARK_ROWS(r.id, liked)),
     [{ text: "🔔 Следить", callback_data: `f:${r.id}` }, { text: "📚 Все обзоры", callback_data: `ar:${r.id}` }],
+    ...(first || redo ? [[{ text: first ? `🔁 Первый обзор (${first.y})` : `🔁 Обзор ${redo.y}`, callback_data: `a:${(first || redo).id}` }]] : []),
     // the AI's mood guess gets the channel card's vote (да / нет, «другое» asks all four); without one, a button asks
     ...moods.map((m) => [{ text: `для ${vibe(m)}: да`, callback_data: `w:${r.id}:${MOODS.indexOf(m)}:y` }, { text: "нет", callback_data: `w:${r.id}:${MOODS.indexOf(m)}:n` }]),
     [{ text: moods.length ? "Вайб: другое" : "✨ Вайб для чего?", callback_data: `mq:${r.id}` }],

@@ -87,3 +87,12 @@ test("«Дослушать»: the start is the review published last among the h
   assert.equal(nextAfter(arch, arch[1], { c: "done" }).id, "d");
   assert.equal(nextAfter(arch, arch[3], {}), null);
 });
+
+// Fantano reviewed it again later (lmn/rereviews.py): the search shows the later review, whose card names the first
+test("an album reviewed again is found once, by the later review", () => {
+  const arch = [
+    { id: "p1", artist_name: "Kanye West", album: "The Life of Pablo", published: "2016-02-16T05:34:28Z", score: 6, redo: { id: "p2", y: "2018", score: 8 } },
+    { id: "p2", artist_name: "Kanye West", album: "The Life of Pablo (Redux)", published: "2018-01-29T17:06:01Z", score: 8, first: { id: "p1", y: "2016", score: 6 } },
+  ];
+  assert.deepEqual(searchArchive(arch, "life of pablo").items.map((a) => a.id), ["p2"]);
+});

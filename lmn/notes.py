@@ -260,7 +260,7 @@ def build(uploads, archive, old, deezer_limit=1500, apple_limit=200, deadline=No
 
 
 def apply_dates(path, data_dir):
-    """python -m lmn.notes dates <video_dates.json>: the step after the specials run. Re-run on every push retry from
+    """python -m lmn.notes dates <video_dates.json>: the step after the specials run (also lmn/rereviews.py). Re-run on every push retry from
     a fresh archive.json, so it never fights check.py's appends."""
     import json
     from pathlib import Path
@@ -269,7 +269,12 @@ def apply_dates(path, data_dir):
     nts = json.loads((data_dir / "notes.json").read_text())
     moved = use_video_dates(json.loads(Path(path).read_text()), archive, nts)
     print(f"archive: {moved} dates changed to the review videos'")
-    if moved:
+    from . import aoty, rereviews  # the same fresh copy: a second review of an album, a post TND made twice
+    linked = rereviews.link(archive)
+    print(f"archive: {linked} entries got or lost a link to another review of the same album")
+    filled = aoty.fill_scores(archive, json.loads((data_dir / "aoty.json").read_text())) if (data_dir / "aoty.json").exists() else 0
+    print(f"archive: Fantano's score taken from the AOTY table for {filled} reviews")
+    if moved or linked or filled:
         (data_dir / "archive.json").write_text(json.dumps(archive, ensure_ascii=False, indent=1) + "\n")
 
 

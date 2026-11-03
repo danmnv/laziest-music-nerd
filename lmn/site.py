@@ -9,7 +9,7 @@ import unicodedata
 import urllib.parse
 from pathlib import Path
 
-from . import card, gemini, ratings, specials, tnd
+from . import aoty, card, gemini, ratings, specials, tnd
 from .colors import color, label
 from .musicbrainz import norm
 
@@ -100,13 +100,16 @@ def search_buttons(artist, album):
 
 def critics_parts(rt):
     """Critic scores and chart/sales facts from data/ratings.json (the ratings workflow; source: the album's
-    Wikipedia article). Two lists of short strings; both empty when there's no article."""
-    if not rt or not rt.get("wp"):
+    Wikipedia article; for the archive also AOTY's, lmn/aoty.py). Two lists of short strings; both empty when there's
+    nothing."""
+    if not rt:
         return [], []
     # the outlets first, in ratings.PRIORITY order; the aggregators' averages after them (owner, 2026-11-01)
     crit = [f"{c['outlet']} {c['score']}" for c in (rt.get("critics") or [])[:5] if c.get("outlet") and c.get("score")]
     if rt.get("metacritic") is not None:
         crit.append(f"Metacritic {rt['metacritic']}/100")
+    if rt.get("aoty") is not None:  # an average like Metacritic's, no better and no worse (the owner, 2026-11-03)
+        crit.append(f"AOTY {rt['aoty']}/100")
     if rt.get("adm") is not None:
         crit.append(f"AnyDecentMusic {rt['adm']:g}/10")
     sales = [f"{k} #{v}" for k, v in (rt.get("charts") or {}).items() if v]
@@ -117,12 +120,12 @@ def critics_parts(rt):
 def contested(a, rt):
     """'Спорно' (spec, v2): Fantano's score and the critics' average are 4+ points apart on a 10-point scale.
     The average is Metacritic/10, else the mean of 3+ numeric scores (data/ratings.json critic_avg10); text or None."""
-    if not rt or not rt.get("wp") or a.get("guest") or a.get("score") is None or rt.get("critic_avg10") is None:
+    if not rt or a.get("guest") or a.get("score") is None or rt.get("critic_avg10") is None:
         return None
     avg = rt["critic_avg10"]
     if abs(a["score"] - avg) < 4:
         return None
-    src = "Metacritic" if not rt.get("critic_avg_n") else f"среднее по {rt['critic_avg_n']} изданиям"
+    src = (rt.get("avg_src") or "Metacritic") if not rt.get("critic_avg_n") else f"среднее по {rt['critic_avg_n']} изданиям"
     return f"Фантано {a['score']}/10, критики {avg:g}/10 ({src})"
 
 
@@ -191,6 +194,19 @@ def lists_rows(badges):
     return [("У Фантано в списках", "<br>".join(f'🏆 <a href="{e(b["url"])}">{e(b["text"])}</a>' for b in badges))]
 
 
+def again_rows(a):
+    """Fantano reviewed the album twice (lmn/rereviews.py): the other review, linked to its page."""
+    if a.get("first"):
+        name, x = "Первый обзор", a["first"]
+    elif a.get("redo"):
+        name, x = "Позже переоценил", a["redo"]
+    else:
+        return []
+    plain = x.get("score") is not None and not x.get("not_good") and not x.get("classic")
+    shown = f'{x["score"]}/10' if plain else label(x.get("score"), x.get("not_good"), x.get("classic"))
+    return [(name, f'<a href="{e(x["id"])}.html">{e(shown)} ({e(x["y"])})</a>')]
+
+
 def critics_rows(rt, a=None):
     rows = []
     sp = contested(a or {}, rt)
@@ -214,6 +230,8 @@ def critics_rows(rt, a=None):
     agg = []
     if rt.get("metacritic") is not None:
         agg.append(f'{name("Metacritic", rt.get("mc_url"))} {rt["metacritic"]}/100')
+    if rt.get("aoty") is not None:  # no link to the album on AOTY in the table: its search, as the bot's link does
+        agg.append(f'{name("AOTY", card.aoty_search(a["artist_name"], a["album"]) if a and a.get("artist_name") else None)} {rt["aoty"]}/100')
     if rt.get("adm") is not None:
         agg.append(f'AnyDecentMusic {rt["adm"]:g}/10')
     if agg:
@@ -251,7 +269,7 @@ def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, 
     others = [x for x in artist_reviews if x["id"] != a["id"]]
     hist = (f'<h2>Фантано об этом артисте</h2>{history_list(artist_reviews, a["id"], 1)}' if others else "")
     brief = brief or {}
-    rows = [(k, e(v)) for k, v in (("Кто", brief.get("who")), ("Описание", brief.get("about") or brief.get("brief"))) if v]
+    rows = again_rows(a) + [(k, e(v)) for k, v in (("Кто", brief.get("who")), ("Описание", brief.get("about") or brief.get("brief"))) if v]
     # Fantano's line only where there's no brief (as on bot-card pages)
     rows += notes_rows({**(note or {}), "blurb": None if brief.get("brief") else (note or {}).get("blurb")} if note else None, a["id"])
     if album.get("t"):  # Fantano's favourites marked with ★, as on bot-card pages
@@ -308,7 +326,7 @@ def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None, artis
     ai = r.get("ai") or {}
     if brief and brief.get("brief") and not ai.get("brief"):  # the card went out without one (seeded, or Gemini was out of quota): the archive's
         ai = {**ai, "brief": brief.get("brief"), "about": brief.get("about"), "who": ai.get("who") or brief.get("who"), "moods": ai.get("moods") or brief.get("moods")}
-    rows = []
+    rows = again_rows(r)
     if ai.get("who"):
         rows.append(("Кто", e(ai["who"])))
     others = [x for x in artist_reviews or [] if x["id"] != r["id"]]
@@ -387,9 +405,14 @@ def build():
     shutil.copytree(SRC, OUT)
     (OUT / "r").mkdir(exist_ok=True)
     (OUT / "a").mkdir(exist_ok=True)
-    by_id = {a["id"]: a for a in archive if a.get("artist_name") and a.get("album")}
+    # a review theneedledrop.com posted twice has no page of its own; a second review of an album names the other one
+    # (lmn/rereviews.py), also on a bot card's page, whose record is reviews.json's
+    dup = {a["id"] for a in archive if a.get("dup_of")}
+    again = {a["id"]: {k: a[k] for k in ("first", "redo") if a.get(k)} for a in archive if a.get("first") or a.get("redo")}
+    by_id = {a["id"]: a for a in archive if a.get("artist_name") and a.get("album") and a["id"] not in dup}
     for r in reviews:
-        by_id[r["id"]] = r
+        if r["id"] not in dup:
+            by_id[r["id"]] = {**r, **again.get(r["id"], {})}
     by_artist = {}
     for a in by_id.values():
         by_artist.setdefault(slug(a["artist_name"]), []).append(a)
@@ -397,6 +420,7 @@ def build():
         items.sort(key=lambda x: x["published"], reverse=True)
     enriched = {r["id"] for r in reviews}
     ratings = load("ratings.json", {})
+    aoty_data = load("aoty.json", {})  # the owner's AOTY table (lmn/aoty.py): outlets where Wikipedia has none, AOTY's score
     artists = load("artists.json", {})
     sp = load("specials.json", {})
     lists = specials.badges(sp)
@@ -409,7 +433,7 @@ def build():
                                              ensure_ascii=False))  # the bot's artist lists link the "worst to best" video
     (OUT / "rt").mkdir(exist_ok=True)
     for a in by_id.values():
-        rt = ratings.get(a["id"])
+        rt = aoty.merge(ratings.get(a["id"]), aoty_data.get(a["id"]))
         li = lists.get(a["id"])
         nt = notes.get(a["id"])
         bc = (bandcamp.get(a["id"]) or {}).get("u")
@@ -442,7 +466,8 @@ def build():
                 ensure_ascii=False))
     for k, items in by_artist.items():
         (OUT / "a" / f"{k}.html").write_text(artist_page(items[0]["artist_name"], items))
-    cat = sorted((catalog_entry(a) for a in by_id.values()), key=lambda x: x["d"], reverse=True)
+    # an album reviewed again is listed once, by the later review (as in the bot's search)
+    cat = sorted((catalog_entry(a) for a in by_id.values() if not a.get("redo")), key=lambda x: x["d"], reverse=True)
     (OUT / "catalog.json").write_text(json.dumps(cat, ensure_ascii=False, separators=(",", ":")))
     recent = card.recent(reviews)
     items = "".join(recent_item(r) for r in recent)
