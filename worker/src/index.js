@@ -6,6 +6,7 @@ import { isDigestSunday } from "./digest.mjs";
 import { nameKey, followMatches } from "./follow.mjs";
 import { answerSearch, artistReviews, badge } from "./search.mjs";
 import { criticsText } from "./critics.mjs";
+import { dupAliases, remapStatements } from "./dups.mjs";
 import { wikiCritics } from "./wiki.mjs";
 import { startLink, openFromStart } from "./links.mjs";
 import { PAGE, OLD_DAYS, QFROM_MINUTES, lastHeard, after, before, nextAfter, laterReviews, daysOld, line as queueLine } from "./queue.mjs";
@@ -162,6 +163,7 @@ export default {
     else ctx.waitUntil((async () => {
       const budget = { left: DAILY_BUDGET - 3 }; // setCommands: a setting, and when the commands change, Telegram and a setting
       await setCommands(env);
+      await moveDupMarks(env, budget);
       await sendReminders(env, budget);
       await migrateDmPins(env, budget);
     })());
@@ -419,7 +421,7 @@ async function onCallback(q, env) {
       : { text: "Хорошо, всё осталось как было." }) });
   } else if (parts[0] === "a") {
     await answerNow();
-    const a = (await archive(env)).find((x) => x.id === parts[1]);
+    const a = await archiveById(env, parts[1]);
     if (a) await sendAlbum(env, uid, a, "");
   } else if (parts[0] === "uf") {
     const row = await env.DB.prepare("SELECT artist_name FROM follows WHERE id=? AND user_id=?").bind(Number(parts[1]), uid).first();
@@ -556,7 +558,7 @@ async function openCard(env, uid, open) {
   if (kind === "dz") return sendDeezerAlbum(env, uid, id);
   if (kind === "mb") return sendMbAlbum(env, uid, id, null);
   if (kind === "q") return openQueueCard(env, uid, id);
-  const a = (await archive(env)).find((x) => x.id === id) || (await reviews(env)).find((x) => x.id === id);
+  const a = (await archiveById(env, id)) || (await reviews(env)).find((x) => x.id === id);
   if (a) return sendAlbum(env, uid, a, "");
   return tg(env, "sendMessage", { chat_id: uid, text: "Не нашёл этот альбом." });
 }
@@ -665,8 +667,31 @@ async function archive(env) {
   if (archiveCache && Date.now() - archiveCache.at < 600e3) return archiveCache.data;
   const r = await dataFile(env, "archive.json", 3600);
   if (!r.ok) return archiveCache ? archiveCache.data : [];
-  archiveCache = { at: Date.now(), data: await r.json() };
+  // a review theneedledrop.com posted twice is left out everywhere (lmn/rereviews.py marks the second post); its id
+  // still opens the first post (an old button), and moveDupMarks moves what people saved under it
+  const raw = await r.json();
+  archiveCache = { at: Date.now(), data: raw.filter((a) => !a.dup_of), alias: dupAliases(raw) };
   return archiveCache.data;
+}
+
+// An archive review by id; the id of a double post gives its first post.
+async function archiveById(env, id) {
+  const arch = await archive(env);
+  const want = (archiveCache && archiveCache.alias && archiveCache.alias[id]) || id;
+  return arch.find((x) => x.id === want);
+}
+
+// Marks, likes, vibe votes, «already told» rows and «Наверстать» places saved under a double post's id go to its first
+// post. Runs every day, as one D1 batch (it changes nothing when there is nothing to move): an old card's button can
+// still write under the double post's id. Budget: the archive and the batch.
+async function moveDupMarks(env, budget) {
+  if (budget.left < 2) return;
+  await archive(env);
+  const alias = (archiveCache && archiveCache.alias) || {};
+  budget.left -= 1;
+  if (!Object.keys(alias).length) return;
+  await env.DB.batch(remapStatements(alias).map(([sql, b]) => env.DB.prepare(sql).bind(...b)));
+  budget.left -= 1;
 }
 
 const good = (a) => !a.guest && (a.classic || (a.score != null && a.score >= 8)) && a.artist_name && a.album;
@@ -1030,7 +1055,10 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
     rt && rt.blurb && !brief ? `💬 <i>${esc(rt.blurb)}</i>` : "",
     fav.length && !list.length ? `★ Любимые у Фантано: ${esc(fav.join(", "))}` : "", // with a tracklist, ★ marks them there
   ].filter(Boolean).join("\n");
-  const head = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}`;
+  // Fantano reviewed the album twice (lmn/rereviews.py): the later score is the current one, the other is named under it
+  const first = a.first || r.first, redo = a.redo || r.redo; // on the archive's entry, not on a posted card's record
+  const again = first ? `\n🔁 Первый обзор (${first.y}): ${badge(first)}` : redo ? `\n🔁 Позже переоценил (${redo.y}): ${badge(redo)}` : "";
+  const head = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}${again}`;
   const q = encodeURIComponent(`${r.artist_name} ${r.album}`);
   const vid = r.video_id || (rt && rt.video_id); // most archive reviews have it only in rt (lmn/notes.py: the video's page)
   const linkLine = linkItems([
@@ -1052,6 +1080,7 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   const reply_markup = { inline_keyboard: [
     ...(opts.queue ? queueRows(r.id, liked, opts.queue) : MARK_ROWS(r.id, liked)),
     [{ text: "🔔 Следить", callback_data: `f:${r.id}` }, { text: "📚 Все обзоры", callback_data: `ar:${r.id}` }],
+    ...(first || redo ? [[{ text: first ? `🔁 Первый обзор (${first.y})` : `🔁 Обзор ${redo.y}`, callback_data: `a:${(first || redo).id}` }]] : []),
     // the AI's mood guess gets the channel card's vote (да / нет, «другое» asks all four); without one, a button asks
     ...moods.map((m) => [{ text: `для ${vibe(m)}: да`, callback_data: `w:${r.id}:${MOODS.indexOf(m)}:y` }, { text: "нет", callback_data: `w:${r.id}:${MOODS.indexOf(m)}:n` }]),
     [{ text: moods.length ? "Вайб: другое" : "✨ Вайб для чего?", callback_data: `mq:${r.id}` }],
