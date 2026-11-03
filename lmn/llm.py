@@ -86,6 +86,8 @@ def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotoni
             if e.status == 404 and "model" in (e.body or ""):  # the picked model is gone too: no use asking this provider
                 _dead.add(name)
                 return None
+            if e.status == 0 and name == "selectel":  # no answer in 90 s (Kimi K2.6 thinks longer, 2026-11-03): paid
+                return None                           # per token, a retry would only wait again; the next review goes on
             daily = e.status == 429 and "per day" in (e.body or "")  # the day's quota: waiting a minute won't help
             if e.status in (0, 429, 500, 502, 503, 504) and attempt < 2 and not daily:
                 sleep(15 * (attempt + 1))  # rate limit or a hiccup: a bit later
