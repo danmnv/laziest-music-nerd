@@ -335,11 +335,12 @@ async function onCallback(q, env) {
     const arch = await archive(env);
     const a = arch.find((x) => x.id === parts[1]);
     if (a) await sendOtherAlbums(env, uid, arch, a.artist_name, false);
-  } else if (parts[0] === "ua") {
-    // «💿 Альбомы артиста» on the card of an artist without reviews: the artist's name was saved with the card's ID
+  } else if (parts[0] === "ua" || parts[0] === "ux") {
+    // «💿 Альбомы артиста» on the card of an artist without reviews (ux: its «Ещё» list): the artist's name was saved
+    // with the card's ID
     await answerNow();
     const row = await env.DB.prepare("SELECT artist_name FROM unreviewed WHERE id=?").bind(parts[1]).first();
-    if (row) await sendOtherAlbums(env, uid, await archive(env), row.artist_name, false);
+    if (row) await sendOtherAlbums(env, uid, await archive(env), row.artist_name, parts[0] === "ux", parts[1]);
     else await tg(env, "sendMessage", { chat_id: uid, text: "Не нашёл этого артиста. Открой карточку альбома заново." });
   } else if (parts[0] === "dx") {
     await answerNow();
@@ -866,7 +867,9 @@ async function deezerOtherAlbums(arch, artistName) {
   return { main: out.reverse(), extra: [] };
 }
 
-async function sendOtherAlbums(env, uid, arch, artist, extraOnly) {
+// key: the card ID (unreviewed table) of an artist without reviews, for the «Ещё» button when there is no review to
+// anchor it to. Such an artist's list is just «альбомы»: not Fantano-centric (owner, 2026-11-03).
+async function sendOtherAlbums(env, uid, arch, artist, extraOnly, key = null) {
   const anchor = arch.find((a) => nameKey(a.artist_name) === nameKey(artist));
   const res = (await otherAlbums(env, arch, artist)) || (extraOnly ? null : await deezerOtherAlbums(arch, artist));
   if (!res) return tg(env, "sendMessage", { chat_id: uid, text: `Не нашёл дискографию ${artist}.` });
@@ -879,10 +882,10 @@ async function sendOtherAlbums(env, uid, arch, artist, extraOnly) {
     text: `💿 ${short(x.title)}${x.year ? " · " + x.year : ""}${x.kind ? " · " + x.kind : ""}`.slice(0, 120),
     callback_data: x.dz ? `dz:${x.dz}` : `mb:${x.id}`,
   }]);
-  if (!extraOnly && res.extra.length && anchor) {
-    rows.push([{ text: `Ещё: концертные, сборники, ремиксы (${res.extra.length})`, callback_data: `dx:${anchor.id}` }]);
+  if (!extraOnly && res.extra.length && (anchor || key)) {
+    rows.push([{ text: `Ещё: концертные, сборники, ремиксы (${res.extra.length})`, callback_data: anchor ? `dx:${anchor.id}` : `ux:${key}` }]);
   }
-  const what = extraOnly ? "концертные, сборники, ремиксы и прочее" : "альбомы без обзора Фантано";
+  const what = extraOnly ? "концертные, сборники, ремиксы и прочее" : anchor ? "альбомы без обзора Фантано" : "альбомы";
   return tg(env, "sendMessage", {
     chat_id: uid,
     text: `${artist} — ${what}${items.length > shown.length ? ` (показаны ${shown.length} новых из ${items.length})` : ""}:`,
@@ -914,7 +917,7 @@ async function sendMbAlbum(env, uid, id, msg) {
 
 // "Radiohead — альбомы без обзора Фантано:" and the button "💿 The Bends · 1995 · EP" -> {artist, title, year, kind}
 function fromListButton(msg, data) {
-  const m = /^(.+?) — (?:альбомы без обзора|концертные)/.exec((msg && msg.text) || "");
+  const m = /^(.+?) — (?:альбомы без обзора|альбомы[ :(]|концертные)/.exec((msg && msg.text) || "");
   const b = ((msg && msg.reply_markup && msg.reply_markup.inline_keyboard) || []).flat().find((x) => x.callback_data === data);
   if (!m || !b) return null;
   const [title, ...rest] = b.text.replace(/^💿 /, "").split(" · ");
