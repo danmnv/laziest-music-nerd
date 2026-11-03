@@ -89,8 +89,10 @@ def clean_album(artist, album):
     return a or None
 
 
-# A bracket at the end of a title that names another version of the album: its scores are not the original's
-VERSION_WORDS = re.compile(r"luxe|expanded|remix|mix\b|megamix|instrumental|live|demo|acoustic|edition|version|reissue|remaster|"
+# A bracket at the end of a title that names another version of the album, or a sequel («Vol. 2», «Part II», «(2)»):
+# the plain title's article is another album, and its scores are not this one's
+VERSION_WORDS = re.compile(r"^\s*(\d+|[ivx]+)\s*$|\bpart\b|\bpt\b|\bvol\b|volume|chapter|\bact\b|\bside\b|\bdisc\b|\blp\s*\d|"
+                           r"luxe|expanded|remix|mix\b|megamix|instrumental|live|demo|acoustic|edition|version|reissue|remaster|"
                            r"anniversary|commentary|karaoke|a cappella|acapella|dub\b|chopped|slowed", re.I)
 
 

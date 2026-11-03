@@ -174,3 +174,5 @@ class BareTitle(unittest.TestCase):
         self.assertIsNone(bare_title("Rico Nasty", "Half Blood (BloodLuxe)"))
         self.assertIsNone(bare_title("X", "Self-Titled (LP 2)"))  # the first self-titled album's scores would be wrong
         self.assertIsNone(bare_title("X", "Plain Title"))
+        for sequel in ("Album (Vol. 2)", "Album (Part II)", "Album (Pt. 2)", "Album (Chapter 2)", "Album (2)", "Album (II)", "Album (LP 2)"):
+            self.assertIsNone(bare_title("X", sequel), sequel)  # the first volume's scores would be wrong
