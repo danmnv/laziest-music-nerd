@@ -340,6 +340,7 @@ async function onCallback(q, env) {
     await answerNow();
     const row = await env.DB.prepare("SELECT artist_name FROM unreviewed WHERE id=?").bind(parts[1]).first();
     if (row) await sendOtherAlbums(env, uid, await archive(env), row.artist_name, false);
+    else await tg(env, "sendMessage", { chat_id: uid, text: "Не нашёл этого артиста. Открой карточку альбома заново." });
   } else if (parts[0] === "dx") {
     await answerNow();
     const arch = await archive(env);
