@@ -886,14 +886,16 @@ async function sendOtherAlbums(env, uid, arch, artist, extraOnly, key = null) {
   }
   // the reviews (not the earlier of two reviews of one album, not single songs), at the album's release year when the
   // discography knows it, else the review's year
-  const reviewed = arch.filter((a) => nameKey(a.artist_name) === k && !a.redo && !a.track).map((a) => ({
-    a, year: (res && res.years && res.years[nameKey(untitled(a.album))]) || String(a.published).slice(0, 4) }));
+  const reviewed = arch.filter((a) => nameKey(a.artist_name) === k && !a.redo && !a.track).map((a) => {
+    const rel = res && res.years && (res.years[nameKey(untitled(a.album))] || res.years[nameKey(untitled(a.album).replace(/\s*[([]?\b(redux|revisited|re-?review)\b[)\]]?\s*$/i, ""))]);
+    return { a, year: rel || String(a.published).slice(0, 4), reviewYear: !rel };
+  });
   const all = [...reviewed, ...((res && res.main) || []).map((x) => ({ x, year: x.year || "" }))]
     .sort((p, q) => String(q.year).localeCompare(String(p.year)));
   if (!all.length) return tg(env, "sendMessage", { chat_id: uid, text: `Не нашёл дискографию ${artist}.` });
   const shown = all.slice(0, 40);
   const rows = shown.map((it) => [it.a
-    ? { text: `${badge(it.a)} · ${short(it.a.album)} · ${it.year}`.slice(0, 120), callback_data: `a:${it.a.id}` }
+    ? { text: `${badge(it.a)} · ${short(it.a.album)} · ${it.reviewYear ? "обзор " : ""}${it.year}`.slice(0, 120), callback_data: `a:${it.a.id}` }
     : discButton(it.x)]);
   if (res && res.extra.length && (anchor || key)) {
     rows.push([{ text: `Ещё: концертные, сборники, ремиксы (${res.extra.length})`, callback_data: anchor ? `dx:${anchor.id}` : `ux:${key}` }]);
