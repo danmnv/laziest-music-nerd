@@ -145,12 +145,16 @@ def compare(archive, reviews, data):
         title = f"{a['artist_name']} - {a['album']}"
         row = {"id": a["id"], "title": title, CURRENT: {f: data[a["id"]].get(f) for f in ("who", "brief", "about", "m")}}
         for m in models:
+            if sum(1 for r in rows if not r[m].get("model")) >= 2:  # no answer twice: a slow or broken model, not tried again
+                row[m] = {}
+                continue
             provider, model, lang = ("selectel", m.split(":", 1)[1], "ru") if m.startswith("selectel:") else ("groq", m, "en")
             t0 = time.monotonic()
             out = llm.ask(provider, title, text, model=model, lang=lang, verdict=verdict(a)) or {}
             u = out.get("usage") or {}
             row[m] = {"model": out.get("model"), "sec": round(time.monotonic() - t0),  # the model that really answered
                       "in": u.get("prompt_tokens"), "out": u.get("completion_tokens")}
+            print(f"compare {title} / {m}: {row[m]['sec']} s, {'ok' if out.get('brief') else 'no answer'}", flush=True)
             got = {k: out[k] for k in ("brief", "about", "who") if out.get(k)}
             if lang == "en":
                 en.append((row, m, got))
