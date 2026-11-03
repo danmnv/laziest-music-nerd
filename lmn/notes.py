@@ -270,10 +270,11 @@ def apply_dates(path, data_dir):
     moved = use_video_dates(json.loads(Path(path).read_text()), archive, nts)
     print(f"archive: {moved} dates changed to the review videos'")
     from . import aoty, rereviews  # the same fresh copy: a second review of an album, a post TND made twice
-    linked = rereviews.link(archive)
-    print(f"archive: {linked} entries got or lost a link to another review of the same album")
+    # scores first: the links copy each review's score into the other one's "first"/"redo"
     filled = aoty.fill_scores(archive, json.loads((data_dir / "aoty.json").read_text())) if (data_dir / "aoty.json").exists() else 0
     print(f"archive: Fantano's score taken from the AOTY table for {filled} reviews")
+    linked = rereviews.link(archive)
+    print(f"archive: {linked} entries got or lost a link to another review of the same album")
     if moved or linked or filled:
         (data_dir / "archive.json").write_text(json.dumps(archive, ensure_ascii=False, indent=1) + "\n")
 

@@ -25,14 +25,32 @@ class AotyImport(unittest.TestCase):
     def test_entry_keeps_known_outlets_with_links_and_fantano_apart(self):
         e = aoty.entry(row("A", "B", reviews=[ODD, TND, PITCHFORK, {"publication": "AllMusic", "rating": 8.0}]))
         self.assertEqual(e, {"s": 79, "tnd": 8.0, "c": [{"outlet": "Pitchfork", "score": "8.3/10", "url": "https://pitchfork.com/r"},
-                                                       {"outlet": "AllMusic", "score": "8/10"}]})
+                                                       {"outlet": "AllMusic", "score": "4/5"}]})
+
+    def test_scores_written_as_the_outlet_writes_them(self):
+        self.assertEqual(aoty.score_text("AllMusic", 7.0), "3.5/5")
+        self.assertEqual(aoty.score_text("AllMusic", 7.3), "7.3/10")  # not exact out of 5: kept out of 10
+        self.assertEqual(aoty.score_text("Sputnikmusic", 7.6), "3.8/5")
+        self.assertEqual((aoty.score_text("The A.V. Club", 8.3), aoty.score_text("The A.V. Club", 8.8)), ("B+", "8.8/10"))
+        self.assertEqual(aoty.score_text("Pitchfork", 8.0), "8/10")
+        self.assertEqual((aoty.score_text("NME", 8.0, 2012), aoty.score_text("NME", 8.0, 2019)), ("8/10", "4/5"))
+        e = aoty.entry(row("A", "B", reviews=[{"publication": "Consequence of Sound", "rating": 7.5},
+                                              {"publication": "A.V. Club", "rating": 8.3}]))
+        self.assertEqual([(c["outlet"], c["score"]) for c in e["c"]], [("The A.V. Club", "B+"), ("Consequence", "B")])
 
     def test_fantano_score_filled_only_where_missing_and_whole(self):
-        archive = [{"id": "a"}, {"id": "b", "score": 6}, {"id": "c"}, {"id": "d", "not_good": True}]
+        archive = [{"id": x, "artist_name": "A", "album": x} for x in "abcd"]
+        archive[1]["score"], archive[3]["not_good"] = 6, True
         n = aoty.fill_scores(archive, {"a": {"tnd": 8.0}, "b": {"tnd": 8.0}, "c": {"tnd": 8.1}, "d": {"tnd": 2.0}})
         self.assertEqual(n, 1)
         self.assertEqual((archive[0]["score"], archive[0]["score_source"], archive[1]["score"]), (8, "aoty", 6))
         self.assertNotIn("score", archive[2])
+
+    def test_no_fill_when_two_reviews_share_a_title(self):
+        # the table's row (one Fantano score) went to both: it may be the other review's
+        archive = [{"id": "x1", "artist_name": "A", "album": "B"}, {"id": "x2", "artist_name": "A", "album": "B", "score": 4},
+                   {"id": "y", "artist_name": "C", "album": "D", "first": {"id": "y0"}}]
+        self.assertEqual(aoty.fill_scores(archive, {"x1": {"tnd": 4.0}, "x2": {"tnd": 4.0}, "y": {"tnd": 7.0}}), 0)
 
     def test_site_shows_aoty_next_to_metacritic_and_fills_empty_critics(self):
         rt = aoty.merge(None, {"s": 79, "c": [{"outlet": "Pitchfork", "score": "8.3/10", "url": "https://pitchfork.com/r"}]})
@@ -42,8 +60,10 @@ class AotyImport(unittest.TestCase):
         self.assertIn("albumoftheyear.org/search", rows["Среднее по рецензиям"])
         self.assertIn("AOTY", rows["Спорно"])  # Fantano 3, AOTY 7.9: the average comes from AOTY when nothing else has one
         wiki = {"wp": True, "critics": [{"outlet": "NME", "score": "4/5"}], "metacritic": 80, "critic_avg10": 8.0}
-        both = aoty.merge(wiki, {"s": 79, "c": [{"outlet": "Pitchfork", "score": "8.3/10"}]})
-        self.assertEqual(both["critics"], wiki["critics"])  # Wikipedia's outlets stay; AOTY's only where there are none
+        both = aoty.merge(wiki, {"s": 79, "c": [{"outlet": "Pitchfork", "score": "8.3/10"}, {"outlet": "NME", "score": "3/5"}]})
+        # each outlet Wikipedia lacks is added in the usual order; where both have one, Wikipedia's row stays
+        self.assertEqual(both["critics"], [{"outlet": "Pitchfork", "score": "8.3/10"}, {"outlet": "NME", "score": "4/5"}])
+        self.assertEqual(wiki["critics"], [{"outlet": "NME", "score": "4/5"}], "the ratings entry itself is not changed")
         self.assertEqual((both["aoty"], both["critic_avg10"]), (79, 8.0))
 
 

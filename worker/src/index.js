@@ -6,6 +6,7 @@ import { isDigestSunday } from "./digest.mjs";
 import { nameKey, followMatches } from "./follow.mjs";
 import { answerSearch, artistReviews, badge } from "./search.mjs";
 import { criticsText } from "./critics.mjs";
+import { dupAliases, remapStatements, aliasKey } from "./dups.mjs";
 import { wikiCritics } from "./wiki.mjs";
 import { startLink, openFromStart } from "./links.mjs";
 import { PAGE, OLD_DAYS, QFROM_MINUTES, lastHeard, after, before, nextAfter, laterReviews, daysOld, line as queueLine } from "./queue.mjs";
@@ -162,6 +163,7 @@ export default {
     else ctx.waitUntil((async () => {
       const budget = { left: DAILY_BUDGET - 3 }; // setCommands: a setting, and when the commands change, Telegram and a setting
       await setCommands(env);
+      await moveDupMarks(env, budget);
       await sendReminders(env, budget);
       await migrateDmPins(env, budget);
     })());
@@ -419,7 +421,7 @@ async function onCallback(q, env) {
       : { text: "Хорошо, всё осталось как было." }) });
   } else if (parts[0] === "a") {
     await answerNow();
-    const a = (await archive(env)).find((x) => x.id === parts[1]);
+    const a = await archiveById(env, parts[1]);
     if (a) await sendAlbum(env, uid, a, "");
   } else if (parts[0] === "uf") {
     const row = await env.DB.prepare("SELECT artist_name FROM follows WHERE id=? AND user_id=?").bind(Number(parts[1]), uid).first();
@@ -556,7 +558,7 @@ async function openCard(env, uid, open) {
   if (kind === "dz") return sendDeezerAlbum(env, uid, id);
   if (kind === "mb") return sendMbAlbum(env, uid, id, null);
   if (kind === "q") return openQueueCard(env, uid, id);
-  const a = (await archive(env)).find((x) => x.id === id) || (await reviews(env)).find((x) => x.id === id);
+  const a = (await archiveById(env, id)) || (await reviews(env)).find((x) => x.id === id);
   if (a) return sendAlbum(env, uid, a, "");
   return tg(env, "sendMessage", { chat_id: uid, text: "Не нашёл этот альбом." });
 }
@@ -665,9 +667,32 @@ async function archive(env) {
   if (archiveCache && Date.now() - archiveCache.at < 600e3) return archiveCache.data;
   const r = await dataFile(env, "archive.json", 3600);
   if (!r.ok) return archiveCache ? archiveCache.data : [];
-  // a review theneedledrop.com posted twice is left out everywhere (lmn/rereviews.py marks the second post)
-  archiveCache = { at: Date.now(), data: (await r.json()).filter((a) => !a.dup_of) };
+  // a review theneedledrop.com posted twice is left out everywhere (lmn/rereviews.py marks the second post); its id
+  // still opens the first post (an old button), and moveDupMarks moves what people saved under it
+  const raw = await r.json();
+  archiveCache = { at: Date.now(), data: raw.filter((a) => !a.dup_of), alias: dupAliases(raw) };
   return archiveCache.data;
+}
+
+// An archive review by id; the id of a double post gives its first post.
+async function archiveById(env, id) {
+  const arch = await archive(env);
+  const want = (archiveCache && archiveCache.alias && archiveCache.alias[id]) || id;
+  return arch.find((x) => x.id === want);
+}
+
+// Marks, likes, vibe votes and «already told» rows saved under a double post's id go to its first post. Runs from the
+// daily cron once per change of the list, as one D1 batch. Budget: the archive, a setting, the batch, a setting.
+async function moveDupMarks(env, budget) {
+  if (budget.left < 4) return;
+  await archive(env);
+  const alias = (archiveCache && archiveCache.alias) || {};
+  const key = aliasKey(alias);
+  budget.left -= 2;
+  if (!key || (await getSetting(env, "dups_moved")) === key) return;
+  await env.DB.batch(remapStatements(alias).map(([sql, b]) => env.DB.prepare(sql).bind(...b)));
+  await setSetting(env, "dups_moved", key);
+  budget.left -= 2;
 }
 
 const good = (a) => !a.guest && (a.classic || (a.score != null && a.score >= 8)) && a.artist_name && a.album;
