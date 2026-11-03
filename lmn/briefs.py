@@ -140,6 +140,8 @@ def compare(archive, reviews, data):
       those whose id matches."""
     n = int(os.environ.get("BRIEFS_COMPARE_N") or "2")
     models = [m.strip() for m in (os.environ.get("BRIEFS_COMPARE_MODELS") or COMPARE_MODELS).split(",") if m.strip()]
+    if os.environ.get("BRIEFS_PING") == "1":
+        return ping([m.split(":", 1)[1] for m in models if m.startswith("selectel:")])
     lst = next((m for m in models if m.startswith("selectel:list")), None)
     if lst:
         return list_models("selectel", lst[len("selectel:list:"):])
@@ -192,6 +194,26 @@ def compare(archive, reviews, data):
         with open(summary, "a") as f:
             f.write(md)
     return rows
+
+
+def ping(models):
+    """A one-word request to each Selectel model, with and without the "reasoning" field: tells a model that does not
+    answer at all from one that only needs longer than the timeout for a brief (Kimi K2.6 and GLM 5.3, 2026-11-03)."""
+    url, var = next((p[1], p[2]) for p in llm.PROVIDERS if p[0] == "selectel")
+    key = (os.environ.get(var) or "").strip()
+    for m in models:
+        for extra in ({"reasoning": {"effort": "low"}}, {}):
+            t0 = time.monotonic()
+            body = {"model": m, "messages": [{"role": "user", "content": "Ответь одним словом: привет."}], **extra}
+            try:
+                d = http.get_json(url, json_body=body, method="POST", headers={"Authorization": f"Bearer {key}"},
+                                  timeout=float(os.environ.get("SELECTEL_TIMEOUT") or 90), retries=0)
+                got = f"ok {d['choices'][0]['message'].get('content')!r:.40} usage={d.get('usage')}"
+            except http.HttpError as e:
+                got = f"HTTP {e.status} {(e.body or '')[:200]}"
+            except (KeyError, IndexError, TypeError) as e:
+                got = f"bad answer {e!r}"
+            print(f"ping {m} {'reasoning low' if extra else 'no reasoning field'}: {round(time.monotonic() - t0)} s, {got}", flush=True)
 
 
 def list_models(provider, match=""):

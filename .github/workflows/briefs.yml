@@ -20,6 +20,10 @@ on:
       compare_n:
         description: "На скольких обзорах сравнивать"
         default: "2"
+      ping:
+        description: "Только проверить, отвечают ли модели selectel:<модель> из списка на короткий вопрос"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -61,6 +65,7 @@ jobs:
           PYTHONUNBUFFERED: "1"   # the log shows each line as it comes, also when a run is stopped
           BRIEFS_COMPARE_MODELS: ${{ inputs.compare_models }}
           BRIEFS_COMPARE_N: ${{ inputs.compare_n }}
+          BRIEFS_PING: ${{ inputs.ping && '1' || '' }}
           # Selectel's paid router (2026-11-03): only in a comparison until the owner picks a model
           SELECTEL_API_KEY: ${{ inputs.compare && secrets.SELECTEL_API_KEY || '' }}
           SELECTEL_TIMEOUT: ${{ inputs.compare && '300' || '' }}   # a comparison waits for slow thinking models too
