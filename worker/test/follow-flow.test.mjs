@@ -668,7 +668,7 @@ test("a card from the list: «✓ Послушал → дальше» marks it, 
   assert.match(calls.find((c) => c.method === "sendMessage").text, /^Послушать потом: 1/);
   calls = [];
   await press(OWNER, "qd:k", 903);
-  assert.match(calls.find((c) => c.method === "sendMessage" && /🏆/.test(c.text)).text, /Ты нагнал\(а\) всё до самого нового обзора Фантано!.*\nУ тебя 2 обзора с отметкой «прослушано»/s);
+  assert.match(calls.find((c) => c.method === "sendMessage" && /🤘<\/tg-emoji> <b>Ты нагнал/.test(c.text)).text, /Ты нагнал\(а\) всё до самого нового обзора Фантано!.*\nУ тебя 2 обзора с отметкой «прослушано»/s);
 });
 
 test("«♡ Понравилось» is its own mark: «Слушал» keeps it, «Не моё» drops it, «♥ Понравившееся» lists it (owner, 2026-11-02)", async () => {
@@ -766,7 +766,7 @@ test("the «Послушать потом» block: the first put off first, the 
   calls = [];
   await press(OWNER, "qs:p:l"); // skipped: stays put off; the block is done and both reviews after Obscure are marked
   assert.equal(db.prepare("SELECT status FROM marks WHERE user_id=? AND review_id='p'").get(OWNER).status, "later");
-  assert.ok(calls.some((c) => c.method === "sendMessage" && /🏆/.test(c.text)));
+  assert.ok(calls.some((c) => c.method === "sendMessage" && /🤘<\/tg-emoji> <b>Ты нагнал/.test(c.text)));
 });
 
 test("a vote button sent before «Вайб для» means the word it meant then; a retired word isn't stored", async () => {
