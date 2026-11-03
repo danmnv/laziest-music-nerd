@@ -16,6 +16,7 @@ Run: python -m lmn.briefs (workflow «Брифы для архива»). BRIEFS_
 models next to the current one on two reviews (see compare)."""
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -128,11 +129,13 @@ def compare(archive, reviews, data):
       translates them all in one request, like the real run;
     - "selectel:<model>" goes to Selectel's router and writes in Russian itself (gemini.PROMPT_RU), as a paid model
       would in the real run, with its tokens and seconds for the cost (2026-11-03);
-    - "selectel:list" only lists the router's models (their ids for the names above)."""
+    - "selectel:list" only lists the router's models (their ids for the names above); "selectel:list:<regex>" only
+      those whose id matches."""
     n = int(os.environ.get("BRIEFS_COMPARE_N") or "2")
     models = [m.strip() for m in (os.environ.get("BRIEFS_COMPARE_MODELS") or COMPARE_MODELS).split(",") if m.strip()]
-    if "selectel:list" in models:
-        return list_models("selectel")
+    lst = next((m for m in models if m.startswith("selectel:list")), None)
+    if lst:
+        return list_models("selectel", lst[len("selectel:list:"):])
     by_id = {tnd.tidy_entry(a)["id"]: tnd.tidy_entry(a) for a in archive}
     done = sorted((k for k, v in data.items() if v.get("tr") and v.get("brief") and k in by_id),
                   key=lambda k: by_id[k]["published"], reverse=True)
@@ -178,7 +181,7 @@ def compare(archive, reviews, data):
     return rows
 
 
-def list_models(provider):
+def list_models(provider, match=""):
     """The provider's /models list (ids and whatever price fields it gives) to the log and the run's summary."""
     url, var = next((p[1], p[2]) for p in llm.PROVIDERS if p[0] == provider)
     try:
@@ -187,8 +190,11 @@ def list_models(provider):
     except http.HttpError as e:
         print(f"::warning::{provider} models list: HTTP {e.status} {(e.body or '')[:300]}")
         return []
-    items = sorted(d.get("data") or [], key=lambda m: str(m.get("id")))
-    lines = [f"{m.get('id')}  {json.dumps(m.get('pricing') or m.get('price') or '', ensure_ascii=False)}" for m in items]
+    items = sorted((m for m in d.get("data") or [] if re.search(match, str(m.get("id")), re.I)), key=lambda m: str(m.get("id")))
+    def price(m):  # roubles per token (seen 2026-11-03) -> per million
+        pr = m.get("pricing") or {}
+        return " ".join(f"{k}={float(v) * 1e6:g}" for k, v in pr.items() if k in ("prompt", "completion", "internal_reasoning"))
+    lines = [f"{m.get('id')}  ₽/1M: {price(m)}" for m in items]
     print(f"{provider}: {len(items)} models\n" + "\n".join(lines))
     if items:
         print("first entry as given: " + json.dumps(items[0], ensure_ascii=False)[:1500])
