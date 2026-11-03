@@ -333,7 +333,7 @@ test("an artist's albums without Fantano's review, and a card for one of them", 
   // reviewed ones with their score open the review, the others their card; the undated one left out; the compilation
   // and the remixes wait behind their own button
   assert.deepEqual(other.reply_markup.inline_keyboard.map((r) => [r[0].text, r[0].callback_data || r[0].url]), [
-    ["🟢 8/10 · A Moon Shaped Pool · 2016", "a:p"],
+    ["🟢 8/10 · A Moon Shaped Pool · обзор 2016", "a:p"],
     ["💿 Amnesiac · 2001", `mb:${AMNESIAC}`], // from the second page
     ["🟢 10/10 · Kid A · 2000", "a:k"], // MusicBrainz's year of the album, not the review's
     ["💿 The Bends · 1995", `mb:${BENDS}`],
@@ -379,7 +379,7 @@ test("when MusicBrainz is down, the list comes from Deezer: albums only, the fir
   assert.equal(other.text, "Radiohead — альбомы:");
   // the later Bends edition and the single are left out; newest first; no extras button
   assert.deepEqual(other.reply_markup.inline_keyboard.map((r) => [r[0].text, r[0].callback_data || r[0].url]),
-    [["💿 OK Computer OKNOTOK 1997 2017 · 2017", "dz:22"], ["🟢 8/10 · A Moon Shaped Pool · 2016", "a:p"],
+    [["💿 OK Computer OKNOTOK 1997 2017 · 2017", "dz:22"], ["🟢 8/10 · A Moon Shaped Pool · обзор 2016", "a:p"],
      ["🟢 10/10 · Kid A · 2000", "a:k"], ["💿 The Bends · 1995", "dz:20"],
      ["🎬 Radiohead: от худшего к лучшему (2017)", "https://youtu.be/uu8sC7YDOZg"]]);
   calls = [];
