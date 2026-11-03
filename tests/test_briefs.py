@@ -426,7 +426,47 @@ class CompareModels(unittest.TestCase):
         self.assertEqual(len(asked), 4)
         self.assertEqual(tr.call_count, 1)  # one Gemini request for all
         self.assertEqual(rows[0]["qwen/qwen3.8-27b"]["brief"], "RU qwen/qwen3.8-27b brief")
-        self.assertEqual(rows[0]["openai/gpt-oss-120b"]["brief"], "Кратко.")
+        self.assertEqual(rows[0][briefs.CURRENT]["brief"], "Кратко.")
+
+    def test_selectel_models_write_russian_themselves_with_their_tokens(self):
+        archive = [{"id": f"{i:024x}", "artist_name": f"A{i}", "album": f"B{i}", "published": f"2026-10-{10 + i}T00:00:00Z",
+                    "score": 7} for i in range(2)]
+        data = {a["id"]: {"brief": "Кратко.", "tr": "g"} for a in archive}
+        asked = []
+
+        def ask(provider, title, text, model=None, lang=None, verdict=""):
+            asked.append((provider, model, lang, verdict))
+            return {"brief": "Сразу по-русски.", "model": model, "usage": {"prompt_tokens": 9000, "completion_tokens": 700}}
+        with mock.patch.object(briefs, "texts", side_effect=lambda items: ((a, "text " * 200) for a in items)), \
+                mock.patch.object(briefs.llm, "ask", side_effect=ask), \
+                mock.patch.object(briefs.gemini, "translate") as tr, \
+                mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": "", "BRIEFS_COMPARE_MODELS": "selectel:deepseek/x"}):
+            rows = briefs.compare(archive, [], data)
+        tr.assert_not_called()  # no translation: the model wrote Russian
+        self.assertEqual(asked[0][:3], ("selectel", "deepseek/x", "ru"))
+        self.assertIn("7/10", asked[0][3])  # the verdict goes to the Russian prompt too
+        self.assertEqual({k: rows[0]["selectel:deepseek/x"][k] for k in ("brief", "in", "out")},
+                         {"brief": "Сразу по-русски.", "in": 9000, "out": 700})
+
+
+class Selectel(unittest.TestCase):
+    def test_skipped_until_a_model_is_set_then_asked_in_russian_with_low_reasoning(self):
+        llm._dead.clear()
+        llm._spent.clear()
+        with mock.patch.dict(os.environ, {"SELECTEL_API_KEY": "k", "GROQ_API_KEY": "", "MISTRAL_API_KEY": ""}), \
+                mock.patch.object(llm.http, "get_json") as get:
+            self.assertFalse(llm.available())  # a key without a model: not used
+            self.assertIsNone(llm.ask("selectel", "A - B", "text"))
+            get.assert_not_called()
+            get.return_value = {"choices": [{"message": {"content": "```json\n" + json.dumps(ANSWER, ensure_ascii=False) + "\n```"}}],
+                                "usage": {"prompt_tokens": 5, "completion_tokens": 3}}
+            out = llm.ask("selectel", "A - B", "text", model="m1", sleep=lambda s: None, verdict="Fantano's score: 7/10.")
+        body = get.call_args.kwargs["json_body"]
+        self.assertEqual((body["model"], body["reasoning"]), ("m1", {"effort": "low"}))
+        self.assertIn("на русском", body["messages"][0]["content"])
+        self.assertIn("7/10", body["messages"][0]["content"])
+        self.assertEqual((out["brief"], out["usage"]["completion_tokens"]), ("Коротко.", 3))  # a fenced answer is read too
+
 
 if __name__ == "__main__":
     unittest.main()

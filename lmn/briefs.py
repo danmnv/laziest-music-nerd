@@ -20,7 +20,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import gemini, llm, tnd
+from . import gemini, http, llm, tnd
 
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 BATCH = 15
@@ -117,16 +117,22 @@ def save(path, data):
 
 
 COMPARE_MODELS = "qwen/qwen3.8-27b,openai/gpt-oss-20b"
+CURRENT = "сейчас на сайте"
 
 
 def compare(archive, reviews, data):
-    """Other Groq models next to openai/gpt-oss-120b, to see if they can write briefs too: each Groq model has its own
-    free daily quota (200k tokens, ~47 briefs), so a second and a third model would triple the pace (2026-11-02).
-    Takes the BRIEFS_COMPARE_N (2) newest reviews 120b already wrote, asks each of BRIEFS_COMPARE_MODELS in English and
-    has Gemini translate them in one request, like the real run. Writes nothing; rows go to the log ("COMPARE {json}")
-    and as a table to the run's summary."""
+    """Other models next to the briefs already on the site, to choose one: writes nothing; rows go to the log
+    ("COMPARE {json}") and as a table to the run's summary. Takes the BRIEFS_COMPARE_N (2) newest reviews already
+    written and translated, and asks each of BRIEFS_COMPARE_MODELS:
+    - a plain name is a Groq model (each has its own free daily quota, 2026-11-02): it writes in English and Gemini
+      translates them all in one request, like the real run;
+    - "selectel:<model>" goes to Selectel's router and writes in Russian itself (gemini.PROMPT_RU), as a paid model
+      would in the real run, with its tokens and seconds for the cost (2026-11-03);
+    - "selectel:list" only lists the router's models (their ids for the names above)."""
     n = int(os.environ.get("BRIEFS_COMPARE_N") or "2")
     models = [m.strip() for m in (os.environ.get("BRIEFS_COMPARE_MODELS") or COMPARE_MODELS).split(",") if m.strip()]
+    if "selectel:list" in models:
+        return list_models("selectel")
     by_id = {tnd.tidy_entry(a)["id"]: tnd.tidy_entry(a) for a in archive}
     done = sorted((k for k, v in data.items() if v.get("tr") and v.get("brief") and k in by_id),
                   key=lambda k: by_id[k]["published"], reverse=True)
@@ -134,28 +140,63 @@ def compare(archive, reviews, data):
     rows, en = [], []
     for a, text in picked:
         title = f"{a['artist_name']} - {a['album']}"
-        row = {"id": a["id"], "title": title, "openai/gpt-oss-120b": {f: data[a["id"]].get(f) for f in ("who", "brief", "about")}}
+        row = {"id": a["id"], "title": title, CURRENT: {f: data[a["id"]].get(f) for f in ("who", "brief", "about", "m")}}
         for m in models:
-            out = llm.ask("groq", title, text, model=m, lang="en", verdict=verdict(a)) or {}
-            row[m] = {"model": out.get("model")}  # the model that really answered (a retired one is swapped by llm.ask)
-            en.append((row, m, {k: out[k] for k in ("brief", "about", "who") if out.get(k)}))
+            provider, model, lang = ("selectel", m.split(":", 1)[1], "ru") if m.startswith("selectel:") else ("groq", m, "en")
+            t0 = time.monotonic()
+            out = llm.ask(provider, title, text, model=model, lang=lang, verdict=verdict(a)) or {}
+            u = out.get("usage") or {}
+            row[m] = {"model": out.get("model"), "sec": round(time.monotonic() - t0),  # the model that really answered
+                      "in": u.get("prompt_tokens"), "out": u.get("completion_tokens")}
+            got = {k: out[k] for k in ("brief", "about", "who") if out.get(k)}
+            if lang == "en":
+                en.append((row, m, got))
+            else:
+                row[m].update(got)
         rows.append(row)
-    tr = gemini.translate([e for _, _, e in en]) or [{} for _ in en]
-    for (row, m, e), t in zip(en, tr):
-        row[m].update(t if e else {})
+    if en:
+        tr = gemini.translate([e for _, _, e in en]) or [{} for _ in en]
+        for (row, m, e), t in zip(en, tr):
+            row[m].update(t if e else {})
     for r in rows:
         print("COMPARE " + json.dumps(r, ensure_ascii=False))
 
     def cell(x):
-        return (f"{x.get('who') or '—'}<br><br>{x.get('brief') or '—'}<br><br>{x.get('about') or '—'}").replace("|", "/")
-    cols = ["openai/gpt-oss-120b"] + models
+        cost = f"<br><br><sub>{x['sec']} с, {x['in']} → {x['out']} токенов</sub>" if x.get("in") else ""
+        return (f"{x.get('who') or '—'}<br><br>{x.get('brief') or '—'}<br><br>{x.get('about') or '—'}{cost}").replace("|", "/")
+    cols = [CURRENT] + models
     md = ("| Обзор | " + " | ".join(cols) + " |\n|---|" + "---|" * len(cols) + "\n"
           + "\n".join(f"| {r['title']} | " + " | ".join(cell(r[c]) for c in cols) + " |" for r in rows) + "\n")
+    tot = [(m, sum(r[m].get("in") or 0 for r in rows), sum(r[m].get("out") or 0 for r in rows),
+            sum(1 for r in rows if r[m].get("brief"))) for m in models]
+    md += "\n| Модель | ответила | токенов на входе | на выходе |\n|---|---|---|---|\n" + "".join(
+        f"| {m} | {ok} из {len(rows)} | {i} | {o} |\n" for m, i, o, ok in tot)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a") as f:
             f.write(md)
     return rows
+
+
+def list_models(provider):
+    """The provider's /models list (ids and whatever price fields it gives) to the log and the run's summary."""
+    url, var = next((p[1], p[2]) for p in llm.PROVIDERS if p[0] == provider)
+    try:
+        d = http.get_json(url.replace("/chat/completions", "/models"),
+                          headers={"Authorization": f"Bearer {(os.environ.get(var) or '').strip()}"}, retries=1)
+    except http.HttpError as e:
+        print(f"::warning::{provider} models list: HTTP {e.status} {(e.body or '')[:300]}")
+        return []
+    items = sorted(d.get("data") or [], key=lambda m: str(m.get("id")))
+    lines = [f"{m.get('id')}  {json.dumps(m.get('pricing') or m.get('price') or '', ensure_ascii=False)}" for m in items]
+    print(f"{provider}: {len(items)} models\n" + "\n".join(lines))
+    if items:
+        print("first entry as given: " + json.dumps(items[0], ensure_ascii=False)[:1500])
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a") as f:
+            f.write("```\n" + "\n".join(lines) + "\n```\n")
+    return items
 
 
 def run():
@@ -191,7 +232,7 @@ def run():
             continue
         tried += 1
         title = f"{a['artist_name']} - {a['album']}"
-        out = llm.summarize(title, text, lang="en", verdict=verdict(a)) if lang == "en" else llm.summarize(title, text)
+        out = llm.summarize(title, text, lang=lang, verdict=verdict(a))
         if out and (out.get("brief") or "").strip():
             old = data.get(a["id"]) or {}
             data[a["id"]] = entry(out, lang)

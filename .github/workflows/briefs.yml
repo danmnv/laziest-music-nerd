@@ -11,9 +11,15 @@ on:
         description: "Сколько обзоров за запуск (больше 150 Gemini за раз не переведёт, остальные переведутся в следующий запуск)"
         default: "150"
       compare:
-        description: "Только сравнить другие модели Groq с нынешней на 2 обзорах (ничего не сохраняет)"
+        description: "Только сравнить другие модели с нынешними брифами (ничего не сохраняет)"
         type: boolean
         default: false
+      compare_models:
+        description: "Модели для сравнения через запятую: имя модели Groq или selectel:<модель>; selectel:list — только список моделей Selectel"
+        default: "qwen/qwen3.8-27b,openai/gpt-oss-20b"
+      compare_n:
+        description: "На скольких обзорах сравнивать"
+        default: "2"
 
 permissions:
   contents: write
@@ -52,6 +58,10 @@ jobs:
           BRIEFS_LIMIT: ${{ inputs.limit || '150' }}
           BRIEFS_MINUTES: "330"   # GitHub stops a job after 6 hours; this leaves time to save
           BRIEFS_COMPARE: ${{ inputs.compare && '1' || '' }}
+          BRIEFS_COMPARE_MODELS: ${{ inputs.compare_models }}
+          BRIEFS_COMPARE_N: ${{ inputs.compare_n }}
+          # Selectel's paid router (2026-11-03): only in a comparison until the owner picks a model
+          SELECTEL_API_KEY: ${{ inputs.compare && secrets.SELECTEL_API_KEY || '' }}
       - name: Сохранить
         if: ${{ always() && !inputs.compare }}
         run: |
