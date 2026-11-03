@@ -1124,7 +1124,8 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   const reply_markup = { inline_keyboard: [
     ...(opts.queue ? queueRows(r.id, liked, opts.queue) : MARK_ROWS(r.id, liked)),
     [{ text: "🔔 Следить", callback_data: `f:${r.id}` }, artistButton(r.id)],
-    ...(first || redo ? [[{ text: first ? `🔁 Первый обзор (${first.y})` : `🔁 Обзор ${redo.y}`, callback_data: `a:${(first || redo).id}` }]] : []),
+    // the other review's button only when its line can't link the video (owner, 2026-11-03: the link is enough)
+    ...(other && !(rt && rt.again_vid) ? [[{ text: first ? `🔁 Первый обзор (${first.y})` : `🔁 Обзор ${redo.y}`, callback_data: `a:${other.id}` }]] : []),
     // the AI's mood guess gets the channel card's vote (да / нет, «другое» asks all four); without one, a button asks
     ...moods.map((m) => [{ text: `для ${vibe(m)}: да`, callback_data: `w:${r.id}:${MOODS.indexOf(m)}:y` }, { text: "нет", callback_data: `w:${r.id}:${MOODS.indexOf(m)}:n` }]),
     [{ text: moods.length ? "Вайб: другое" : "✨ Вайб для чего?", callback_data: `mq:${r.id}` }],
