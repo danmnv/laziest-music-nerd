@@ -14,6 +14,7 @@ import { searchArchive } from "./search.mjs";
 import { genresOf } from "./genres.mjs";
 import { creditedNames, selfTitled, pickAlbum } from "./deezer.mjs";
 import { untitled, sortOut, quietHour, ruDate, RECHECK_HOURS } from "./releases.mjs";
+import { ce, plainEmoji } from "./emoji.mjs";
 
 // «later» is shown as «Послушать потом» since 2026-11-02 (the owner: «может быть отложенное должно называться послушать потом»)
 const STATUS_LABEL = { later: "⏳ послушать потом", done: "✓ прослушано", nope: "✗ не понравилось" };
@@ -186,6 +187,11 @@ async function tg(env, method, params) {
     body: JSON.stringify(params),
   });
   const d = await r.json();
+  // A refused custom emoji (the owner's Premium lapsed, or Telegram changed the rule): send it again with ordinary ones
+  if (!d.ok && typeof params.text === "string" && params.text.includes("<tg-emoji")) {
+    console.log(method, "failed with custom emoji, retrying without:", d.description);
+    return tg(env, method, { ...params, text: plainEmoji(params.text) });
+  }
   if (!d.ok && !String(d.description || "").includes("message is not modified")) console.log(method, "failed:", d.description);
   return d;
 }
@@ -242,7 +248,7 @@ async function welcome(env, uid) {
     chat_id: uid,
     parse_mode: "HTML",
     link_preview_options: { is_disabled: true },
-    text: "Привет! Здесь мы знакомимся с новой музыкой, отталкиваясь от обзоров Anthony Fantano.\n\n" + helpText(env),
+    text: `Привет! Здесь мы знакомимся с новой музыкой, отталкиваясь от обзоров Anthony Fantano. ${ce(env, "kaif")}\n\n` + helpText(env),
     reply_markup: MENU,
   });
   await setSetting(env, `menu:${uid}`, MENU_V);
@@ -1228,7 +1234,7 @@ async function sendQueue(env, uid, { fromId, offset = 0, confirmed = false, edit
   }
   const page = rest.slice(offset, offset + PAGE);
   if (!from) parts.push("Чтобы после них шли новые обзоры, нажми «📍 С какого альбома» и выбери, после какого начать.");
-  else if (!rest.length) parts.push(`После <b>${name}</b> новых обзоров нет: ты нагнал(а) всё до последнего. 🏆`);
+  else if (!rest.length) parts.push(`После <b>${name}</b> новых обзоров нет: ты нагнал(а) всё до последнего. ${ce(env, "banger")}`);
   else parts.push(`<b>${later.length ? "Новые обзоры" : "Наверстать"}</b> после ${name} (${date})\n` +
     `${reviewsWord(rest.length)}, здесь ${offset + 1}–${offset + page.length}\n\n${page.map(line).join("\n")}`);
   const first = later[0] || page[0];
@@ -1301,7 +1307,7 @@ async function queueNext(env, uid, id, section = "c", nextLater = null) {
   }
   const heard = Object.values(statuses).filter((s) => s === "done" || s === "nope").length;
   return tg(env, "sendMessage", { chat_id: uid, parse_mode: "HTML",
-    text: `🏆 <b>Ты нагнал(а) всё до самого нового обзора Фантано!</b>\nУ тебя ${reviewsWord(heard)} с отметкой «прослушано». Новые обзоры будут в канале.` });
+    text: `${ce(env, "banger")} <b>Ты нагнал(а) всё до самого нового обзора Фантано!</b>\nУ тебя ${reviewsWord(heard)} с отметкой «прослушано». Новые обзоры будут в канале.` });
 }
 
 
@@ -1368,7 +1374,8 @@ async function search(env, uid, query) {
       return tg(env, "sendMessage", { chat_id: uid, text: `Обзора Фантано по запросу «${query.slice(0, 100)}» нет. Нашёл в Deezer:`,
         reply_markup: { inline_keyboard: hits.map((x) => [{ text: `💿 ${short(x.artist.name)} — ${short(x.title)}`.slice(0, 120), callback_data: `dz:${x.id}` }]) } });
     }
-    return tg(env, "sendMessage", { chat_id: uid, text: `Не нашёл обзора Фантано по запросу «${query.slice(0, 100)}». Попробуй имя артиста или название альбома.` });
+    return tg(env, "sendMessage", { chat_id: uid, parse_mode: "HTML",
+      text: `Не нашёл обзора Фантано по запросу «${esc(query.slice(0, 100))}». ${ce(env, "think")} Попробуй имя артиста или название альбома.` });
   }
   if (r.kind === "card") return sendAlbum(env, uid, r.item, "");
   if (r.kind === "albums" && r.artist) return tg(env, "sendMessage", { chat_id: uid, ...artistMessage(r.artist, r.total, r.items, r.others, await rankingVideo(env, r.artist)) });
@@ -1413,7 +1420,7 @@ async function maybeSuggestSimilar(env, uid, rid) {
     .sort((x, y) => y.n - x.n || x.r - y.r); // the most in common first, a random pick among equals
   const chosen = scored.slice(0, SIMILAR_N).map((x) => x.a);
   const about = title ? ` на <b>${esc(title)}</b>` : "";
-  if (!chosen.length) return tg(env, "sendMessage", { chat_id: uid, parse_mode: "HTML", text: `Пока не можем найти похожие${about}.` });
+  if (!chosen.length) return tg(env, "sendMessage", { chat_id: uid, parse_mode: "HTML", text: `Пока не можем найти похожие${about}. ${ce(env, "shrug")}` });
   return tg(env, "sendMessage", { chat_id: uid, parse_mode: "HTML",
     text: `Похожие${about} по жанрам. Нажми на альбом, пришлю карточку:`, reply_markup: { inline_keyboard: albumButtons(chosen, true) } });
 }
@@ -1715,7 +1722,7 @@ async function sendLater(env, uid) {
 async function sendLiked(env, uid, offset = 0, edit) {
   const { results } = await env.DB.prepare("SELECT review_id FROM likes WHERE user_id=? ORDER BY liked_at DESC, rowid DESC").bind(uid).all();
   if (!results.length) {
-    return tg(env, "sendMessage", { chat_id: uid, text: "Тут пусто. Нажми «♡ Понравилось» под карточкой альбома, и он появится здесь. Эту отметку не стирают ни «Слушал», ни «Послушать потом»." });
+    return tg(env, "sendMessage", { chat_id: uid, parse_mode: "HTML", text: ce(env, "think") + " Тут пусто. Нажми «♡ Понравилось» под карточкой альбома, и он появится здесь. Эту отметку не стирают ни «Слушал», ни «Послушать потом»." });
   }
   const arch = await archive(env);
   const byId = new Map(arch.map((a) => [a.id, a]));

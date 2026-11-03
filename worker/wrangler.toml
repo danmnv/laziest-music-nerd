@@ -7,6 +7,7 @@ DATA_URL = "https://raw.githubusercontent.com/danmnv/laziest-music-nerd-data/mai
 SITE_URL = "https://laziest-music-nerd.pages.dev"  # moved from danmnv.github.io 2026-11-02; also the CORS origin
 DIGEST = "0"      # «Лучшее за две недели» по воскресеньям: выключено (Даниил, 02.11.2026), "1" — включить
 SITE_LIVE = "1"   # the site is up (2026-11-01): album titles and lists link to its pages
+CUSTOM_EMOJI = "1"  # свои эмодзи (набор laziestmusicnerd) в сообщениях бота, которых нет в канале; "0" — обычные (если закончится Premium у владельца)
 CHANNEL = "@laziestmusicnerd"
 BOT_USERNAME = "laziest_music_nerd_bot"
 
