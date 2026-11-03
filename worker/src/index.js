@@ -335,6 +335,11 @@ async function onCallback(q, env) {
     const arch = await archive(env);
     const a = arch.find((x) => x.id === parts[1]);
     if (a) await sendOtherAlbums(env, uid, arch, a.artist_name, false);
+  } else if (parts[0] === "ua") {
+    // «💿 Альбомы артиста» on the card of an artist without reviews: the artist's name was saved with the card's ID
+    await answerNow();
+    const row = await env.DB.prepare("SELECT artist_name FROM unreviewed WHERE id=?").bind(parts[1]).first();
+    if (row) await sendOtherAlbums(env, uid, await archive(env), row.artist_name, false);
   } else if (parts[0] === "dx") {
     await answerNow();
     const arch = await archive(env);
@@ -959,6 +964,12 @@ function queueRows(id, liked, section) {
 }
 
 // A card that went out as a photo when it could, else as text.
+// The button to the list of Fantano's reviews of the artist, with their number: «Все обзоры» read as the whole archive
+// (owner, 2026-11-03). Not «все альбомы»: the list holds the reviews, its own button leads on to the other albums.
+function artistButton(n, id) {
+  return { text: `📚 Обзоры артиста (${n})`, callback_data: `ar:${id}` };
+}
+
 async function sendCard(env, uid, { text, reply_markup, cover }) {
   if (cover) {
     const r = await tg(env, "sendPhoto", { chat_id: uid, photo: cover, caption: text, parse_mode: "HTML", reply_markup });
@@ -994,7 +1005,13 @@ async function unreviewedCard(env, x, arch) {
       .bind(x.key, x.artist, x.title, x.year || null).run();
     rows.push(...MARK_ROWS(x.key, !!x.liked)); // x.liked: this person liked it (sendUnreviewed)
   }
-  if (known) rows.push([{ text: "🔔 Следить", callback_data: `f:${known.id}` }, { text: "📚 Все обзоры", callback_data: `ar:${known.id}` }]);
+  if (known) {
+    const n = arch.filter((a) => nameKey(a.artist_name) === k).length;
+    rows.push([{ text: "🔔 Следить", callback_data: `f:${known.id}` }, artistButton(n, known.id)]);
+  } else if (x.key) {
+    // an artist Fantano never reviewed: their albums from MusicBrainz / Deezer (owner, 2026-11-03: The Doors had no way on)
+    rows.push([{ text: "💿 Альбомы артиста", callback_data: `ua:${x.key}` }]);
+  }
   return { text, reply_markup: { inline_keyboard: rows }, cover: x.cover };
 }
 
@@ -1083,7 +1100,9 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   const liked = await isLiked(env, uid, r.id);
   const reply_markup = { inline_keyboard: [
     ...(opts.queue ? queueRows(r.id, liked, opts.queue) : MARK_ROWS(r.id, liked)),
-    [{ text: "🔔 Следить", callback_data: `f:${r.id}` }, { text: "📚 Все обзоры", callback_data: `ar:${r.id}` }],
+    // the artist's only review is this one: straight to their other albums
+    [{ text: "🔔 Следить", callback_data: `f:${r.id}` },
+      ofArtist.length > 1 ? artistButton(ofArtist.length, r.id) : { text: "💿 Другие альбомы артиста", callback_data: `da:${r.id}` }],
     ...(first || redo ? [[{ text: first ? `🔁 Первый обзор (${first.y})` : `🔁 Обзор ${redo.y}`, callback_data: `a:${(first || redo).id}` }]] : []),
     // the AI's mood guess gets the channel card's vote (да / нет, «другое» asks all four); without one, a button asks
     ...moods.map((m) => [{ text: `для ${vibe(m)}: да`, callback_data: `w:${r.id}:${MOODS.indexOf(m)}:y` }, { text: "нет", callback_data: `w:${r.id}:${MOODS.indexOf(m)}:n` }]),

@@ -361,6 +361,11 @@ test("an artist's albums without Fantano's review, and a card for one of them", 
   calls = [];
   await press(OWNER, "dz:9"); // a reviewed album opened from Deezer gets the usual card
   assert.match(calls.find((x) => x.method === "sendPhoto").caption, /^<b>Radiohead — Kid A<\/b>/);
+  calls = [];
+  // «💿 Альбомы артиста» on a card of an album without a review: the artist's name comes from the saved card
+  db.prepare("INSERT INTO unreviewed (id, artist_name, album) VALUES ('dz77', 'Radiohead', 'The Bends')").run();
+  await press(OWNER, "ua:dz77");
+  assert.match(calls.find((x) => x.method === "sendMessage").text, /^Radiohead — альбомы без обзора Фантано/);
 });
 
 test("when MusicBrainz is down, the list comes from Deezer: albums only, the first edition's year", async () => {
@@ -398,7 +403,7 @@ test("a reviewed album: Fantano's line, favourites with a player on the site, n-
   const text = c.caption || c.text;
   assert.match(text, /1-й из 2 обзоров артиста\n\n💬 <i>Radiohead return &amp; shine\.<\/i>\n★ Любимые у Фантано: DAYDREAMING, TRUE LOVE WAITS/);
   const btns = c.reply_markup.inline_keyboard.flat();
-  assert.ok(btns.some((b) => b.text === "🔔 Следить") && btns.some((b) => b.text === "📚 Все обзоры"));
+  assert.ok(btns.some((b) => b.text === "🔔 Следить") && btns.some((b) => b.text === "📚 Обзоры артиста (2)"));
   assert.ok(!cardLinks(c).some(([t]) => /любимые треки/.test(t))); // the player is on the site, not linked from the bot (owner, 2026-11-02)
   // the Apple link found from Actions (lmn/apple.py, in rt): Apple's search isn't asked (it often refuses the Worker)
   assert.ok(cardLinks(c).some(([t, u]) => t === "Apple Music" && u === "https://music.apple.com/us/album/a-moon-shaped-pool/5"));
