@@ -94,10 +94,15 @@ def parse_description(desc):
 
 
 def is_review(u):
-    """Titled like a review, and the description has the album line or the score line (one of them is enough:
-    a new way of writing one must not lose the card)."""
-    d = u.get("desc") or ""
-    return bool(REVIEW_TITLE.search(u.get("title") or "")) and bool(META.search(d) or SCORE_LINE.search(d))
+    """Titled like a review, and the description has the album line, or else the score line and a title that gives
+    artist and album (a new way of writing the album line must not lose the card, nor post one without names)."""
+    d, title = u.get("desc") or "", u.get("title") or ""
+    if not REVIEW_TITLE.search(title):
+        return False
+    if META.search(d):
+        return True
+    info = tnd.parse_title(title)
+    return bool(SCORE_LINE.search(d) and info.get("artist") and info.get("album"))
 
 
 def report_unrecognised(uploads, now=None, verbose=False):
@@ -112,7 +117,7 @@ def report_unrecognised(uploads, now=None, verbose=False):
             print(f"upload {u['published']} {u['video_id']} title={title_ok} desc={meta_ok}: {u['title']}")
         if title_ok and not meta_ok:
             head = " | ".join(l.strip() for l in (u.get("desc") or "").splitlines() if l.strip())[:300]
-            card = "the card goes without year, label and genres" if is_review(u) else "no card"
+            card = "the card goes without year, label and genres" if is_review(u) else "no card (no score line, or no artist and album in the title)"
             print(f"::warning::{u['title']}: album line in the description not recognised, {card}. It starts: {head}")
             if verbose:
                 print(u.get("desc") or "")

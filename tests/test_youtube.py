@@ -100,6 +100,14 @@ class DescriptionTest(unittest.TestCase):
             youtube.report_unrecognised([u], now=datetime(2026, 11, 4, 12, tzinfo=timezone.utc))
         self.assertIn("the card goes without year, label and genres", p.call_args[0][0])
         self.assertFalse(youtube.is_review({"title": "X - Y ALBUM REVIEW", "desc": "Listen: https://example.com"}))
+        # score line only, and the title gives no artist and album: no card with empty names
+        odd = dict(u, title="My thoughts on the new one GUEST REVIEW")
+        self.assertFalse(youtube.is_review(odd))
+        new, _ = youtube.plan([], [odd], [], seeding=False, now=datetime(2026, 11, 4, 12, tzinfo=timezone.utc))
+        self.assertEqual(new, [])
+        with mock.patch("builtins.print") as p:
+            youtube.report_unrecognised([odd], now=datetime(2026, 11, 4, 12, tzinfo=timezone.utc))
+        self.assertIn("no card", p.call_args[0][0])
 
     def test_what_is_a_review(self):
         self.assertTrue(youtube.is_review({"title": "HMLTD - FANGS ALBUM REVIEW", "desc": HMLTD}))
