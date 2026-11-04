@@ -95,6 +95,21 @@ def is_review(u):
     return bool(REVIEW_TITLE.search(u.get("title") or "")) and bool(META.search(u.get("desc") or ""))
 
 
+def report_unrecognised(uploads, now=None, verbose=False):
+    """A fresh video titled like a review whose description we don't recognise gets no card: say so in the log.
+    verbose (dry runs): every fresh upload with both checks, to see why one was skipped."""
+    now = now or datetime.now(timezone.utc)
+    for u in uploads or []:
+        if now - _ts(u["published"]) > CARD_WINDOW:
+            continue
+        title_ok, meta_ok = bool(REVIEW_TITLE.search(u.get("title") or "")), bool(META.search(u.get("desc") or ""))
+        if verbose:
+            print(f"upload {u['published']} {u['video_id']} title={title_ok} desc={meta_ok}: {u['title']}")
+        if title_ok and not meta_ok:
+            head = " | ".join(l.strip() for l in (u.get("desc") or "").splitlines() if l.strip())[:300]
+            print(f"::warning::{u['title']}: description not recognised as a review, no card. It starts: {head}")
+
+
 def review_from_video(u):
     """A review record in the same shape as tnd.parse_post, from a video alone."""
     d = parse_description(u["desc"])
