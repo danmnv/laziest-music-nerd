@@ -16,7 +16,9 @@ from .musicbrainz import norm
 CARD_WINDOW = timedelta(days=4)   # a review found later than this goes into the list and the site, but gets no card
 LIST_WINDOW = timedelta(days=60)
 
-META = re.compile(r"^(?P<who>[^\n]+?)\s+-\s+(?P<what>[^\n]+?)\s*/\s*(?P<year>(?:19|20)\d\d)\s*/\s*(?P<rest>[^\n]+?)\s*$", re.M)
+# "ARTIST - ALBUM / 2026 / LABEL / GENRES". When the album's own title has a slash, the line uses backslashes instead:
+# "PISS - YOU MADE ME / SKIN ON LINEN \ 2026 \ SUB POP \ NOISECORE" (4 Nov 2026), so the separator is whichever comes before the year.
+META = re.compile(r"^(?P<who>[^\n]+?)\s+-\s+(?P<what>[^\n]+?)\s*(?P<sep>[/\\])\s*(?P<year>(?:19|20)\d\d)\s*(?P=sep)\s*(?P<rest>[^\n]+?)\s*$", re.M)
 SCORE_LINE = re.compile(r"^\s*(?P<v>\d{1,2}|[A-Za-z][A-Za-z' ]*?)\s*/\s*10\b(?P<rest>[^\n]*)$", re.M)
 FAV = re.compile(r"^\s*FAV(?:ORITE)? TRACKS?:\s*(.+?)\s*$", re.M | re.I)
 LEAST = re.compile(r"^\s*LEAST FAV(?:ORITE)? TRACKS?:\s*(.+?)\s*$", re.M | re.I)
@@ -60,7 +62,7 @@ def parse_description(desc):
     metas = list(META.finditer(desc))
     if metas:
         m = metas[-1]
-        parts = [p.strip() for p in m.group("rest").split(" / ")]
+        parts = [p.strip() for p in m.group("rest").split(f" {m.group('sep')} ")]
         out.update(year=int(m.group("year")), genres=[g.strip().lower() for g in parts[-1].split(",") if g.strip()],
                    label=" / ".join(parts[:-1]) or None, meta_artist=m.group("who").strip(), meta_album=m.group("what").strip())
     scores = list(SCORE_LINE.finditer(desc))
@@ -92,7 +94,10 @@ def parse_description(desc):
 
 
 def is_review(u):
-    return bool(REVIEW_TITLE.search(u.get("title") or "")) and bool(META.search(u.get("desc") or ""))
+    """Titled like a review, and the description has the album line or the score line (one of them is enough:
+    a new way of writing one must not lose the card)."""
+    d = u.get("desc") or ""
+    return bool(REVIEW_TITLE.search(u.get("title") or "")) and bool(META.search(d) or SCORE_LINE.search(d))
 
 
 def report_unrecognised(uploads, now=None, verbose=False):
@@ -107,7 +112,8 @@ def report_unrecognised(uploads, now=None, verbose=False):
             print(f"upload {u['published']} {u['video_id']} title={title_ok} desc={meta_ok}: {u['title']}")
         if title_ok and not meta_ok:
             head = " | ".join(l.strip() for l in (u.get("desc") or "").splitlines() if l.strip())[:300]
-            print(f"::warning::{u['title']}: description not recognised as a review, no card. It starts: {head}")
+            card = "the card goes without year, label and genres" if is_review(u) else "no card"
+            print(f"::warning::{u['title']}: album line in the description not recognised, {card}. It starts: {head}")
             if verbose:
                 print(u.get("desc") or "")
 
