@@ -491,7 +491,7 @@ class CompareModels(unittest.TestCase):
         data = {a["id"]: {"brief": "Кратко.", "tr": "g"} for a in archive}
         asked = []
 
-        def ask(provider, title, text, model=None, lang=None, verdict="", tags=()):
+        def ask(provider, title, text, model=None, lang=None, verdict="", tags=(), short=False):
             asked.append((provider, model, lang, verdict))
             return {"brief": "Сразу по-русски.", "model": model, "usage": {"prompt_tokens": 9000, "completion_tokens": 700}}
         with mock.patch.object(briefs, "texts", side_effect=lambda items: ((a, "text " * 200) for a in items)), \
@@ -585,6 +585,52 @@ class Selectel(unittest.TestCase):
             self.assertIn("Теги: Country, rap rock.\nТекст обзора:", get.call_args.kwargs["json_body"]["messages"][0]["content"])
             llm.ask("selectel", "A - B", "text", model="m1", lang="both", sleep=lambda s: None)
             self.assertNotIn("Теги:", get.call_args.kwargs["json_body"]["messages"][0]["content"])
+
+
+class Short(unittest.TestCase):
+    """Reviews that are only a video: Fantano's own short lines told in Russian and English (2026-11-04)."""
+
+    def test_his_lines_once_each(self):
+        self.assertEqual(briefs.short_lines("A dark record.", {"blurb": "A dark record. Great drums."}), "A dark record. Great drums.")
+        self.assertEqual(briefs.short_lines("Line under the video.", {"blurb": "Blurb."}), "Line under the video.\nBlurb.")
+        self.assertEqual(briefs.short_lines("", None), "")
+
+    def test_a_short_review_is_told_from_his_lines_and_an_empty_one_is_left(self):
+        archive = [{"id": c * 24, "artist_name": c, "album": c, "published": f"2015-01-0{i + 1}", "genres": ["noise rock"]}
+                   for i, c in enumerate("abc")]
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(archive))
+            (p / "briefs.json").write_text(json.dumps({c * 24: {"skip": "short"} for c in "abc"}))
+            (p / "notes.json").write_text(json.dumps({"c" * 24: {"blurb": "Noisy, abrasive and almost gothic. The hooks are weak."}}))
+            texts = {"c" * 24: "On their debut, a dark and abrasive take on noise rock.", "b" * 24: "WATCH", "a" * 24: "y " * 300}
+            asked = []
+
+            def summarize(title, text, **kw):
+                asked.append((title, text, kw.get("short")))
+                return dict(ANSWER, model="m", en={"brief": "Dark.", "who": "Band."})
+            with mock.patch.object(briefs, "DATA", p), mock.patch.dict(os.environ, {"BRIEFS_LANG": "both"}), \
+                    mock.patch.object(briefs.tnd, "fetch_texts", side_effect=lambda ids: {i: texts[i] for i in ids}), \
+                    mock.patch.object(briefs.llm, "available", return_value=True), \
+                    mock.patch.object(briefs.llm, "summarize", side_effect=summarize):
+                briefs.run()
+            out = json.loads((p / "briefs.json").read_text())
+        self.assertEqual(asked[0], ("c - c", texts["c" * 24] + "\nNoisy, abrasive and almost gothic. The hooks are weak.", True))
+        self.assertEqual(asked[1][2], None)  # a whole review text: the usual prompt
+        self.assertEqual((out["c" * 24]["src"], out["c" * 24]["brief"], out["c" * 24]["en"]["who"]), ("short", "Коротко.", "Band."))
+        self.assertEqual(out["b" * 24], {"skip": "short", "short": "none"})  # nothing to tell: not asked, not fetched again
+        self.assertTrue(all(briefs.finished(out[k], "both") for k in out))
+        self.assertFalse(briefs.finished({"skip": "short"}, "both"))
+        self.assertTrue(briefs.finished({"skip": "short"}, "ru"))
+
+    def test_the_short_prompt_has_only_his_lines_and_no_about(self):
+        with mock.patch.dict(os.environ, {"SELECTEL_API_KEY": "k"}), mock.patch.object(llm.http, "get_json", return_value=chat(ANSWER)) as get:
+            llm.ask("selectel", "A - B", "His line.", model="m1", lang="both", sleep=lambda s: None, tags=["noise rock"], short=True)
+        prompt = get.call_args.kwargs["json_body"]["messages"][0]["content"]
+        self.assertIn("Фразы Фантано:\nHis line.", prompt)
+        self.assertIn("Теги: noise rock.", prompt)
+        self.assertIn('"en": объект с полями "brief" и "who"', prompt)
+        self.assertNotIn('"about"', prompt)
 
 
 if __name__ == "__main__":
