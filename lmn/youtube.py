@@ -108,6 +108,8 @@ def report_unrecognised(uploads, now=None, verbose=False):
         if title_ok and not meta_ok:
             head = " | ".join(l.strip() for l in (u.get("desc") or "").splitlines() if l.strip())[:300]
             print(f"::warning::{u['title']}: description not recognised as a review, no card. It starts: {head}")
+            if verbose:
+                print(u.get("desc") or "")
 
 
 def review_from_video(u):
