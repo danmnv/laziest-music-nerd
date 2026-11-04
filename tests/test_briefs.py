@@ -33,11 +33,17 @@ class ParseAnswer(unittest.TestCase):
 
     def test_a_long_three_sentence_brief_is_cut_to_two_even_without_fantanos_name(self):
         three = "Звучание плотное и шумное, с синтами на первом плане. " + "Мелодии цепкие, припевы запоминаются сразу, а продакшн богатый. " + "Но вокал тонет в миксе, а вторая половина альбома заметно провисает и повторяет первую."
-        three += " Ещё одно длинное предложение, которое уже точно не помещается в карточку."
+        three += " Ещё одно длинное предложение, которое уже точно не помещается в карточку, даже если она стала заметно длиннее, чем была раньше."
         self.assertGreater(len(three), gemini.BRIEF_MAX)
         out = gemini.parse_answer(json.dumps(dict(ANSWER, brief=three)))["brief"]
         self.assertLessEqual(len(out), gemini.BRIEF_MAX)
         self.assertTrue(out.startswith("Звучание плотное") and out.endswith(".") and out.count(". ") >= 1)
+
+    def test_a_dangling_semicolon_in_who_becomes_a_full_stop(self):
+        out = gemini.parse_answer(json.dumps(dict(ANSWER, who="Американская певица и композитор; ", en={"who": "American singer;"})))
+        self.assertEqual((out["who"], out["en"]["who"]), ("Американская певица и композитор.", "American singer."))
+        self.assertEqual(gemini.tidy_who("Рэпер из Атланты; третий альбом."), "Рэпер из Атланты; третий альбом.")
+        self.assertIsNone(gemini.tidy_who(" "))
 
     def test_moods_are_the_same_list_as_the_bots(self):
         import re
@@ -271,6 +277,57 @@ class Run(unittest.TestCase):
                     self.assertEqual(s.call_count, briefs.GIVE_UP)
                 self.assertEqual(json.loads((p / "briefs.json").read_text()), {})
 
+    def test_failed_rewrites_stop_an_outage_too_and_keep_the_old_briefs(self):
+        archive = [{"id": c * 24, "artist_name": c, "album": c, "published": f"2020-01-0{i + 1}"} for i, c in enumerate("abcdefg")]
+        old = {c * 24: {"brief": "Старое.", "p": 2} for c in "abcdefg"}
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(archive))
+            (p / "briefs.json").write_text(json.dumps(old))
+            with mock.patch.object(briefs, "DATA", p), mock.patch.dict(os.environ, {"BRIEFS_LANG": "both"}), \
+                    mock.patch.object(briefs.tnd, "fetch_texts", side_effect=lambda ids: {i: "x " * 300 for i in ids}), \
+                    mock.patch.object(briefs.llm, "available", return_value=True), \
+                    mock.patch.object(briefs.llm, "summarize", return_value=None) as s:
+                briefs.run()
+            self.assertEqual(s.call_count, briefs.GIVE_UP)  # not all 7: the balance ran out, say
+            self.assertEqual(json.loads((p / "briefs.json").read_text()), old)
+
+    def test_a_rewrite_that_keeps_failing_is_left_with_its_old_brief(self):
+        archive = [{"id": c * 24, "artist_name": c, "album": c, "published": f"2020-01-0{i + 1}"} for i, c in enumerate("ab")]
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(archive))
+            (p / "briefs.json").write_text(json.dumps({"a" * 24: {"brief": "Старое.", "p": 2}}))
+            for n in range(1, 3):
+                with mock.patch.object(briefs, "DATA", p), mock.patch.dict(os.environ, {"BRIEFS_LANG": "both"}), \
+                        mock.patch.object(briefs.tnd, "fetch_texts", side_effect=lambda ids: {i: "x " * 300 for i in ids}), \
+                        mock.patch.object(briefs.llm, "available", return_value=True), \
+                        mock.patch.object(briefs.llm, "summarize", side_effect=lambda t, *a, **kw: None if t.startswith("a") else dict(ANSWER, model="m")):
+                    briefs.run()
+                out = json.loads((p / "briefs.json").read_text())
+                self.assertEqual(out["a" * 24], {"brief": "Старое.", "p": 2, "rf": n, "rf_p": briefs.PROMPT_V})
+            self.assertTrue(briefs.finished(out["a" * 24], "both"))  # FAIL_MAX runs: not paid for again
+            with mock.patch.object(briefs, "PROMPT_V", briefs.PROMPT_V + 1):
+                self.assertFalse(briefs.finished(out["a" * 24], "both"))  # a new prompt tries it again
+
+    def test_a_run_stops_at_its_spending_cap(self):
+        archive = [{"id": c * 24, "artist_name": c, "album": c, "published": f"2020-01-0{i + 1}"} for i, c in enumerate("abcd")]
+
+        def paid(*a, **kw):
+            llm.stats["rub"] += 0.6
+            return dict(ANSWER, model="m")
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(archive))
+            with mock.patch.object(briefs, "DATA", p), mock.patch.dict(os.environ, {"BRIEFS_MAX_RUB": "1"}), \
+                    mock.patch.dict(llm.stats, {"rub": 0.0, "timeouts": 0}), \
+                    mock.patch.object(briefs.tnd, "fetch_texts", side_effect=lambda ids: {i: "x " * 300 for i in ids}), \
+                    mock.patch.object(briefs.llm, "available", return_value=True), \
+                    mock.patch.object(briefs.llm, "summarize", side_effect=paid) as s:
+                briefs.run()
+            self.assertEqual(s.call_count, 2)  # 0.6, then 1.2 ≥ 1: no third
+            self.assertEqual(len(json.loads((p / "briefs.json").read_text())), 2)
+
     def test_tnd_down_is_not_remembered(self):
         archive = [{"id": "a" * 24, "artist_name": "A", "album": "B", "published": "2020-01-01"}]
         with tempfile.TemporaryDirectory() as d:
@@ -307,7 +364,7 @@ class English(unittest.TestCase):
             (p / "archive.json").write_text(json.dumps(self.archive(12)))
             s, t, out = self.run_briefs(p, lambda *a, **kw: dict(self.EN), self.fake_translate)
             self.assertEqual([len(c.args[0]) for c in t.call_args_list], [10, 2])
-            self.assertEqual(s.call_args.kwargs, {"lang": "en", "verdict": briefs.verdict({"score": 7})})
+            self.assertEqual(s.call_args.kwargs, {"lang": "en", "verdict": briefs.verdict({"score": 7}), "tags": []})
             e = out[f"{0:024x}"]
             self.assertEqual(e, {"brief": "Ru Short, 7/10.", "about": "Подробно.", "tr": "gm", "m": "g", "moods": ["ночью"], "p": briefs.PROMPT_V,
                                  "en": {"brief": "Short, 7/10.", "about": "Longer."}})
@@ -340,7 +397,7 @@ class English(unittest.TestCase):
             (p / "briefs.json").write_text(json.dumps({f"{0:024x}": old, f"{1:024x}": old}))
             answers = iter([None, dict(self.EN)])  # newest first: 1 fails, 0 gets a new one
             _, _, out = self.run_briefs(p, lambda *a, **kw: next(answers), lambda items: None)
-            self.assertEqual(out[f"{1:024x}"], old)
+            self.assertEqual(out[f"{1:024x}"], {**old, "rf": 1, "rf_p": briefs.PROMPT_V})  # kept; tried again in one more run only
             self.assertEqual(out[f"{0:024x}"]["brief"], "Калька.")  # on the site until the translation comes
             self.assertEqual(briefs.untranslated(out), [f"{0:024x}"])
             s, _, out = self.run_briefs(p, lambda *a, **kw: dict(self.EN), self.fake_translate)
@@ -426,7 +483,109 @@ class CompareModels(unittest.TestCase):
         self.assertEqual(len(asked), 4)
         self.assertEqual(tr.call_count, 1)  # one Gemini request for all
         self.assertEqual(rows[0]["qwen/qwen3.8-27b"]["brief"], "RU qwen/qwen3.8-27b brief")
-        self.assertEqual(rows[0]["openai/gpt-oss-120b"]["brief"], "Кратко.")
+        self.assertEqual(rows[0][briefs.CURRENT]["brief"], "Кратко.")
+
+    def test_selectel_models_write_russian_themselves_with_their_tokens(self):
+        archive = [{"id": f"{i:024x}", "artist_name": f"A{i}", "album": f"B{i}", "published": f"2026-10-{10 + i}T00:00:00Z",
+                    "score": 7} for i in range(2)]
+        data = {a["id"]: {"brief": "Кратко.", "tr": "g"} for a in archive}
+        asked = []
+
+        def ask(provider, title, text, model=None, lang=None, verdict="", tags=()):
+            asked.append((provider, model, lang, verdict))
+            return {"brief": "Сразу по-русски.", "model": model, "usage": {"prompt_tokens": 9000, "completion_tokens": 700}}
+        with mock.patch.object(briefs, "texts", side_effect=lambda items: ((a, "text " * 200) for a in items)), \
+                mock.patch.object(briefs.llm, "ask", side_effect=ask), \
+                mock.patch.object(briefs.gemini, "translate") as tr, \
+                mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": "", "BRIEFS_COMPARE_MODELS": "selectel:deepseek/x"}):
+            rows = briefs.compare(archive, [], data)
+        tr.assert_not_called()  # no translation: the model wrote Russian
+        self.assertEqual(asked[0][:3], ("selectel", "deepseek/x", "both"))
+        self.assertIn("7/10", asked[0][3])  # the verdict goes to the Russian prompt too
+        self.assertEqual({k: rows[0]["selectel:deepseek/x"][k] for k in ("brief", "in", "out")},
+                         {"brief": "Сразу по-русски.", "in": 9000, "out": 700})
+
+
+class Selectel(unittest.TestCase):
+    def test_both_languages_never_fall_back_to_groq(self):
+        llm._dead.clear()
+        llm._spent.clear()
+        with mock.patch.dict(os.environ, {"SELECTEL_API_KEY": "", "GROQ_API_KEY": "g", "MISTRAL_API_KEY": ""}), \
+                mock.patch.object(llm.http, "get_json") as get:
+            self.assertFalse(llm.available("both"))
+            self.assertTrue(llm.available("en"))
+            self.assertIsNone(llm.summarize("A - B", "text", lang="both", sleep=lambda s: None))
+        get.assert_not_called()  # Groq's own Russian was rejected: no text rather than a worse one
+
+    def test_both_languages_in_one_answer_need_no_translation(self):
+        out = gemini.parse_answer(json.dumps(dict(ANSWER, en={"brief": "Dense and noisy. He gives it a 7/10.", "who": "Oxford band; fourth album.", "x": 1})))
+        self.assertEqual(out["en"], {"brief": "Dense and noisy.", "who": "Oxford band; fourth album."})  # the score cut here too
+        e = briefs.entry({**out, "model": "m1"}, "both")
+        self.assertEqual((e["brief"], e["tr"], e["en"]["who"]), ("Коротко.", "m1", "Oxford band; fourth album."))
+        self.assertTrue(briefs.finished(e, "both"))
+        self.assertEqual(briefs.untranslated({"k": e}), [])  # its own translation: Gemini is not asked
+        with mock.patch.dict(os.environ, {"SELECTEL_API_KEY": "k"}), mock.patch.object(llm.http, "get_json", return_value=chat(ANSWER)) as get:
+            llm.ask("selectel", "A - B", "text", model="m1", lang="both", sleep=lambda s: None)
+        self.assertIn('"en": объект', get.call_args.kwargs["json_body"]["messages"][0]["content"])
+
+
+    def test_skipped_until_a_model_is_set_then_asked_in_russian_with_low_reasoning(self):
+        llm._dead.clear()
+        llm._spent.clear()
+        with mock.patch.dict(os.environ, {"SELECTEL_API_KEY": "k", "GROQ_API_KEY": "", "MISTRAL_API_KEY": ""}), \
+                mock.patch.object(llm.http, "get_json") as get:
+            self.assertFalse(llm.available())  # a key without a model: not used
+            self.assertIsNone(llm.ask("selectel", "A - B", "text"))
+            get.assert_not_called()
+            get.return_value = {"choices": [{"message": {"content": "```json\n" + json.dumps(ANSWER, ensure_ascii=False) + "\n```"}}],
+                                "usage": {"prompt_tokens": 5, "completion_tokens": 3}}
+            out = llm.ask("selectel", "A - B", "text", model="m1", sleep=lambda s: None, verdict="Fantano's score: 7/10.")
+        body = get.call_args.kwargs["json_body"]
+        self.assertEqual((body["model"], body["reasoning"]), ("m1", {"effort": "low"}))
+        self.assertIn("на русском", body["messages"][0]["content"])
+        self.assertNotIn('"en": объект', body["messages"][0]["content"])  # English only when asked for both
+        self.assertIn("7/10", body["messages"][0]["content"])
+        self.assertEqual((out["brief"], out["usage"]["completion_tokens"]), ("Коротко.", 3))  # a fenced answer is read too
+
+    def test_a_gone_or_unpaid_model_stops_the_provider_without_picking_another(self):
+        for status, body in ((404, '{"error": "model not found"}'), (402, '{"error": "insufficient balance"}')):
+            llm._dead.clear()
+            with mock.patch.dict(os.environ, {"SELECTEL_API_KEY": "k"}), \
+                    mock.patch.object(llm.http, "get_json", side_effect=llm.http.HttpError(status, body, "u")) as get, \
+                    mock.patch.object(llm, "pick_model") as pick:
+                self.assertIsNone(llm.ask("selectel", "A - B", "text", model="m1", lang="both", sleep=lambda s: None))
+            pick.assert_not_called()  # a model from the catalogue could cost anything
+            self.assertEqual(get.call_count, 1)
+            self.assertIn("selectel", llm._dead)
+        llm._dead.clear()
+
+    def test_charges_and_timeouts_are_counted(self):
+        answer = dict(chat(ANSWER), usage={"cost": 0.25})
+        with mock.patch.dict(os.environ, {"SELECTEL_API_KEY": "k"}), mock.patch.dict(llm.stats, {"rub": 0.0, "timeouts": 0}):
+            with mock.patch.object(llm.http, "get_json", return_value=answer):
+                llm.ask("selectel", "A - B", "text", model="m1", lang="both", sleep=lambda s: None)
+            with mock.patch.object(llm.http, "get_json", return_value={"usage": {"cost": 0.5}, "choices": []}):
+                llm.ask("selectel", "A - B", "text", model="m1", lang="both", sleep=lambda s: None)  # unreadable, still paid
+            with mock.patch.object(llm.http, "get_json", side_effect=llm.http.HttpError(0, "timed out", "u")):
+                llm.ask("selectel", "A - B", "text", model="m1", lang="both", sleep=lambda s: None)
+            self.assertEqual((llm.stats["rub"], llm.stats["timeouts"]), (0.75, 1))
+
+    def test_an_answer_without_its_cost_is_warned_about_once(self):
+        with mock.patch.dict(os.environ, {"SELECTEL_API_KEY": "k"}), mock.patch.dict(llm.stats, {"rub": 0.0, "no_cost": False}), \
+                mock.patch.object(llm.http, "get_json", return_value=chat(ANSWER)), mock.patch("builtins.print") as p:
+            for _ in range(2):
+                llm.ask("selectel", "A - B", "text", model="m1", lang="both", sleep=lambda s: None)
+        self.assertEqual(sum("no usage.cost" in str(c) for c in p.call_args_list), 1)
+
+    def test_the_sites_tags_go_into_the_russian_prompt(self):
+        self.assertEqual(briefs.tags({"genres": ["Country", " rap rock ", "", None]}), ["Country", "rap rock"])
+        self.assertEqual(briefs.tags({}), [])
+        with mock.patch.dict(os.environ, {"SELECTEL_API_KEY": "k"}), mock.patch.object(llm.http, "get_json", return_value=chat(ANSWER)) as get:
+            llm.ask("selectel", "A - B", "text", model="m1", lang="both", sleep=lambda s: None, tags=["Country", "rap rock"])
+            self.assertIn("Теги: Country, rap rock.\nТекст обзора:", get.call_args.kwargs["json_body"]["messages"][0]["content"])
+            llm.ask("selectel", "A - B", "text", model="m1", lang="both", sleep=lambda s: None)
+            self.assertNotIn("Теги:", get.call_args.kwargs["json_body"]["messages"][0]["content"])
+
 
 if __name__ == "__main__":
     unittest.main()

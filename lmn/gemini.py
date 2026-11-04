@@ -21,7 +21,8 @@ CALL_TIMEOUT = 150
 VIDEO_BUDGET_SEC = 1200
 VIDEO_CALL_TIMEOUT = 810
 ABOUT_MAX = 760   # the site's longer brief ("about"); the prompt asks for 700
-BRIEF_MAX = 260   # the card's short brief; the prompt asks for 240 (3 short sentences, the owner 2026-11-02)
+BRIEF_MAX = 330   # the card's short brief; the prompts ask for 240 (Gemini) and 270 (archive): room for a longer third
+# sentence, so a brief isn't cut to two (owner, 2026-11-04: "чтобы ничего не терялось и мысли были законченные")
 # The stored mood words; the same list and order as MOODS in worker/src/index.js (buttons carry the index, votes the
 # words). Words are only appended, never removed or reordered: old votes, guesses and buttons keep pointing at them.
 MOODS = ["для тренировки", "для настроения", "для работы за столом", "для тусовки", "в дорогу", "на прогулку", "ночью",
@@ -89,6 +90,23 @@ Keep album, track and genre names in the original.
 Title: {title}
 Transcript:
 {text}"""
+
+# The same fields written in Russian straight from the English text, for paid models that write Russian well (Selectel's
+# router, lmn/llm.py): the verdict and the translation's style rules in one prompt, so no Gemini translation is needed.
+PROMPT_RU = """Ты помогаешь вести русскоязычный Telegram-канал о музыкальных обзорах Anthony Fantano (The Needle Drop).
+Ниже — текст его обзора на английском. {verdict} Ответь строго JSON-объектом с полями:
+- "brief": ровно 3 коротких предложения на русском, своими словами, о релизе целиком: как он звучит (звучание, продакшн, вокал, настроение), чего от него ждать и в чём его сильные и слабые стороны, или только сильные, или только слабые, смотря что говорит обзор. Выбирай то, что даёт слушателю контекст, может его заинтересовать и помогает понять, что это за музыка и чего ждать от звучания; не придумывай достоинства или недостатки, о которых в обзоре нет. Отдельные треки не называй; исключение — один трек, который резко выделяется на фоне остального (например, единственный удачный). Не называй исполнителя и релиз, не пиши, откуда исполнитель и какой это по счёту релиз: карточка показывает это строками выше; жанры упоминай только чтобы описать звучание этого релиза. Если релиз инструментальный, скажи об этом. Не цитируй обзор и не переводи его дословно. До 270 символов.
+- "about": 4–5 предложений на русском, своими словами, для страницы сайта: как звучит релиз, что Фантано хвалит (с названиями треков), что ругает и к чему пришёл — тоже без оценки. Не начинай с имени исполнителя, названия релиза, жанра и того, какой это по счёту релиз: это уже есть на странице. До 700 символов.
+- "who": одна строка на русском строго по образцу «Ирландская пост-панк-группа из Дублина; пятый альбом.», «Рэпер из Атланты, участник Migos; третий сольный альбом.» или «Психоделический хип-хоп-проект; мини-альбом.». До точки с запятой — кто исполнитель: откуда, чем известен в целом (жанр, которым он известен, а не жанр этого релиза; если обзор говорит о смене жанра — прежний), кто это (группа, рэпер, певица, продюсер), чей участник, если это важно. После точки с запятой — только какой это по счёту релиз и его тип, без описания содержания. Если номер неизвестен: у мини-альбома, микстейпа, сборника, концертного альбома пиши только тип («; мини-альбом.»), а у обычного альбома часть после точки с запятой опусти. Без имени исполнителя и названия релиза, без оценочных слов. Факты бери из текста обзора и из тегов сайта (строка «Теги» ниже, если она есть: в ней бывают не только жанры и места, но и лейблы, рубрики, имена — их не используй). Если там об исполнителе почти ничего нет, а исполнитель широко известен, допиши общеизвестное, в чём уверен: кто это, откуда, чем известен. О малоизвестном исполнителе не угадывай. Пустая строка — только если об исполнителе ничего не известно. До 150 символов.
+{en}- "moods": список из 1–2 вариантов ровно из этого набора: {moods}. Для чего лучше всего подходит этот релиз: исходи из жанра, звучания и настроения, которые описывает обзор (тихий и грустный — не «для тусовки»). «фоном для работы» — инструментальная или монотонная музыка, которая не отвлекает, в том числе жёсткая. «в наушниках, вдумчиво» — только если обзор подчёркивает плотную, детальную, требующую внимания музыку, а не по умолчанию; слабому альбому тоже выбирай то, к чему подходит его звучание.
+Как писать: естественным, грамотным русским языком, как музыкальный журналист, без кальки с английского и без сленга («выкатил», «залетел»). Названия альбомов и треков, имена людей и названия групп — в оригинале латиницей, без транслитерации; названия треков — в кавычках-«ёлочках». Жанры — по-русски, если у жанра есть привычное русское название (хип-хоп, пост-панк, индастриал-метал, синти-фанк, кантри); латиницей — только если его нет. Фамилию пиши «Фантано». Слова light, decent, strong не переводи и не используй.
+Заголовок: {title}
+{tags}Текст обзора:
+{text}"""
+# PROMPT_RU's "en" field: the same three texts in English, kept for an English version of the bot and site (owner,
+# 2026-11-03), written in the same request so no translation is needed either way
+EN_FIELD = """- "en": объект с полями "brief", "about", "who" — те же три текста на естественном английском, для англоязычной версии: те же правила, без оценки, до 250, 650 и 140 символов; "who" по образцу "Irish post-punk band from Dublin; fifth album.". Пиши их не переводом русских, а так, как написал бы англоязычный музыкальный журналист.
+"""
 
 TRANSLATE = """Переведи на русский тексты для русскоязычного канала о музыкальных обзорах Anthony Fantano. Пиши естественным,
 грамотным русским языком, как музыкальный журналист, а не дословно. Названия альбомов и треков, имена людей и названия групп
@@ -195,6 +213,7 @@ def summarize(title, text=None, api_key=None, video_id=None, notes=""):
 
 def parse_answer(text):
     """The model's JSON answer to PROMPT, checked (also used for lmn/mistral.py). Raises ValueError on a bad answer."""
+    text = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", text)  # some models wrap the JSON in a code fence
     out = json.loads(text)
     if isinstance(out, list):  # gemini-3.5-flash sometimes wraps the object in a list (seen 2026-10-31 on HMLTD)
         out = next((x for x in out if isinstance(x, dict)), None)
@@ -205,7 +224,21 @@ def parse_answer(text):
     out["score_note"] = note if NOTE.match(note) else None
     out["brief"] = trim_brief(drop_score(str(out.get("brief") or ""))) or None
     out["about"] = trim_about(drop_score(str(out.get("about") or ""))) or None
+    out["who"] = tidy_who(out.get("who"))
+    en = out.get("en") if isinstance(out.get("en"), dict) else {}
+    out["en"] = {k: drop_score(str(en.get(k) or "")).strip() for k in ("brief", "about", "who") if str(en.get(k) or "").strip()} or None
+    if out["en"] and out["en"].get("who"):
+        out["en"]["who"] = tidy_who(out["en"]["who"])
     return out
+
+
+def tidy_who(who):
+    """'who' without a dangling separator: a model that dropped the part after the semicolon sometimes kept the semicolon
+    («…композитор, работающая на инди-сцене; », GPT-6 Luna 2026-11-04)."""
+    who = str(who or "").strip()
+    if who and who[-1] in ";,:—–-":
+        who = who.rstrip(" ;,:—–-") + "."
+    return who or None
 
 
 SCORE = r"(?:\d{1,2}(?:[.,]\d)?\s*/\s*10|NOT GOOD|NOT BAD|NOT MUSIC|CLASSIC)"

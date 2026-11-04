@@ -1,17 +1,31 @@
 name: Брифы для архива
 on:
-  # Каждый день (Даниил, 02.11.2026: от новых обзоров к старым, пока не кончится архив) и вручную. Бриф пишет бесплатная модель по-английски (Groq; Mistral, если пополнить баланс), Gemini переводит
-  # по 10 за запрос, не больше 15 запросов за запуск, чтобы новым обзорам хватило дневной квоты Gemini.
+  # Каждый день (02.11.2026: от новых обзоров к старым, пока не кончится архив) и вручную. С 04.11.2026 бриф пишет
+  # GPT-6 Luna через ИИ-роутер Selectel (платно, ~0,1 ₽ за обзор): за один запрос русский и английский тексты, без
+  # перевода Gemini. Если роутер не отвечает (кончился баланс), запуск ничего не пишет: Groq по-русски не пишет.
   # Что не успеет за 5,5 часа, сохранится, остальное следующим запуском.
   schedule:
     - cron: "30 9 * * *"   # каждый день в 9:30 UTC, после того как у Gemini обновился дневной лимит (полночь по Калифорнии)
   workflow_dispatch:
     inputs:
       limit:
-        description: "Сколько обзоров за запуск (больше 150 Gemini за раз не переведёт, остальные переведутся в следующий запуск)"
-        default: "150"
+        description: "Сколько обзоров за запуск (пусто — сколько успеет за 5,5 часа, но не дороже 150 ₽; ~0,1 ₽ за обзор)"
+        default: ""
       compare:
-        description: "Только сравнить другие модели Groq с нынешней на 2 обзорах (ничего не сохраняет)"
+        description: "Только сравнить другие модели с нынешними брифами (ничего не сохраняет)"
+        type: boolean
+        default: false
+      compare_models:
+        description: "Модели для сравнения через запятую: имя модели Groq или selectel:<модель>; selectel:list — только список моделей Selectel"
+        default: "qwen/qwen3.8-27b,openai/gpt-oss-20b"
+      compare_n:
+        description: "На скольких обзорах сравнивать"
+        default: "2"
+      compare_ids:
+        description: "Или на каких именно: id обзоров из архива через запятую"
+        default: ""
+      ping:
+        description: "Только проверить, отвечают ли модели selectel:<модель> из списка на короткий вопрос"
         type: boolean
         default: false
 
@@ -49,9 +63,19 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           # not the first models: new reviews' briefs keep their quota
           GEMINI_MODEL: gemini-3.5-flash,gemini-3.5-flash-lite
-          BRIEFS_LIMIT: ${{ inputs.limit || '150' }}
+          BRIEFS_LIMIT: ${{ inputs.limit }}
+          BRIEFS_LANG: both   # Russian and English in one answer (the owner chose GPT-6 Luna, 2026-11-04)
+          SELECTEL_MODEL: openai/gpt-6-luna
           BRIEFS_MINUTES: "330"   # GitHub stops a job after 6 hours; this leaves time to save
+          BRIEFS_MAX_RUB: "150"   # roubles a run may spend on the router: the key itself has no limit
           BRIEFS_COMPARE: ${{ inputs.compare && '1' || '' }}
+          PYTHONUNBUFFERED: "1"   # the log shows each line as it comes, also when a run is stopped
+          BRIEFS_COMPARE_MODELS: ${{ inputs.compare_models }}
+          BRIEFS_COMPARE_N: ${{ inputs.compare_n }}
+          BRIEFS_COMPARE_IDS: ${{ inputs.compare_ids }}
+          BRIEFS_PING: ${{ inputs.ping && '1' || '' }}
+          SELECTEL_API_KEY: ${{ secrets.SELECTEL_API_KEY }}
+          SELECTEL_TIMEOUT: ${{ inputs.compare && '300' || '' }}   # a comparison waits for slow thinking models too
       - name: Сохранить
         if: ${{ always() && !inputs.compare }}
         run: |
