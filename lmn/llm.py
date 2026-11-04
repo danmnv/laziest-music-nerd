@@ -49,7 +49,7 @@ def models(name):
     return [m for m in [first, *EXTRA.get(name, [])] if m and (name, m) not in _spent]
 
 
-def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotonic, lang="ru", verdict="", tags=()):
+def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotonic, lang="ru", verdict="", tags=(), short=False):
     name, url, var, default, gap, max_text = next(p for p in PROVIDERS if p[0] == provider)
     key = (os.environ.get(var) or "").strip()
     if not key or not text:
@@ -58,10 +58,15 @@ def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotoni
     if not model:
         return None
     moods = json.dumps(gemini.AI_MOODS, ensure_ascii=False)
-    prompt = (gemini.PROMPT_EN.format(moods=moods, title=title, text=text[:max_text], verdict=verdict) if lang == "en" else
-              gemini.PROMPT_RU.format(moods=moods, title=title, text=text[:max_text], verdict=verdict,
-                                      en=gemini.EN_FIELD if lang == "both" else "",
-                                      tags=f"Теги: {', '.join(tags)}.\n" if tags else ""))
+    tag_line = f"Теги: {', '.join(tags)}.\n" if tags else ""
+    if short:  # only Fantano's short lines, not a review text: retold, nothing added (gemini.PROMPT_SHORT_RU)
+        prompt = gemini.PROMPT_SHORT_RU.format(title=title, text=text[:max_text], verdict=verdict, tags=tag_line,
+                                               en=gemini.EN_SHORT if lang == "both" else "")
+    elif lang == "en":
+        prompt = gemini.PROMPT_EN.format(moods=moods, title=title, text=text[:max_text], verdict=verdict)
+    else:
+        prompt = gemini.PROMPT_RU.format(moods=moods, title=title, text=text[:max_text], verdict=verdict,
+                                         en=gemini.EN_FIELD if lang == "both" else "", tags=tag_line)
     body = {"model": model, "messages": [{"role": "user", "content": prompt}],
             "response_format": {"type": "json_object"}, "temperature": 0.4, **EXTRA_BODY.get(name, {})}
     for attempt in range(3):

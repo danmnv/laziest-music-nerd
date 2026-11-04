@@ -29,6 +29,7 @@ from . import gemini, http, llm, tnd
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 BATCH = 15
 MIN_TEXT = 500
+MIN_SHORT = 40  # Fantano's short lines on a review that is only a video: less is no line about the music
 FAIL_MAX = 2  # runs in which no model gave a brief for this review: then it is left alone
 GIVE_UP = 5  # failures in a row: the key, the plan or the service is wrong, no use going on
 TR_BATCH = 10  # briefs per Gemini translation request
@@ -58,7 +59,19 @@ PROMPT_V = 3  # 2: no score in the text (2026-11-01); 3: GPT-6 Luna on Selectel 
 # about the release as a whole (the owner, 2026-11-04); entries written by an older prompt are written again
 
 
+def short_lines(text, note):
+    """Fantano's own lines on a review that is only a video: the line under it on theneedledrop.com and his blurb from the
+    YouTube description (data/notes.json), each once."""
+    lines = []
+    for t in ((text or "").strip(), ((note or {}).get("blurb") or "").strip()):
+        if t and not any(t in x for x in lines):
+            lines = [x for x in lines if x not in t] + [t]
+    return "\n".join(lines)
+
+
 def finished(v, lang="ru"):
+    if lang == "both" and v.get("skip") and not v.get("short"):
+        return False  # only Fantano's short lines: told from them since 2026-11-04 ("src": "short")
     if v.get("rf", 0) >= FAIL_MAX and v.get("rf_p") == PROMPT_V:
         return True  # an old brief the model failed to write again in FAIL_MAX runs: it stays (until a new prompt)
     if lang in ("en", "both") and v.get("brief") and not v.get("tr") and not v.get("en"):
@@ -160,7 +173,12 @@ def compare(archive, reviews, data):
     done = sorted((k for k, v in data.items() if v.get("tr") and v.get("brief") and k in by_id),
                   key=lambda k: by_id[k]["published"], reverse=True)
     ids = [k.strip() for k in (os.environ.get("BRIEFS_COMPARE_IDS") or "").split(",") if k.strip() in by_id]
-    picked = [(a, t) for a, t in texts([by_id[k] for k in (ids or done[:n + 2])]) if t and len(t) >= MIN_TEXT][:len(ids) or n]
+    npath = DATA / "notes.json"
+    notes = json.loads(npath.read_text()) if npath.exists() else {}
+    # chosen reviews whose text is short: Fantano's short lines, as run() does (a "short" row)
+    picked = [(a, t if len(t) >= MIN_TEXT else short_lines(t, notes.get(a["id"])))
+              for a, t in texts([by_id[k] for k in (ids or done[:n + 2])])
+              if t is not None and (len(t) >= MIN_TEXT or ids and len(short_lines(t, notes.get(a["id"]))) >= MIN_SHORT)][:len(ids) or n]
     rows, en = [], []
     for a, text in picked:
         title = f"{a['artist_name']} - {a['album']}"
@@ -171,7 +189,8 @@ def compare(archive, reviews, data):
                 continue
             provider, model, lang = ("selectel", m.split(":", 1)[1], "both") if m.startswith("selectel:") else ("groq", m, "en")
             t0 = time.monotonic()
-            out = llm.ask(provider, title, text, model=model, lang=lang, verdict=verdict(a), tags=tags(a)) or {}
+            out = llm.ask(provider, title, text, model=model, lang=lang, verdict=verdict(a), tags=tags(a),
+                          short=len(text) < MIN_TEXT and lang == "both") or {}
             u = out.get("usage") or {}
             row[m] = {"model": out.get("model"), "sec": round(time.monotonic() - t0),  # the model that really answered
                       "in": u.get("prompt_tokens"), "out": u.get("completion_tokens"),
@@ -267,6 +286,8 @@ def run():
     limit = int(os.environ.get("BRIEFS_LIMIT") or ("150" if lang == "en" else "2000"))
     budget = int(os.environ.get("BRIEFS_TRANSLATE_MAX") or "15")
     max_rub = float(os.environ.get("BRIEFS_MAX_RUB") or "150")
+    npath = DATA / "notes.json"
+    notes = json.loads(npath.read_text()) if npath.exists() else {}
     todo = targets(archive, reviews, {k for k, v in data.items() if finished(v, lang)})
     print(f"briefs ({lang}): {sum(1 for v in data.values() if v.get('brief'))} done, {len(untranslated(data))} to translate, "
           f"{len(todo)} to write, this run up to {limit}")
@@ -287,15 +308,19 @@ def run():
         if not llm.available(lang):  # no key, or every provider gave up: the setup's fault, not this review's
             print("::warning::no model available (keys missing, wrong or out of quota), stopping")
             break
-        if len(text) < MIN_TEXT:
-            data[a["id"]] = {"skip": "no text" if not text else "short"}  # remembered, so it isn't fetched every run
-            continue
+        short = len(text) < MIN_TEXT
+        if short:  # the review is only in the video: Fantano's own lines instead (lang "both" only)
+            lines = short_lines(text, notes.get(a["id"])) if lang == "both" else ""
+            if len(lines) < MIN_SHORT:  # remembered, so it isn't fetched every run
+                data[a["id"]] = {"skip": "short" if text or lines else "no text", **({"short": "none"} if lang == "both" else {})}
+                continue
+            text = lines
         tried += 1
         title = f"{a['artist_name']} - {a['album']}"
-        out = llm.summarize(title, text, lang=lang, verdict=verdict(a), tags=tags(a))
+        out = llm.summarize(title, text, lang=lang, verdict=verdict(a), tags=tags(a), **({"short": True} if short else {}))
         if out and (out.get("brief") or "").strip():
             old = data.get(a["id"]) or {}
-            data[a["id"]] = entry(out, lang)
+            data[a["id"]] = {**entry(out, lang), **({"src": "short"} if short else {})}
             if lang == "en" and old.get("brief"):  # the old Russian one stays on the site until the translation comes
                 data[a["id"]].update({f: old[f] for f in ("brief", "about", "who") if old.get(f)})
             made += 1
