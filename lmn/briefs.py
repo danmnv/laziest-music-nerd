@@ -1,7 +1,7 @@
 """Briefs for archive reviews: the same "brief", "about" (the site's longer one) and "who" lines the bot's cards have,
 written by a model (lmn/llm.py; since 2026-11-04 GPT-6 Luna on Selectel's router, BRIEFS_LANG=both; before that
-free Groq models in English and Gemini's translation) from the text of the review on theneedledrop.com. Newest first, at most BRIEFS_LIMIT per run
-and BRIEFS_MINUTES of work; the rest next run.
+free Groq models in English and Gemini's translation) from the text of the review on theneedledrop.com. Newest first, at most BRIEFS_LIMIT per run,
+BRIEFS_MINUTES of work and BRIEFS_MAX_RUB roubles spent (default 150); the rest next run.
 
 BRIEFS_LANG=en (the default): the model writes in English and Gemini translates TR_BATCH of them per request (at most
 BRIEFS_TRANSLATE_MAX requests a run, so new reviews keep Gemini's daily quota). The free models' own Russian was full of
@@ -256,6 +256,7 @@ def run():
     # en: 150 = what 15 Gemini translation requests of 10 take; both: no translation, BRIEFS_MINUTES is the limit
     limit = int(os.environ.get("BRIEFS_LIMIT") or ("150" if lang == "en" else "2000"))
     budget = int(os.environ.get("BRIEFS_TRANSLATE_MAX") or "15")
+    max_rub = float(os.environ.get("BRIEFS_MAX_RUB") or "150")
     todo = targets(archive, reviews, {k for k, v in data.items() if finished(v, lang)})
     print(f"briefs ({lang}): {sum(1 for v in data.values() if v.get('brief'))} done, {len(untranslated(data))} to translate, "
           f"{len(todo)} to write, this run up to {limit}")
@@ -270,6 +271,9 @@ def run():
             break
         if text is None:
             continue
+        if llm.stats["rub"] >= max_rub:  # the run's spending cap: the key itself has no limit
+            print(f"::warning::spent {llm.stats['rub']:.2f} ₽, the cap for a run is {max_rub:g} ₽, stopping")
+            break
         if not llm.available(lang):  # no key, or every provider gave up: the setup's fault, not this review's
             print("::warning::no model available (keys missing, wrong or out of quota), stopping")
             break
@@ -290,12 +294,11 @@ def run():
                 budget = translate(data, budget)
             if made % 25 == 0:
                 save(path, data)  # a timeout later in the run keeps what is done
-        elif (data.get(a["id"]) or {}).get("brief"):  # an old Russian brief to write again: kept until a new one comes
-            failed += 1
         else:
             streak.append((a["id"], data.get(a["id"])))
-            data[a["id"]] = {"fail": (data.get(a["id"]) or {}).get("fail", 0) + 1}  # given up after FAIL_MAX runs
             failed += 1
+            if not (data.get(a["id"]) or {}).get("brief"):  # an old brief to write again is kept until a new one comes
+                data[a["id"]] = {"fail": (data.get(a["id"]) or {}).get("fail", 0) + 1}  # given up after FAIL_MAX runs
             if len(streak) >= GIVE_UP:  # likely an outage, not these reviews: their failures are not counted
                 for k, prev in streak:
                     if prev is None:
@@ -309,6 +312,8 @@ def run():
     save(path, data)
     print(f"briefs: made {made}, failed {failed}, total {sum(1 for v in data.values() if v.get('brief'))}, "
           f"waiting for translation {len(untranslated(data))}")
+    if llm.stats["rub"] or llm.stats["timeouts"]:
+        print(f"briefs: spent {llm.stats['rub']:.2f} ₽, {llm.stats['timeouts']} requests timed out")
 
 
 if __name__ == "__main__":

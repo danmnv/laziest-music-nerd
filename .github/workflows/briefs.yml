@@ -64,6 +64,7 @@ jobs:
           BRIEFS_LANG: both   # Russian and English in one answer (the owner chose GPT-6 Luna, 2026-11-04)
           SELECTEL_MODEL: openai/gpt-6-luna
           BRIEFS_MINUTES: "330"   # GitHub stops a job after 6 hours; this leaves time to save
+          BRIEFS_MAX_RUB: "150"   # roubles a run may spend on the router: the key itself has no limit
           BRIEFS_COMPARE: ${{ inputs.compare && '1' || '' }}
           PYTHONUNBUFFERED: "1"   # the log shows each line as it comes, also when a run is stopped
           BRIEFS_COMPARE_MODELS: ${{ inputs.compare_models }}

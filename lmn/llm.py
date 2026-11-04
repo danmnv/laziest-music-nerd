@@ -36,6 +36,10 @@ _picked = {}
 _last = {}
 _dead = set()  # providers whose key is wrong (401/403) or still limited after retries (429) in this run
 _spent = set()  # (provider, model) whose quota is gone for this run while the provider has other models
+# Paid providers: a model that is gone is never swapped for another from the catalogue (the price of a swapped-in model
+# is unknown, and the key has no spending limit); the provider is given up on for the run instead.
+PAID = {"selectel"}
+stats = {"rub": 0.0, "timeouts": 0}  # this run: roubles charged (the answers' usage.cost) and requests that timed out
 
 
 def models(name):
@@ -69,7 +73,11 @@ def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotoni
                                 timeout=float(os.environ.get(f"{name.upper()}_TIMEOUT") or 90), retries=0)
         except http.HttpError as e:
             print(f"{name} {model}: HTTP {e.status} {(e.body or '')[:200]}")
-            if e.status in (401, 403):
+            if e.status in (401, 402, 403):  # wrong key, or no money left on the account
+                _dead.add(name)
+                return None
+            if e.status == 404 and "model" in (e.body or "") and name in PAID:
+                print(f"::warning::{name}: model {model} is gone, set another one (SELECTEL_MODEL)")
                 _dead.add(name)
                 return None
             if e.status == 404 and "model" in (e.body or "") and model in EXTRA.get(name, []):
@@ -87,6 +95,7 @@ def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotoni
                 _dead.add(name)
                 return None
             if e.status == 0 and name == "selectel":  # no answer in time (Kimi K2.6 took >90 s, 2026-11-03): paid
+                stats["timeouts"] += 1  # (probably still charged, so counted to show in the run's log)
                 return None                           # per token, a retry would only wait again; the next review goes on
             daily = e.status == 429 and "per day" in (e.body or "")  # the day's quota: waiting a minute won't help
             if e.status in (0, 429, 500, 502, 503, 504) and attempt < 2 and not daily:
@@ -100,6 +109,9 @@ def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotoni
                 if not models(name):
                     _dead.add(name)
             return None
+        cost = (raw.get("usage") or {}).get("cost") if isinstance(raw, dict) else None
+        if isinstance(cost, (int, float)):
+            stats["rub"] += cost  # counted before parsing: an answer that can't be read is paid for too
         try:
             out = gemini.parse_answer(raw["choices"][0]["message"]["content"])
             out["model"] = model

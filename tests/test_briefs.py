@@ -271,6 +271,39 @@ class Run(unittest.TestCase):
                     self.assertEqual(s.call_count, briefs.GIVE_UP)
                 self.assertEqual(json.loads((p / "briefs.json").read_text()), {})
 
+    def test_failed_rewrites_stop_an_outage_too_and_keep_the_old_briefs(self):
+        archive = [{"id": c * 24, "artist_name": c, "album": c, "published": f"2020-01-0{i + 1}"} for i, c in enumerate("abcdefg")]
+        old = {c * 24: {"brief": "Старое.", "p": 2} for c in "abcdefg"}
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(archive))
+            (p / "briefs.json").write_text(json.dumps(old))
+            with mock.patch.object(briefs, "DATA", p), mock.patch.dict(os.environ, {"BRIEFS_LANG": "both"}), \
+                    mock.patch.object(briefs.tnd, "fetch_texts", side_effect=lambda ids: {i: "x " * 300 for i in ids}), \
+                    mock.patch.object(briefs.llm, "available", return_value=True), \
+                    mock.patch.object(briefs.llm, "summarize", return_value=None) as s:
+                briefs.run()
+            self.assertEqual(s.call_count, briefs.GIVE_UP)  # not all 7: the balance ran out, say
+            self.assertEqual(json.loads((p / "briefs.json").read_text()), old)
+
+    def test_a_run_stops_at_its_spending_cap(self):
+        archive = [{"id": c * 24, "artist_name": c, "album": c, "published": f"2020-01-0{i + 1}"} for i, c in enumerate("abcd")]
+
+        def paid(*a, **kw):
+            llm.stats["rub"] += 0.6
+            return dict(ANSWER, model="m")
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(archive))
+            with mock.patch.object(briefs, "DATA", p), mock.patch.dict(os.environ, {"BRIEFS_MAX_RUB": "1"}), \
+                    mock.patch.dict(llm.stats, {"rub": 0.0, "timeouts": 0}), \
+                    mock.patch.object(briefs.tnd, "fetch_texts", side_effect=lambda ids: {i: "x " * 300 for i in ids}), \
+                    mock.patch.object(briefs.llm, "available", return_value=True), \
+                    mock.patch.object(briefs.llm, "summarize", side_effect=paid) as s:
+                briefs.run()
+            self.assertEqual(s.call_count, 2)  # 0.6, then 1.2 ≥ 1: no third
+            self.assertEqual(len(json.loads((p / "briefs.json").read_text())), 2)
+
     def test_tnd_down_is_not_remembered(self):
         archive = [{"id": "a" * 24, "artist_name": "A", "album": "B", "published": "2020-01-01"}]
         with tempfile.TemporaryDirectory() as d:
@@ -489,6 +522,29 @@ class Selectel(unittest.TestCase):
         self.assertNotIn('"en": объект', body["messages"][0]["content"])  # English only when asked for both
         self.assertIn("7/10", body["messages"][0]["content"])
         self.assertEqual((out["brief"], out["usage"]["completion_tokens"]), ("Коротко.", 3))  # a fenced answer is read too
+
+    def test_a_gone_or_unpaid_model_stops_the_provider_without_picking_another(self):
+        for status, body in ((404, '{"error": "model not found"}'), (402, '{"error": "insufficient balance"}')):
+            llm._dead.clear()
+            with mock.patch.dict(os.environ, {"SELECTEL_API_KEY": "k"}), \
+                    mock.patch.object(llm.http, "get_json", side_effect=llm.http.HttpError(status, body, "u")) as get, \
+                    mock.patch.object(llm, "pick_model") as pick:
+                self.assertIsNone(llm.ask("selectel", "A - B", "text", model="m1", lang="both", sleep=lambda s: None))
+            pick.assert_not_called()  # a model from the catalogue could cost anything
+            self.assertEqual(get.call_count, 1)
+            self.assertIn("selectel", llm._dead)
+        llm._dead.clear()
+
+    def test_charges_and_timeouts_are_counted(self):
+        answer = dict(chat(ANSWER), usage={"cost": 0.25})
+        with mock.patch.dict(os.environ, {"SELECTEL_API_KEY": "k"}), mock.patch.dict(llm.stats, {"rub": 0.0, "timeouts": 0}):
+            with mock.patch.object(llm.http, "get_json", return_value=answer):
+                llm.ask("selectel", "A - B", "text", model="m1", lang="both", sleep=lambda s: None)
+            with mock.patch.object(llm.http, "get_json", return_value={"usage": {"cost": 0.5}, "choices": []}):
+                llm.ask("selectel", "A - B", "text", model="m1", lang="both", sleep=lambda s: None)  # unreadable, still paid
+            with mock.patch.object(llm.http, "get_json", side_effect=llm.http.HttpError(0, "timed out", "u")):
+                llm.ask("selectel", "A - B", "text", model="m1", lang="both", sleep=lambda s: None)
+            self.assertEqual(llm.stats, {"rub": 0.75, "timeouts": 1})
 
 
 if __name__ == "__main__":
