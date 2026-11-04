@@ -640,6 +640,19 @@ class Short(unittest.TestCase):
         self.assertEqual(out["a" * 24], {"skip": "short", "short": "none", "who": "Рэпер из Атланты.", "en": {"who": "Atlanta rapper."}, "m": "m", "p": briefs.PROMPT_V})
         self.assertTrue(all(briefs.finished(v, "both") for v in out.values()))
 
+    def test_an_empty_answer_is_a_failure(self):
+        archive = [{"id": "a" * 24, "artist_name": "a", "album": "a", "published": "2015-01-01"}]
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(archive))
+            (p / "briefs.json").write_text(json.dumps({"a" * 24: {"skip": "short"}}))
+            with mock.patch.object(briefs, "DATA", p), mock.patch.dict(os.environ, {"BRIEFS_LANG": "both"}), \
+                    mock.patch.object(briefs.tnd, "fetch_texts", side_effect=lambda ids: {i: "Odd Future's rapper returns with his debut." for i in ids}), \
+                    mock.patch.object(briefs.llm, "available", return_value=True), \
+                    mock.patch.object(briefs.llm, "summarize", return_value=dict(gemini.parse_answer("{}"), model="m")):
+                briefs.run()
+            self.assertEqual(json.loads((p / "briefs.json").read_text())["a" * 24], {"fail": 1})
+
     def test_summarize_takes_an_empty_brief_only_from_short_lines(self):
         llm._dead.clear()
         llm._spent.clear()
