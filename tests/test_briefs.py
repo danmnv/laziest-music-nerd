@@ -39,6 +39,12 @@ class ParseAnswer(unittest.TestCase):
         self.assertLessEqual(len(out), gemini.BRIEF_MAX)
         self.assertTrue(out.startswith("Звучание плотное") and out.endswith(".") and out.count(". ") >= 1)
 
+    def test_a_dangling_semicolon_in_who_becomes_a_full_stop(self):
+        out = gemini.parse_answer(json.dumps(dict(ANSWER, who="Американская певица и композитор; ", en={"who": "American singer;"})))
+        self.assertEqual((out["who"], out["en"]["who"]), ("Американская певица и композитор.", "American singer."))
+        self.assertEqual(gemini.tidy_who("Рэпер из Атланты; третий альбом."), "Рэпер из Атланты; третий альбом.")
+        self.assertIsNone(gemini.tidy_who(" "))
+
     def test_moods_are_the_same_list_as_the_bots(self):
         import re
         js = (Path(__file__).parent.parent / "worker/src/index.js").read_text()

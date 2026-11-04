@@ -224,9 +224,21 @@ def parse_answer(text):
     out["score_note"] = note if NOTE.match(note) else None
     out["brief"] = trim_brief(drop_score(str(out.get("brief") or ""))) or None
     out["about"] = trim_about(drop_score(str(out.get("about") or ""))) or None
+    out["who"] = tidy_who(out.get("who"))
     en = out.get("en") if isinstance(out.get("en"), dict) else {}
     out["en"] = {k: drop_score(str(en.get(k) or "")).strip() for k in ("brief", "about", "who") if str(en.get(k) or "").strip()} or None
+    if out["en"] and out["en"].get("who"):
+        out["en"]["who"] = tidy_who(out["en"]["who"])
     return out
+
+
+def tidy_who(who):
+    """'who' without a dangling separator: a model that dropped the part after the semicolon sometimes kept the semicolon
+    («…композитор, работающая на инди-сцене; », GPT-6 Luna 2026-11-04)."""
+    who = str(who or "").strip()
+    if who and who[-1] in ";,:—–-":
+        who = who.rstrip(" ;,:—–-") + "."
+    return who or None
 
 
 SCORE = r"(?:\d{1,2}(?:[.,]\d)?\s*/\s*10|NOT GOOD|NOT BAD|NOT MUSIC|CLASSIC)"
