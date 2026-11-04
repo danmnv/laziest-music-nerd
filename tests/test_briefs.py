@@ -623,6 +623,33 @@ class Short(unittest.TestCase):
         self.assertFalse(briefs.finished({"skip": "short"}, "both"))
         self.assertTrue(briefs.finished({"skip": "short"}, "ru"))
 
+    def test_lines_with_nothing_on_the_music_are_an_answer_not_a_failure(self):
+        archive = [{"id": c * 24, "artist_name": c, "album": c, "published": f"2015-01-0{i + 1}"} for i, c in enumerate("abcdefg")]
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(archive))
+            (p / "briefs.json").write_text(json.dumps({c * 24: {"skip": "short"} for c in "abcdefg"}))
+            answer = dict(ANSWER, brief="", about="", who="Рэпер из Атланты.", en={"who": "Atlanta rapper."})
+            with mock.patch.object(briefs, "DATA", p), mock.patch.dict(os.environ, {"BRIEFS_LANG": "both"}), \
+                    mock.patch.object(briefs.tnd, "fetch_texts", side_effect=lambda ids: {i: "Odd Future's rapper returns with his long-awaited major label debut." for i in ids}), \
+                    mock.patch.object(briefs.llm, "available", return_value=True), \
+                    mock.patch.object(briefs.llm, "summarize", return_value=dict(gemini.parse_answer(json.dumps(answer)), model="m")) as s:
+                briefs.run()
+            out = json.loads((p / "briefs.json").read_text())
+        self.assertEqual(s.call_count, 7)  # all of them: not an outage after 5
+        self.assertEqual(out["a" * 24], {"skip": "short", "short": "none", "who": "Рэпер из Атланты.", "en": {"who": "Atlanta rapper."}, "m": "m", "p": briefs.PROMPT_V})
+        self.assertTrue(all(briefs.finished(v, "both") for v in out.values()))
+
+    def test_summarize_takes_an_empty_brief_only_from_short_lines(self):
+        llm._dead.clear()
+        llm._spent.clear()
+        empty = chat(dict(ANSWER, brief=""))
+        with mock.patch.dict(os.environ, {"SELECTEL_API_KEY": "k", "SELECTEL_MODEL": "m1", "MISTRAL_API_KEY": "", "GROQ_API_KEY": ""}), \
+                mock.patch.object(llm, "PROVIDERS", [("selectel", "u", "SELECTEL_API_KEY", "m1", 0, 30000)]), \
+                mock.patch.object(llm.http, "get_json", return_value=empty):
+            self.assertIsNone(llm.summarize("A - B", "text", lang="both", sleep=lambda s: None))
+            self.assertIsNotNone(llm.summarize("A - B", "text", lang="both", short=True, sleep=lambda s: None))
+
     def test_the_short_prompt_has_only_his_lines_and_no_about(self):
         with mock.patch.dict(os.environ, {"SELECTEL_API_KEY": "k"}), mock.patch.object(llm.http, "get_json", return_value=chat(ANSWER)) as get:
             llm.ask("selectel", "A - B", "His line.", model="m1", lang="both", sleep=lambda s: None, tags=["noise rock"], short=True)

@@ -168,8 +168,8 @@ def summarize(title, text, **kw):
         while p[0] not in _dead and models(p[0]):
             m = models(p[0])[0]
             out = ask(p[0], title, text, model=m, **kw)
-            if out and (out.get("brief") or "").strip():
-                return out
+            if out and ((out.get("brief") or "").strip() or kw.get("short")):
+                return out  # (from Fantano's short lines an empty brief is an answer: nothing in them about the music)
             if models(p[0])[:1] == [m]:  # not a quota problem (a bad answer, an outage): the next provider
                 break  # (a model swapped for a retired one in ask() is spent under its new name, so the list moved on)
     return None

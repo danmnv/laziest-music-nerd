@@ -329,6 +329,10 @@ def run():
                 budget = translate(data, budget)
             if made % 25 == 0:
                 save(path, data)  # a timeout later in the run keeps what is done
+        elif out and short:  # the model answered: his lines say nothing about the music. Left as it is, with "who"
+            e = entry(out, lang)
+            data[a["id"]] = {"skip": "short", "short": "none", **{k: e[k] for k in ("who", "en", "m", "p") if e.get(k)}}
+            streak = []
         else:
             streak.append((a["id"], data.get(a["id"])))
             failed += 1
