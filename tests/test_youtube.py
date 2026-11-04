@@ -81,6 +81,34 @@ class DescriptionTest(unittest.TestCase):
         self.assertEqual(d["fav_tracks"], ["drop dead", "stupid song", "the cure"])
         self.assertEqual(d["genres"], ["alt-pop", "new wave"])
 
+    def test_backslashes_when_the_title_has_a_slash(self):
+        meta = "PISS - YOU MADE ME / SKIN ON LINEN \\ 2026 \\ SUB POP \\ NOISECORE, POST-ROCK, SPOKEN WORD, SOUND COLLAGE"
+        d = youtube.parse_description(desc(meta, "9/10 https://theneedledrop.com/loved-list/2026/"))
+        self.assertEqual((d["score"], d["year"], d["label"], d.get("loved")), (9, 2026, "SUB POP", True))
+        self.assertEqual(d["genres"], ["noisecore", "post-rock", "spoken word", "sound collage"])
+        self.assertEqual(d["meta_album"], "YOU MADE ME / SKIN ON LINEN")
+        self.assertTrue(youtube.is_review({"title": "PISS - you made me / skin on linen ALBUM REVIEW", "desc": desc(meta, "9/10")}))
+        # a slash inside the label or genres still splits only on the line's own separator
+        d = youtube.parse_description(desc("X - Y / 2026 / WARP / SUB POP / IDM, AMBIENT", "7/10"))
+        self.assertEqual((d["label"], d["genres"]), ("WARP / SUB POP", ["idm", "ambient"]))
+
+    def test_score_line_alone_is_enough(self):
+        u = {"title": "X - Y ALBUM REVIEW", "desc": desc("X - Y (2026, LABEL, ROCK)", "7/10"),
+             "video_id": "v1", "published": "2026-11-04T04:00:00Z"}
+        self.assertTrue(youtube.is_review(u))
+        with mock.patch("builtins.print") as p:
+            youtube.report_unrecognised([u], now=datetime(2026, 11, 4, 12, tzinfo=timezone.utc))
+        self.assertIn("the card goes without year, label and genres", p.call_args[0][0])
+        self.assertFalse(youtube.is_review({"title": "X - Y ALBUM REVIEW", "desc": "Listen: https://example.com"}))
+        # score line only, and the title gives no artist and album: no card with empty names
+        odd = dict(u, title="My thoughts on the new one GUEST REVIEW")
+        self.assertFalse(youtube.is_review(odd))
+        new, _ = youtube.plan([], [odd], [], seeding=False, now=datetime(2026, 11, 4, 12, tzinfo=timezone.utc))
+        self.assertEqual(new, [])
+        with mock.patch("builtins.print") as p:
+            youtube.report_unrecognised([odd], now=datetime(2026, 11, 4, 12, tzinfo=timezone.utc))
+        self.assertIn("no card", p.call_args[0][0])
+
     def test_what_is_a_review(self):
         self.assertTrue(youtube.is_review({"title": "HMLTD - FANGS ALBUM REVIEW", "desc": HMLTD}))
         self.assertTrue(youtube.is_review({"title": "Tyga's $tarface is NOT MUSIC", "desc": desc("TYGA - $TARFACE / 2026 / EMPIRE / SLOP", "NOT MUSIC/10")}))

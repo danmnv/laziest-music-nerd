@@ -238,6 +238,7 @@ def main():
 
     # New reviews are noticed on YouTube: the site posts them a day or more later, and skips some (see youtube.py).
     uploads = youtube.latest_uploads()
+    youtube.report_unrecognised(uploads, verbose=MODE == "dry")
 
     if MODE == "test":
         # The newest review anywhere, even if it is already in the channel: a card for the owner only, nothing saved.

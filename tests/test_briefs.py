@@ -676,5 +676,28 @@ class Short(unittest.TestCase):
         self.assertNotIn('"about"', prompt)
 
 
+class NewReviewPrompt(unittest.TestCase):
+    """New reviews (Gemini, by the transcript or the video) use the archive's brief, «Кто» and style rules (owner, 2026-11-04)."""
+
+    def body(self, **kw):
+        ok = {"candidates": [{"content": {"parts": [{"text": json.dumps(ANSWER, ensure_ascii=False)}]}}]}
+        with mock.patch.object(http, "get_json", return_value=ok) as get:
+            gemini.summarize("PISS - you made me / skin on linen ALBUM REVIEW", api_key="k", **kw)
+        return get.call_args.kwargs["json_body"]["contents"][0]["parts"][-1]["text"]
+
+    def test_archive_rules_and_tags(self):
+        for kw in ({"text": "transcript"}, {"video_id": "nAxDHd-r3YQ", "notes": "Listen: x"}):
+            prompt = self.body(tags=["noisecore", "post-rock"], **kw)
+            self.assertIn(gemini._BRIEF_RU.split(" Без оценки")[0][:200], prompt)
+            self.assertIn("Отдельные треки не называй", prompt)
+            self.assertIn("Если релиз инструментальный, скажи об этом.", prompt)
+            self.assertIn("Без оценки: она уже стоит в заголовке карточки", prompt)
+            self.assertIn(gemini._WHO_RU, prompt)
+            self.assertIn(gemini._STYLE_RU, prompt)
+            self.assertIn("Теги: noisecore, post-rock.", prompt)
+            self.assertIn('"score_note"', prompt)
+        self.assertNotIn("Теги:", self.body(text="transcript"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -14,10 +14,10 @@ def enrich(rev, plaintext, archive, use_ai=True):
     r = dict(rev)
     ai = {}
     if use_ai and plaintext:
-        ai = _try("gemini", lambda: gemini.summarize(r["title"], plaintext)) or {}
+        ai = _try("gemini", lambda: gemini.summarize(r["title"], plaintext, tags=r.get("genres") or ())) or {}
     elif use_ai and r.get("video_id"):  # no transcript (yet): Gemini watches the video
         notes = video_notes(r)
-        ai = _try("gemini", lambda: gemini.summarize(r["title"], video_id=r["video_id"], notes=notes)) or {}
+        ai = _try("gemini", lambda: gemini.summarize(r["title"], video_id=r["video_id"], notes=notes, tags=r.get("genres") or ())) or {}
     # "about" is the site's longer brief (it was left out here until 2026-11-02, so new pages showed the short one).
     # m/sec/src: which model answered and how long it took, kept to compute the average wait later (owner, 2026-11-02)
     r["ai"] = {k: ai.get(k) for k in ("brief", "about", "who", "moods", "best_tracks", "m", "sec", "src") if ai.get(k)}
