@@ -59,6 +59,8 @@ PROMPT_V = 3  # 2: no score in the text (2026-11-01); 3: GPT-6 Luna on Selectel 
 
 
 def finished(v, lang="ru"):
+    if v.get("rf", 0) >= FAIL_MAX:
+        return True  # an old brief the model failed to write again in FAIL_MAX runs: it stays as it is
     if lang in ("en", "both") and v.get("brief") and not v.get("tr") and not v.get("en"):
         return False  # written in Russian by a model that writes it poorly: again, in English and translated
     if lang in ("en", "both") and (v.get("brief") or v.get("en")) and v.get("p", 1) < PROMPT_V:
@@ -67,6 +69,13 @@ def finished(v, lang="ru"):
 
 
 NO_SCORE = "The card shows it above your text: never write it."
+
+
+def tags(a):
+    """The review's tags on theneedledrop.com (archive "genres"): genres and places, but labels, columns and names too,
+    which the prompt says to leave out. For "who" when the text says little of the artist (owner, 2026-11-04: Kid Rock's
+    came back empty)."""
+    return [g.strip() for g in a.get("genres") or [] if isinstance(g, str) and g.strip()][:12]
 
 
 def verdict(a):
@@ -150,18 +159,19 @@ def compare(archive, reviews, data):
     by_id = {tnd.tidy_entry(a)["id"]: tnd.tidy_entry(a) for a in archive}
     done = sorted((k for k, v in data.items() if v.get("tr") and v.get("brief") and k in by_id),
                   key=lambda k: by_id[k]["published"], reverse=True)
-    picked = [(a, t) for a, t in texts([by_id[k] for k in done[:n + 2]]) if t and len(t) >= MIN_TEXT][:n]
+    ids = [k.strip() for k in (os.environ.get("BRIEFS_COMPARE_IDS") or "").split(",") if k.strip() in by_id]
+    picked = [(a, t) for a, t in texts([by_id[k] for k in (ids or done[:n + 2])]) if t and len(t) >= MIN_TEXT][:len(ids) or n]
     rows, en = [], []
     for a, text in picked:
         title = f"{a['artist_name']} - {a['album']}"
-        row = {"id": a["id"], "title": title, CURRENT: {f: data[a["id"]].get(f) for f in ("who", "brief", "about", "en", "m")}}
+        row = {"id": a["id"], "title": title, CURRENT: {f: (data.get(a["id"]) or {}).get(f) for f in ("who", "brief", "about", "en", "m")}}
         for m in models:
             if sum(1 for r in rows if not r[m].get("model")) >= 2:  # no answer twice: a slow or broken model, not tried again
                 row[m] = {}
                 continue
             provider, model, lang = ("selectel", m.split(":", 1)[1], "both") if m.startswith("selectel:") else ("groq", m, "en")
             t0 = time.monotonic()
-            out = llm.ask(provider, title, text, model=model, lang=lang, verdict=verdict(a)) or {}
+            out = llm.ask(provider, title, text, model=model, lang=lang, verdict=verdict(a), tags=tags(a)) or {}
             u = out.get("usage") or {}
             row[m] = {"model": out.get("model"), "sec": round(time.monotonic() - t0),  # the model that really answered
                       "in": u.get("prompt_tokens"), "out": u.get("completion_tokens"),
@@ -282,7 +292,7 @@ def run():
             continue
         tried += 1
         title = f"{a['artist_name']} - {a['album']}"
-        out = llm.summarize(title, text, lang=lang, verdict=verdict(a))
+        out = llm.summarize(title, text, lang=lang, verdict=verdict(a), tags=tags(a))
         if out and (out.get("brief") or "").strip():
             old = data.get(a["id"]) or {}
             data[a["id"]] = entry(out, lang)
@@ -297,8 +307,11 @@ def run():
         else:
             streak.append((a["id"], data.get(a["id"])))
             failed += 1
-            if not (data.get(a["id"]) or {}).get("brief"):  # an old brief to write again is kept until a new one comes
-                data[a["id"]] = {"fail": (data.get(a["id"]) or {}).get("fail", 0) + 1}  # given up after FAIL_MAX runs
+            prev = data.get(a["id"]) or {}
+            if prev.get("brief"):  # an old brief to write again is kept until a new one comes; tried FAIL_MAX runs
+                data[a["id"]] = {**prev, "rf": prev.get("rf", 0) + 1}  # (a new dict: an outage restores the old one)
+            else:
+                data[a["id"]] = {"fail": prev.get("fail", 0) + 1}  # given up after FAIL_MAX runs
             if len(streak) >= GIVE_UP:  # likely an outage, not these reviews: their failures are not counted
                 for k, prev in streak:
                     if prev is None:

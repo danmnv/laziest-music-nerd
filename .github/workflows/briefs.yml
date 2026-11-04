@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       limit:
-        description: "Сколько обзоров за запуск (пусто — сколько успеет за 5,5 часа, ~0,1 ₽ за обзор)"
+        description: "Сколько обзоров за запуск (пусто — сколько успеет за 5,5 часа, но не дороже 150 ₽; ~0,1 ₽ за обзор)"
         default: ""
       compare:
         description: "Только сравнить другие модели с нынешними брифами (ничего не сохраняет)"
@@ -21,6 +21,9 @@ on:
       compare_n:
         description: "На скольких обзорах сравнивать"
         default: "2"
+      compare_ids:
+        description: "Или на каких именно: id обзоров из архива через запятую"
+        default: ""
       ping:
         description: "Только проверить, отвечают ли модели selectel:<модель> из списка на короткий вопрос"
         type: boolean
@@ -69,6 +72,7 @@ jobs:
           PYTHONUNBUFFERED: "1"   # the log shows each line as it comes, also when a run is stopped
           BRIEFS_COMPARE_MODELS: ${{ inputs.compare_models }}
           BRIEFS_COMPARE_N: ${{ inputs.compare_n }}
+          BRIEFS_COMPARE_IDS: ${{ inputs.compare_ids }}
           BRIEFS_PING: ${{ inputs.ping && '1' || '' }}
           SELECTEL_API_KEY: ${{ secrets.SELECTEL_API_KEY }}
           SELECTEL_TIMEOUT: ${{ inputs.compare && '300' || '' }}   # a comparison waits for slow thinking models too

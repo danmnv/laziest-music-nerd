@@ -49,7 +49,7 @@ def models(name):
     return [m for m in [first, *EXTRA.get(name, [])] if m and (name, m) not in _spent]
 
 
-def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotonic, lang="ru", verdict=""):
+def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotonic, lang="ru", verdict="", tags=()):
     name, url, var, default, gap, max_text = next(p for p in PROVIDERS if p[0] == provider)
     key = (os.environ.get(var) or "").strip()
     if not key or not text:
@@ -60,7 +60,8 @@ def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotoni
     moods = json.dumps(gemini.AI_MOODS, ensure_ascii=False)
     prompt = (gemini.PROMPT_EN.format(moods=moods, title=title, text=text[:max_text], verdict=verdict) if lang == "en" else
               gemini.PROMPT_RU.format(moods=moods, title=title, text=text[:max_text], verdict=verdict,
-                                      en=gemini.EN_FIELD if lang == "both" else ""))
+                                      en=gemini.EN_FIELD if lang == "both" else "",
+                                      tags=f"Теги: {', '.join(tags)}.\n" if tags else ""))
     body = {"model": model, "messages": [{"role": "user", "content": prompt}],
             "response_format": {"type": "json_object"}, "temperature": 0.4, **EXTRA_BODY.get(name, {})}
     for attempt in range(3):
@@ -112,6 +113,9 @@ def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotoni
         cost = (raw.get("usage") or {}).get("cost") if isinstance(raw, dict) else None
         if isinstance(cost, (int, float)):
             stats["rub"] += cost  # counted before parsing: an answer that can't be read is paid for too
+        elif name in PAID and not stats.get("no_cost"):
+            stats["no_cost"] = True
+            print(f"::warning::{name} {model}: the answer has no usage.cost, so the run's spending cap can't count it")
         try:
             out = gemini.parse_answer(raw["choices"][0]["message"]["content"])
             out["model"] = model

@@ -33,7 +33,7 @@ class ParseAnswer(unittest.TestCase):
 
     def test_a_long_three_sentence_brief_is_cut_to_two_even_without_fantanos_name(self):
         three = "Звучание плотное и шумное, с синтами на первом плане. " + "Мелодии цепкие, припевы запоминаются сразу, а продакшн богатый. " + "Но вокал тонет в миксе, а вторая половина альбома заметно провисает и повторяет первую."
-        three += " Ещё одно длинное предложение, которое уже точно не помещается в карточку, даже если она стала длиннее."
+        three += " Ещё одно длинное предложение, которое уже точно не помещается в карточку, даже если она стала заметно длиннее, чем была раньше."
         self.assertGreater(len(three), gemini.BRIEF_MAX)
         out = gemini.parse_answer(json.dumps(dict(ANSWER, brief=three)))["brief"]
         self.assertLessEqual(len(out), gemini.BRIEF_MAX)
@@ -286,6 +286,22 @@ class Run(unittest.TestCase):
             self.assertEqual(s.call_count, briefs.GIVE_UP)  # not all 7: the balance ran out, say
             self.assertEqual(json.loads((p / "briefs.json").read_text()), old)
 
+    def test_a_rewrite_that_keeps_failing_is_left_with_its_old_brief(self):
+        archive = [{"id": c * 24, "artist_name": c, "album": c, "published": f"2020-01-0{i + 1}"} for i, c in enumerate("ab")]
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps(archive))
+            (p / "briefs.json").write_text(json.dumps({"a" * 24: {"brief": "Старое.", "p": 2}}))
+            for n in range(1, 3):
+                with mock.patch.object(briefs, "DATA", p), mock.patch.dict(os.environ, {"BRIEFS_LANG": "both"}), \
+                        mock.patch.object(briefs.tnd, "fetch_texts", side_effect=lambda ids: {i: "x " * 300 for i in ids}), \
+                        mock.patch.object(briefs.llm, "available", return_value=True), \
+                        mock.patch.object(briefs.llm, "summarize", side_effect=lambda t, *a, **kw: None if t.startswith("a") else dict(ANSWER, model="m")):
+                    briefs.run()
+                out = json.loads((p / "briefs.json").read_text())
+                self.assertEqual(out["a" * 24], {"brief": "Старое.", "p": 2, "rf": n})
+            self.assertTrue(briefs.finished(out["a" * 24], "both"))  # FAIL_MAX runs: not paid for again
+
     def test_a_run_stops_at_its_spending_cap(self):
         archive = [{"id": c * 24, "artist_name": c, "album": c, "published": f"2020-01-0{i + 1}"} for i, c in enumerate("abcd")]
 
@@ -340,7 +356,7 @@ class English(unittest.TestCase):
             (p / "archive.json").write_text(json.dumps(self.archive(12)))
             s, t, out = self.run_briefs(p, lambda *a, **kw: dict(self.EN), self.fake_translate)
             self.assertEqual([len(c.args[0]) for c in t.call_args_list], [10, 2])
-            self.assertEqual(s.call_args.kwargs, {"lang": "en", "verdict": briefs.verdict({"score": 7})})
+            self.assertEqual(s.call_args.kwargs, {"lang": "en", "verdict": briefs.verdict({"score": 7}), "tags": []})
             e = out[f"{0:024x}"]
             self.assertEqual(e, {"brief": "Ru Short, 7/10.", "about": "Подробно.", "tr": "gm", "m": "g", "moods": ["ночью"], "p": briefs.PROMPT_V,
                                  "en": {"brief": "Short, 7/10.", "about": "Longer."}})
@@ -373,7 +389,7 @@ class English(unittest.TestCase):
             (p / "briefs.json").write_text(json.dumps({f"{0:024x}": old, f"{1:024x}": old}))
             answers = iter([None, dict(self.EN)])  # newest first: 1 fails, 0 gets a new one
             _, _, out = self.run_briefs(p, lambda *a, **kw: next(answers), lambda items: None)
-            self.assertEqual(out[f"{1:024x}"], old)
+            self.assertEqual(out[f"{1:024x}"], {**old, "rf": 1})  # kept; tried again in one more run only
             self.assertEqual(out[f"{0:024x}"]["brief"], "Калька.")  # on the site until the translation comes
             self.assertEqual(briefs.untranslated(out), [f"{0:024x}"])
             s, _, out = self.run_briefs(p, lambda *a, **kw: dict(self.EN), self.fake_translate)
@@ -467,7 +483,7 @@ class CompareModels(unittest.TestCase):
         data = {a["id"]: {"brief": "Кратко.", "tr": "g"} for a in archive}
         asked = []
 
-        def ask(provider, title, text, model=None, lang=None, verdict=""):
+        def ask(provider, title, text, model=None, lang=None, verdict="", tags=()):
             asked.append((provider, model, lang, verdict))
             return {"brief": "Сразу по-русски.", "model": model, "usage": {"prompt_tokens": 9000, "completion_tokens": 700}}
         with mock.patch.object(briefs, "texts", side_effect=lambda items: ((a, "text " * 200) for a in items)), \
@@ -544,7 +560,23 @@ class Selectel(unittest.TestCase):
                 llm.ask("selectel", "A - B", "text", model="m1", lang="both", sleep=lambda s: None)  # unreadable, still paid
             with mock.patch.object(llm.http, "get_json", side_effect=llm.http.HttpError(0, "timed out", "u")):
                 llm.ask("selectel", "A - B", "text", model="m1", lang="both", sleep=lambda s: None)
-            self.assertEqual(llm.stats, {"rub": 0.75, "timeouts": 1})
+            self.assertEqual((llm.stats["rub"], llm.stats["timeouts"]), (0.75, 1))
+
+    def test_an_answer_without_its_cost_is_warned_about_once(self):
+        with mock.patch.dict(os.environ, {"SELECTEL_API_KEY": "k"}), mock.patch.dict(llm.stats, {"rub": 0.0, "no_cost": False}), \
+                mock.patch.object(llm.http, "get_json", return_value=chat(ANSWER)), mock.patch("builtins.print") as p:
+            for _ in range(2):
+                llm.ask("selectel", "A - B", "text", model="m1", lang="both", sleep=lambda s: None)
+        self.assertEqual(sum("no usage.cost" in str(c) for c in p.call_args_list), 1)
+
+    def test_the_sites_tags_go_into_the_russian_prompt(self):
+        self.assertEqual(briefs.tags({"genres": ["Country", " rap rock ", "", None]}), ["Country", "rap rock"])
+        self.assertEqual(briefs.tags({}), [])
+        with mock.patch.dict(os.environ, {"SELECTEL_API_KEY": "k"}), mock.patch.object(llm.http, "get_json", return_value=chat(ANSWER)) as get:
+            llm.ask("selectel", "A - B", "text", model="m1", lang="both", sleep=lambda s: None, tags=["Country", "rap rock"])
+            self.assertIn("Теги: Country, rap rock.\nТекст обзора:", get.call_args.kwargs["json_body"]["messages"][0]["content"])
+            llm.ask("selectel", "A - B", "text", model="m1", lang="both", sleep=lambda s: None)
+            self.assertNotIn("Теги:", get.call_args.kwargs["json_body"]["messages"][0]["content"])
 
 
 if __name__ == "__main__":
