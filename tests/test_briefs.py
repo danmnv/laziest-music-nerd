@@ -299,8 +299,10 @@ class Run(unittest.TestCase):
                         mock.patch.object(briefs.llm, "summarize", side_effect=lambda t, *a, **kw: None if t.startswith("a") else dict(ANSWER, model="m")):
                     briefs.run()
                 out = json.loads((p / "briefs.json").read_text())
-                self.assertEqual(out["a" * 24], {"brief": "Старое.", "p": 2, "rf": n})
+                self.assertEqual(out["a" * 24], {"brief": "Старое.", "p": 2, "rf": n, "rf_p": briefs.PROMPT_V})
             self.assertTrue(briefs.finished(out["a" * 24], "both"))  # FAIL_MAX runs: not paid for again
+            with mock.patch.object(briefs, "PROMPT_V", briefs.PROMPT_V + 1):
+                self.assertFalse(briefs.finished(out["a" * 24], "both"))  # a new prompt tries it again
 
     def test_a_run_stops_at_its_spending_cap(self):
         archive = [{"id": c * 24, "artist_name": c, "album": c, "published": f"2020-01-0{i + 1}"} for i, c in enumerate("abcd")]
@@ -389,7 +391,7 @@ class English(unittest.TestCase):
             (p / "briefs.json").write_text(json.dumps({f"{0:024x}": old, f"{1:024x}": old}))
             answers = iter([None, dict(self.EN)])  # newest first: 1 fails, 0 gets a new one
             _, _, out = self.run_briefs(p, lambda *a, **kw: next(answers), lambda items: None)
-            self.assertEqual(out[f"{1:024x}"], {**old, "rf": 1})  # kept; tried again in one more run only
+            self.assertEqual(out[f"{1:024x}"], {**old, "rf": 1, "rf_p": briefs.PROMPT_V})  # kept; tried again in one more run only
             self.assertEqual(out[f"{0:024x}"]["brief"], "Калька.")  # on the site until the translation comes
             self.assertEqual(briefs.untranslated(out), [f"{0:024x}"])
             s, _, out = self.run_briefs(p, lambda *a, **kw: dict(self.EN), self.fake_translate)

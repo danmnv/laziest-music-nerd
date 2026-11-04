@@ -59,8 +59,8 @@ PROMPT_V = 3  # 2: no score in the text (2026-11-01); 3: GPT-6 Luna on Selectel 
 
 
 def finished(v, lang="ru"):
-    if v.get("rf", 0) >= FAIL_MAX:
-        return True  # an old brief the model failed to write again in FAIL_MAX runs: it stays as it is
+    if v.get("rf", 0) >= FAIL_MAX and v.get("rf_p") == PROMPT_V:
+        return True  # an old brief the model failed to write again in FAIL_MAX runs: it stays (until a new prompt)
     if lang in ("en", "both") and v.get("brief") and not v.get("tr") and not v.get("en"):
         return False  # written in Russian by a model that writes it poorly: again, in English and translated
     if lang in ("en", "both") and (v.get("brief") or v.get("en")) and v.get("p", 1) < PROMPT_V:
@@ -309,7 +309,8 @@ def run():
             failed += 1
             prev = data.get(a["id"]) or {}
             if prev.get("brief"):  # an old brief to write again is kept until a new one comes; tried FAIL_MAX runs
-                data[a["id"]] = {**prev, "rf": prev.get("rf", 0) + 1}  # (a new dict: an outage restores the old one)
+                rf = prev.get("rf", 0) if prev.get("rf_p") == PROMPT_V else 0  # counted again for a new prompt
+                data[a["id"]] = {**prev, "rf": rf + 1, "rf_p": PROMPT_V}  # (a new dict: an outage restores the old one)
             else:
                 data[a["id"]] = {"fail": prev.get("fail", 0) + 1}  # given up after FAIL_MAX runs
             if len(streak) >= GIVE_UP:  # likely an outage, not these reviews: their failures are not counted
