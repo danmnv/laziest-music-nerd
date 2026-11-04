@@ -33,7 +33,7 @@ class ParseAnswer(unittest.TestCase):
 
     def test_a_long_three_sentence_brief_is_cut_to_two_even_without_fantanos_name(self):
         three = "Звучание плотное и шумное, с синтами на первом плане. " + "Мелодии цепкие, припевы запоминаются сразу, а продакшн богатый. " + "Но вокал тонет в миксе, а вторая половина альбома заметно провисает и повторяет первую."
-        three += " Ещё одно длинное предложение, которое уже точно не помещается в карточку."
+        three += " Ещё одно длинное предложение, которое уже точно не помещается в карточку, даже если она стала длиннее."
         self.assertGreater(len(three), gemini.BRIEF_MAX)
         out = gemini.parse_answer(json.dumps(dict(ANSWER, brief=three)))["brief"]
         self.assertLessEqual(len(out), gemini.BRIEF_MAX)
