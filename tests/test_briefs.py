@@ -450,6 +450,16 @@ class CompareModels(unittest.TestCase):
 
 
 class Selectel(unittest.TestCase):
+    def test_both_languages_never_fall_back_to_groq(self):
+        llm._dead.clear()
+        llm._spent.clear()
+        with mock.patch.dict(os.environ, {"SELECTEL_API_KEY": "", "GROQ_API_KEY": "g", "MISTRAL_API_KEY": ""}), \
+                mock.patch.object(llm.http, "get_json") as get:
+            self.assertFalse(llm.available("both"))
+            self.assertTrue(llm.available("en"))
+            self.assertIsNone(llm.summarize("A - B", "text", lang="both", sleep=lambda s: None))
+        get.assert_not_called()  # Groq's own Russian was rejected: no text rather than a worse one
+
     def test_both_languages_in_one_answer_need_no_translation(self):
         out = gemini.parse_answer(json.dumps(dict(ANSWER, en={"brief": "Dense and noisy. He gives it a 7/10.", "who": "Oxford band; fourth album.", "x": 1})))
         self.assertEqual(out["en"], {"brief": "Dense and noisy.", "who": "Oxford band; fourth album."})  # the score cut here too

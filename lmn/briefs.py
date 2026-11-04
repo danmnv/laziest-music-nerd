@@ -1,5 +1,6 @@
 """Briefs for archive reviews: the same "brief", "about" (the site's longer one) and "who" lines the bot's cards have,
-written by a free model (lmn/llm.py: Mistral if paid for, then Groq) from the text of the review on theneedledrop.com. Newest first, at most BRIEFS_LIMIT per run
+written by a model (lmn/llm.py; since 2026-11-04 GPT-6 Luna on Selectel's router, BRIEFS_LANG=both; before that
+free Groq models in English and Gemini's translation) from the text of the review on theneedledrop.com. Newest first, at most BRIEFS_LIMIT per run
 and BRIEFS_MINUTES of work; the rest next run.
 
 BRIEFS_LANG=en (the default): the model writes in English and Gemini translates TR_BATCH of them per request (at most
@@ -53,7 +54,8 @@ def texts(items):
             yield a, (None if got is None else got.get(a["id"]) or "")
 
 
-PROMPT_V = 2  # 2: no score in the text (2026-11-01); entries written by an older prompt are written again
+PROMPT_V = 3  # 2: no score in the text (2026-11-01); 3: GPT-6 Luna on Selectel writes Russian and English itself, brief
+# about the release as a whole (the owner, 2026-11-04); entries written by an older prompt are written again
 
 
 def finished(v, lang="ru"):
@@ -250,8 +252,9 @@ def run():
     data = json.loads(path.read_text()) if path.exists() else {}
     if os.environ.get("BRIEFS_COMPARE") == "1":
         return compare(archive, reviews, data)
-    limit = int(os.environ.get("BRIEFS_LIMIT") or "150")  # 150 = what 15 translation requests of 10 take
     lang = os.environ.get("BRIEFS_LANG") or "en"
+    # en: 150 = what 15 Gemini translation requests of 10 take; both: no translation, BRIEFS_MINUTES is the limit
+    limit = int(os.environ.get("BRIEFS_LIMIT") or ("150" if lang == "en" else "2000"))
     budget = int(os.environ.get("BRIEFS_TRANSLATE_MAX") or "15")
     todo = targets(archive, reviews, {k for k, v in data.items() if finished(v, lang)})
     print(f"briefs ({lang}): {sum(1 for v in data.values() if v.get('brief'))} done, {len(untranslated(data))} to translate, "
@@ -267,7 +270,7 @@ def run():
             break
         if text is None:
             continue
-        if not llm.available():  # no key, or every provider gave up: the setup's fault, not this review's
+        if not llm.available(lang):  # no key, or every provider gave up: the setup's fault, not this review's
             print("::warning::no model available (keys missing, wrong or out of quota), stopping")
             break
         if len(text) < MIN_TEXT:

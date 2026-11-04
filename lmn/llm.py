@@ -126,15 +126,23 @@ def pick_model(chat_url, key):
     return chat[0] if chat else None
 
 
-def available():
-    """Some provider has a key and has not been given up on in this run."""
-    return any(p[0] not in _dead and models(p[0]) and (os.environ.get(p[2]) or "").strip() for p in PROVIDERS)
+def available(lang="en"):
+    """Some provider has a key and has not been given up on in this run (for "both": one in WRITES_RUSSIAN)."""
+    return any(p[0] not in _dead and models(p[0]) and (os.environ.get(p[2]) or "").strip()
+               and (lang != "both" or p[0] in WRITES_RUSSIAN) for p in PROVIDERS)
+
+
+# Providers trusted to write the Russian and English texts in one answer (lang "both"); the free Groq models' Russian
+# was rejected (2026-11-01), so with no paid provider left a run writes nothing rather than worse texts.
+WRITES_RUSSIAN = {"selectel", "mistral"}
 
 
 def summarize(title, text, **kw):
     """The first provider that answers; within a provider, its first model with quota left."""
     for p in PROVIDERS:
         if p[0] in _dead or not (os.environ.get(p[2]) or "").strip():
+            continue
+        if kw.get("lang") == "both" and p[0] not in WRITES_RUSSIAN:
             continue
         while p[0] not in _dead and models(p[0]):
             m = models(p[0])[0]
