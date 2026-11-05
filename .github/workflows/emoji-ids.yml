@@ -1,0 +1,32 @@
+name: emoji-ids (temporary)
+on:
+  push:
+    branches: [claude/project-thread-jj16kk]
+    paths: [.github/workflows/emoji-ids.yml]
+jobs:
+  ids:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pip install pillow
+      - name: List the custom emoji pack
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          python - <<'PY'
+          import json, os, io, urllib.request
+          from PIL import Image
+          T = os.environ["TOKEN"]
+          def api(m, **p):
+              r = urllib.request.urlopen(f"https://api.telegram.org/bot{T}/{m}", data=json.dumps(p).encode() if p else None) if False else None
+              req = urllib.request.Request(f"https://api.telegram.org/bot{T}/{m}", data=json.dumps(p).encode(), headers={"Content-Type": "application/json"})
+              return json.load(urllib.request.urlopen(req))["result"]
+          s = api("getStickerSet", name="laziestmusicnerd")
+          print("TITLE", s["title"], s.get("sticker_type"), len(s["stickers"]))
+          for i, st in enumerate(s["stickers"]):
+              f = api("getFile", file_id=st["file_id"])
+              raw = urllib.request.urlopen(f"https://api.telegram.org/file/bot{T}/{f['file_path']}").read()
+              im = Image.open(io.BytesIO(raw)).convert("RGBA")
+              bg = Image.new("RGBA", im.size, (255, 255, 255, 255)); bg.alpha_composite(im)
+              sig = list(bg.convert("RGB").resize((4, 4), Image.BOX).getdata())
+              print("EMOJI", i, st["custom_emoji_id"], st["emoji"], st.get("needs_repainting"), json.dumps(sig))
+          PY
