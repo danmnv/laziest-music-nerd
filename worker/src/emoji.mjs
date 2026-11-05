@@ -3,6 +3,7 @@
 // the bot's owner has Telegram Premium), and the cards must look the same in both places (owner's call).
 // Ids from getStickerSet; the second value is the ordinary emoji shown when custom emoji are off.
 export const EMOJI = {
+  wave: ["5433666080830696116", "👋"],
   neutral: ["5426974410114376218", "🙂"],
   laugh: ["5427277845258874949", "😁"],
   wow: ["5427084653334932237", "😳"],

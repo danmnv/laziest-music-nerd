@@ -338,14 +338,14 @@ def recent(reviews, days=60, now=None):
 
 
 LIST_HEAD = "<b>Последние 30 обзоров Фантано</b>\n\n"  # the same in worker/src/index.js
-PIN_V = 3  # the pinned message's layout: check.py edits it once when this changes (2: the welcome, 3: likes and
-#           «Послушать потом», 2026-11-02)
+PIN_V = 4  # the pinned message's layout: check.py edits it once when this changes (2: the welcome, 3: likes and
+#           «Послушать потом», 2026-11-02; 4: 👋 after «Привет!», 2026-11-05)
 
 
 def pin_intro():
     """Above the channel's pinned list: a short welcome and how the channel and the bot work together, so a new
     subscriber isn't lost (owner, 2026-11-02). The same in worker/src/index.js pinIntro."""
-    return ("<b>Привет!</b> Здесь мы знакомимся с новой музыкой, отталкиваясь от обзоров Anthony Fantano.\n\n"
+    return ("<b>Привет!</b> 👋 Здесь мы знакомимся с новой музыкой, отталкиваясь от обзоров Anthony Fantano.\n\n"
             "<b>Канал:</b> карточка каждого нового обзора с оценкой, описанием, критиками, треклистом и ссылками, где послушать.\n"
             f'<b>Бот</b> <a href="https://t.me/{BOT_USERNAME}">@{BOT_USERNAME}</a>: поиск любого альбома из архива, '
             "«Наверстать» пропущенные обзоры, списки «Послушать потом» и «Понравившееся», сообщения о новых альбомах артистов, за которыми следишь.\n"
