@@ -248,7 +248,7 @@ async function welcome(env, uid) {
     chat_id: uid,
     parse_mode: "HTML",
     link_preview_options: { is_disabled: true },
-    text: `Привет! Здесь мы знакомимся с новой музыкой, отталкиваясь от обзоров Anthony Fantano. ${ce(env, "kaif")}\n\n` + helpText(env),
+    text: `Привет! ${ce(env, "wave")} Здесь мы знакомимся с новой музыкой, отталкиваясь от обзоров Anthony Fantano.\n\n` + helpText(env),
     reply_markup: MENU,
   });
   await setSetting(env, `menu:${uid}`, MENU_V);
@@ -607,7 +607,7 @@ function tgLen(html) {
 // Above the channel's pinned list: a short welcome and how the channel and the bot work (lmn/card.py pin_intro)
 function pinIntro(env) {
   const bot = env.BOT_USERNAME;
-  return "<b>Привет!</b> Здесь мы знакомимся с новой музыкой, отталкиваясь от обзоров Anthony Fantano.\n\n" +
+  return "<b>Привет!</b> 👋 Здесь мы знакомимся с новой музыкой, отталкиваясь от обзоров Anthony Fantano.\n\n" +
     "<b>Канал:</b> карточка каждого нового обзора с оценкой, описанием, критиками, треклистом и ссылками, где послушать.\n" +
     `<b>Бот</b> <a href="https://t.me/${bot}">@${bot}</a>: поиск любого альбома из архива, ` +
     "«Наверстать» пропущенные обзоры, списки «Послушать потом» и «Понравившееся», сообщения о новых альбомах артистов, за которыми следишь.\n" +
