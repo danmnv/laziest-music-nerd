@@ -163,6 +163,7 @@ NOTE = re.compile(r"^(?:light|decent|strong)(?: to (?:light|decent|strong))?$")
 
 
 last_sec = None  # how long the answer that generate() returned took, for the average (stored with the brief)
+requests = {}  # HTTP requests sent to each model in this process, answered or not: all count against its daily limit
 
 
 def generate(body, api_key, budget=BUDGET_SEC, sleep=time.sleep, clock=time.monotonic, call_timeout=CALL_TIMEOUT):
@@ -180,6 +181,7 @@ def generate(body, api_key, budget=BUDGET_SEC, sleep=time.sleep, clock=time.mono
                 print("gemini: time budget for this review used up")
                 return None, None
             t0 = clock()
+            requests[model] = requests.get(model, 0) + 1
             try:
                 out = http.get_json(url, json_body=body, method="POST", headers={"x-goog-api-key": api_key},
                                     timeout=min(call_timeout, left), retries=0)

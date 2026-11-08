@@ -40,6 +40,8 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}   # only the videos' lengths
+          # new reviews start with gemini-3.8-flash (lmn/gemini.py): here it comes last, so they keep its quota
+          GEMINI_MODEL: gemini-3.7-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.8-flash
           VIDEO_LIMIT: ${{ inputs.limit }}
           VIDEO_MINUTES: "300"   # of the free tier's 8 hours of video a day: the rest is for new reviews
           VIDEO_PER_MODEL: "12"   # requests a day on each model: the rest is for new reviews

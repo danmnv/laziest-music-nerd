@@ -69,7 +69,9 @@ class Prompt(unittest.TestCase):
 class Run(unittest.TestCase):
     def setUp(self):
         gemini._unavailable.clear()
+        gemini.requests.clear()
         self.addCleanup(gemini._unavailable.clear)
+        self.addCleanup(gemini.requests.clear)
         self.dir = Path(tempfile.mkdtemp())
         self.archive = [arch(i, f"20{10 + i:02d}-01-01T00:00:00Z") for i in range(1, 7)]
         self.data = {a["id"]: {"brief": "пересказ", "who": "кто", "src": "short"} for a in self.archive}
@@ -83,9 +85,10 @@ class Run(unittest.TestCase):
         def gen(body, key, **kw):
             calls.append(body["contents"][0]["parts"][0]["fileData"]["fileUri"][-2:])
             a = answers(len(calls))
+            model = next(m for m in models if m not in gemini._unavailable)
+            gemini.requests[model] = gemini.requests.get(model, 0) + (2 if a is None else 1)  # no answer: a retry too
             if a is None:
                 return None, None
-            model = next(m for m in models if m not in gemini._unavailable)
             return model, answer(a)
         lengths = lengths or {f"v{i}": 8 for i in range(1, 7)}
         with mock.patch.object(videobriefs, "DATA", self.dir), mock.patch.object(gemini, "MODELS", list(models)), \
@@ -117,6 +120,20 @@ class Run(unittest.TestCase):
         with mock.patch.object(videobriefs, "PER_MODEL", 2):
             calls, _ = self.go(lambda n: ANSWER)
         self.assertEqual(len(calls), 4)  # two on m1, two on m2, then every model's share is used
+
+    def test_requests_without_an_answer_count_too(self):
+        with mock.patch.object(videobriefs, "PER_MODEL", 2):
+            calls, _ = self.go(lambda n: None if n == 1 else ANSWER)
+        self.assertEqual(len(calls), 3)  # m1: two requests for no answer, so its share is gone; m2: two answers
+
+    def test_no_answer_still_counts_its_minutes(self):
+        with mock.patch.object(videobriefs, "VIDEO_MINUTES", 20):
+            calls, _ = self.go(lambda n: None if n == 1 else ANSWER)
+        self.assertEqual(len(calls), 2)
+
+    def test_briefs_never_rewrites_a_video_description(self):
+        from lmn import briefs
+        self.assertTrue(briefs.finished({"brief": "x", "en": {"brief": "y"}, "tr": "m", "p": 1, "src": "video"}, "both"))
 
     def test_empty_answer_counts_no_answer_stops(self):
         calls, data = self.go(lambda n: {**ANSWER, "brief": ""} if n == 1 else None)

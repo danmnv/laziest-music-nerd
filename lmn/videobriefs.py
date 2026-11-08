@@ -7,8 +7,8 @@ and English, over as many days as the free tier takes.
 
 The free tier's limits (seen 2026-11-08): no more than 8 hours of YouTube video a day for the whole project, and a daily
 request limit per model. New reviews (lmn/check.py, every half hour) watch videos too, and they come first: this job
-takes at most VIDEO_MINUTES of video and PER_MODEL requests on each model a day, and stops for the day at the first
-daily-limit answer. What it wrote replaces the retelling ("src": "video"); a review whose video gave no description in
+takes at most VIDEO_MINUTES of video and PER_MODEL requests on each model a day (its own model order, the flagship last:
+videobriefs.yml), and stops for the day when every model's share is used. What it wrote replaces the retelling ("src": "video"); a review whose video gave no description in
 FAIL_MAX runs keeps its retelling.
 """
 import json
@@ -102,7 +102,7 @@ def run():
     items = todo(archive, data, notes)
     print(f"video briefs: {len(items)} to write; today up to {VIDEO_MINUTES} min of video, {PER_MODEL} requests a model"
           + (f", {limit} reviews" if limit else ""))
-    left, used, made, failed, streak = VIDEO_MINUTES, {}, 0, 0, 0
+    left, made, failed, streak = VIDEO_MINUTES, 0, 0, 0
     lengths = {}
     for n, a in enumerate(items):
         if limit and made + failed >= limit:
@@ -124,10 +124,10 @@ def run():
             break
         got, out = ask(a, notes.get(a["id"]), api_key)
         model = (out or {}).get("model")
-        if model:
-            used[model] = used.get(model, 0) + 1
-            if used[model] >= PER_MODEL:
-                gemini._unavailable.add(model)  # its rest of the day is for new reviews
+        for m, n in gemini.requests.items():  # every request counts, a retry or a timed-out one too
+            if n >= PER_MODEL:
+                gemini._unavailable.add(m)  # its rest of the day is for new reviews
+        left -= mins  # the video may have been watched even with no answer: it counts against the day either way
         if got == "none":
             streak += 1
             if streak >= GIVE_UP:
@@ -135,7 +135,6 @@ def run():
                 break
             continue
         streak = 0
-        left -= mins  # the video was watched, so it counts against the day, answer or not
         if got == "ok":
             data[a["id"]] = {**briefs.entry(out, "both"), "src": "video"}
             made += 1

@@ -70,6 +70,8 @@ def short_lines(text, note):
 
 
 def finished(v, lang="ru"):
+    if v.get("src") == "video":
+        return True  # written by the video itself (lmn/videobriefs.py): a new prompt here would only retell his one line
     if lang == "both" and v.get("skip") and not v.get("short"):
         return False  # only Fantano's short lines: told from them since 2026-11-04 ("src": "short")
     if v.get("rf", 0) >= FAIL_MAX and v.get("rf_p") == PROMPT_V:
