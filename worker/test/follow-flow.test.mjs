@@ -671,7 +671,7 @@ test("a card from the list: «✓ Послушал → дальше» marks it, 
   assert.deepEqual(kb[0], [{ text: "♡ Понравилось", callback_data: "lk:x" }, { text: "✓ Послушал → дальше", callback_data: "qd:x" }]);
   assert.deepEqual(kb[1], [{ text: "⏳ Потом → дальше", callback_data: "qd:x:later" }, { text: "✗ Не моё → дальше", callback_data: "qd:x:nope" }]);
   assert.deepEqual(kb[2], [{ text: "← Назад", callback_data: "qb:x" }, { text: "Пропустить →", callback_data: "qs:x" }]);
-  assert.match(first.caption || first.text, /^▶ <i>Наверстываю · после этого ещё 2 обзора<\/i>/);
+  assert.match(first.caption || first.text, /^▶ <i>Навёрстываю · после этого ещё 2 обзора<\/i>/);
   calls = [];
   await press(OWNER, "qd:x", 901);
   assert.equal(db.prepare("SELECT status FROM marks WHERE user_id=? AND review_id='x'").get(OWNER).status, "done");
@@ -690,7 +690,7 @@ test("a card from the list: «✓ Послушал → дальше» marks it, 
   await press(OWNER, "qd:p:later", 904); // put off: in «Послушать потом», this card goes, the next comes
   assert.equal(db.prepare("SELECT status FROM marks WHERE user_id=? AND review_id='p'").get(OWNER).status, "later");
   assert.ok(calls.some((c) => c.method === "deleteMessage" && c.message_id === 904));
-  assert.ok(calls.some((c) => (c.method === "sendPhoto" || c.method === "sendMessage") && /Наверстываю/.test(c.caption || c.text || "")));
+  assert.ok(calls.some((c) => (c.method === "sendPhoto" || c.method === "sendMessage") && /Навёрстываю/.test(c.caption || c.text || "")));
   calls = [];
   await say(OWNER, "⏳ Послушать потом");
   assert.match(calls.find((c) => c.method === "sendMessage").text, /^Послушать потом: 1/);
@@ -742,7 +742,7 @@ test("«Наверстать» lists «Послушать потом» first, go
   calls = [];
   await press(OWNER, "qo:k");
   const card = calls.find((c) => c.method === "sendPhoto" || c.method === "sendMessage");
-  assert.match(card.caption || card.text, /^▶ <i>Наверстываю · послушать потом, это последний, потом новые обзоры<\/i>/);
+  assert.match(card.caption || card.text, /^▶ <i>Навёрстываю · послушать потом, это последний, потом новые обзоры<\/i>/);
   assert.deepEqual(card.reply_markup.inline_keyboard.slice(0, 3), [
     [{ text: "♡ Понравилось", callback_data: "lk:k" }, { text: "✓ Послушал → дальше", callback_data: "qd:k:done:l" }],
     [{ text: "✗ Не моё → дальше", callback_data: "qd:k:nope:l" }, { text: "Пропустить →", callback_data: "qs:k:l" }],
@@ -755,7 +755,7 @@ test("«Наверстать» lists «Послушать потом» first, go
   await press(OWNER, "qd:k:done:l", 910);
   assert.equal(db.prepare("SELECT status FROM marks WHERE user_id=? AND review_id='k'").get(OWNER).status, "done");
   const next = calls.find((c) => c.method === "sendPhoto" || (c.method === "sendMessage" && /Moon/.test(c.text)));
-  assert.match(next.caption || next.text, /^▶ <i>Наверстываю · после этого ещё 1 обзор<\/i>.*A Moon Shaped Pool/s);
+  assert.match(next.caption || next.text, /^▶ <i>Навёрстываю · после этого ещё 1 обзор<\/i>.*A Moon Shaped Pool/s);
   assert.equal(next.reply_markup.inline_keyboard[0][1].callback_data, "qd:p");
   calls = [];
   await say(OWNER, "/listen"); // the list too goes on from the place, not from Kid A
@@ -779,18 +779,18 @@ test("the «Послушать потом» block: the first put off first, the 
   assert.ok(block.indexOf("start=q_k") < block.indexOf("start=q_p"), "Kid A, put off first, first");
   calls = [];
   await press(OWNER, "qo:k");
-  assert.match(calls.find((c) => c.method === "sendPhoto" || c.method === "sendMessage").caption, /^▶ <i>Наверстываю · послушать потом, после этого ещё 1<\/i>/);
+  assert.match(calls.find((c) => c.method === "sendPhoto" || c.method === "sendMessage").caption, /^▶ <i>Навёрстываю · послушать потом, после этого ещё 1<\/i>/);
   calls = [];
   await press(OWNER, "qd:k:done:l", 920); // Kid A leaves the block; the next is the block's next, not a newer review
   const next = calls.find((c) => c.method === "sendPhoto" || (c.method === "sendMessage" && /Moon/.test(c.text)));
-  assert.match(next.caption || next.text, /^▶ <i>Наверстываю · послушать потом, это последний, потом новые обзоры<\/i>.*A Moon Shaped Pool/s);
+  assert.match(next.caption || next.text, /^▶ <i>Навёрстываю · послушать потом, это последний, потом новые обзоры<\/i>.*A Moon Shaped Pool/s);
   calls = [];
   await press(OWNER, "qb:p:l"); // Kid A was heard: nothing before it in the block now
   assert.equal(calls.find((c) => c.method === "sendMessage").text, "Это первый альбом в «Послушать потом».");
   calls = [];
   await press(OWNER, "qb:k:l"); // a card that has left the block goes back to the block's last
   const last = calls.find((c) => c.method === "sendPhoto" || (c.method === "sendMessage" && /Moon/.test(c.text)));
-  assert.match(last.caption || last.text, /^▶ <i>Наверстываю · послушать потом.*A Moon Shaped Pool/s);
+  assert.match(last.caption || last.text, /^▶ <i>Навёрстываю · послушать потом.*A Moon Shaped Pool/s);
   calls = [];
   await press(OWNER, "qs:p:l"); // skipped: stays put off; the block is done and both reviews after Obscure are marked
   assert.equal(db.prepare("SELECT status FROM marks WHERE user_id=? AND review_id='p'").get(OWNER).status, "later");

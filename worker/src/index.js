@@ -1336,10 +1336,10 @@ async function openQueueCard(env, uid, id, section) {
     await queuePlace(env, uid, arch, statuses, true); // the place is fixed before this album gets marked heard
     const block = laterReviews(arch, await laterIds(env, uid));
     const left = block.length - 1 - block.findIndex((x) => x.id === a.id);
-    return sendAlbum(env, uid, a, `▶ <i>Наверстываю · послушать потом${left ? `, после этого ещё ${left}` : ", это последний, потом новые обзоры"}</i>`, { queue: "l" });
+    return sendAlbum(env, uid, a, `▶ <i>Навёрстываю · послушать потом${left ? `, после этого ещё ${left}` : ", это последний, потом новые обзоры"}</i>`, { queue: "l" });
   }
   const left = after(arch, a).length;
-  return sendAlbum(env, uid, a, `▶ <i>Наверстываю${left ? ` · после этого ещё ${reviewsWord(left)}` : " · это последний обзор"}</i>`, { queue: "c" });
+  return sendAlbum(env, uid, a, `▶ <i>Навёрстываю${left ? ` · после этого ещё ${reviewsWord(left)}` : " · это последний обзор"}</i>`, { queue: "c" });
 }
 
 // After a mark or «Пропустить →» on a «Наверстать» card: the next one in its part (in the «Послушать потом» block,
