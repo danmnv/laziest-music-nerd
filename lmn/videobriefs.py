@@ -7,8 +7,8 @@ and English, over as many days as the free tier takes.
 
 The free tier's limits (seen 2026-11-08): no more than 8 hours of YouTube video a day for the whole project, and a daily
 request limit per model. New reviews (lmn/check.py, every half hour) watch videos too, and they come first: this job
-takes at most VIDEO_MINUTES of video and PER_MODEL requests on each model a day (its own model order, the flagship last:
-videobriefs.yml), and stops for the day when every model's share is used. What it wrote replaces the retelling ("src": "video"); a review whose video gave no description in
+takes at most VIDEO_MINUTES of video and PER_MODEL requests on each model a day (its own models, without the one new reviews
+start with: videobriefs.yml), and stops for the day when every model's share is used. What it wrote replaces the retelling ("src": "video"); a review whose video gave no description in
 FAIL_MAX runs keeps its retelling.
 """
 import json
