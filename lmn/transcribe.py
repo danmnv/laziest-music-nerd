@@ -18,13 +18,16 @@ import re
 from pathlib import Path
 
 from . import briefs, gemini, tnd
-from .musicbrainz import norm
 
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 VIDEO_MINUTES = int(os.environ.get("VIDEO_MINUTES") or 420)  # of the 8 hours a day: the rest is for new reviews
 PER_MODEL = int(os.environ.get("VIDEO_PER_MODEL") or 12)  # requests a day on each model: the rest is for new reviews
 MAX_VIDEO_MIN = 30  # a longer one (a few old ones are an hour) costs a day's share: left alone
 MIN_CHARS = 1000  # a shorter answer is not a whole review (a 4-minute one is ~3000 characters)
+CHARS_A_MINUTE = 400  # he speaks ~150 words a minute (~800 characters): less is cut short or a summary
+# Every review on the channel names it near the start ("Anthony Fantano here, the internet's busiest music nerd",
+# "theneedledrop.com"; guest hosts say the channel's name): the title of the request has only artist and album
+HOST = re.compile(r"fantano|needle ?drop|music nerd", re.I)
 FAIL_MAX = 2  # runs in which the model answered with no usable transcript for this video: then it keeps its retelling
 GIVE_UP = 3  # no answer at all this many times in a row: the key, the quota or the service is wrong today
 
@@ -36,6 +39,8 @@ The video: "{title}"."""
 
 
 def path(review_id):
+    """Whole review texts: private, like the site's own transcripts. Nothing that is published (site.py, the Worker,
+    pages.yml) may read this folder."""
     return DATA / "transcripts" / f"{review_id}.txt"
 
 
@@ -74,15 +79,13 @@ def minutes(video_ids):
     return out
 
 
-def plausible(text, a):
-    """A whole transcript of this review: long enough, and it names the artist or the album somewhere (a model that
-    could not see the video may make one up)."""
-    t = norm(text)
-    names = [n for n in (norm(a.get("artist_name")), norm(a.get("album"))) if len(n) >= 3]
-    return len(text) >= MIN_CHARS and (not names or any(n in t for n in names))
+def plausible(text, mins=None):
+    """A whole transcript of the review: the host's own words (a model that could not see the video may make one up from
+    the title), and as long as the video's speech (not cut short, not a summary)."""
+    return len(text) >= max(MIN_CHARS, CHARS_A_MINUTE * (mins or 0)) and bool(HOST.search(text))
 
 
-def ask(a, api_key):
+def ask(a, api_key, mins=None):
     """("ok", text, model) | ("bad", None, model): the model answered, but no whole transcript | ("none", None, None)."""
     body = {"contents": [{"parts": [{"fileData": {"fileUri": f"https://www.youtube.com/watch?v={a['video_id']}"}},
                                     {"text": PROMPT.format(title=f"{a['artist_name']} - {a['album']}")}]}],
@@ -99,7 +102,10 @@ def ask(a, api_key):
     if cand.get("finishReason") not in (None, "STOP"):  # cut at the token limit, or blocked: not the whole review
         print(f"gemini {model}: stopped ({cand.get('finishReason')}) after {len(text)} characters")
         return "bad", None, model
-    return ("ok", text, model) if plausible(text, a) else ("bad", None, model)
+    if not plausible(text, mins):
+        print(f"gemini {model}: {len(text)} characters for {mins or 0:.0f} min, host named: {bool(HOST.search(text))}")
+        return "bad", None, model
+    return "ok", text, model
 
 
 def _load(name, default):
@@ -140,7 +146,7 @@ def run():
         if all(m in gemini._unavailable for m in gemini.MODELS):
             print("every model's share for today is used up")
             break
-        got, text, model = ask(a, api_key)
+        got, text, model = ask(a, api_key, mins)
         for m, k in gemini.requests.items():  # every request counts, a retry or a timed-out one too
             if k >= PER_MODEL:
                 gemini._unavailable.add(m)  # its rest of the day is for new reviews

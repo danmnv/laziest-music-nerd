@@ -10,7 +10,7 @@ from unittest import mock
 from lmn import briefs, gemini, llm, transcribe
 
 SPOKEN = ("Hi everyone, Anthony Fantano here, the internet's busiest music nerd, and it's time for a review of the new "
-          "Artist 1 album, Album 1. ") * 12
+          "Artist 1 album, Album 1. ") * 24
 
 
 def arch(i, published, video=True, **kw):
@@ -53,11 +53,14 @@ class Ask(unittest.TestCase):
 
     def test_what_is_not_a_transcript(self):
         cases = [(gemini_answer("Too short."), "bad"), (gemini_answer(SPOKEN, "MAX_TOKENS"), "bad"),
-                 (gemini_answer(SPOKEN.replace("Artist 1", "Someone").replace("Album 1", "Something")), "bad"),
+                 (gemini_answer(SPOKEN.replace("Anthony Fantano", "a guy").replace("music nerd", "fan")), "bad"),
                  ({"candidates": []}, "bad")]
         for raw, want in cases:
             with mock.patch.object(gemini, "generate", return_value=("m1", raw)):
                 self.assertEqual(transcribe.ask(self.a, "k")[0], want)
+        with mock.patch.object(gemini, "generate", return_value=("m1", gemini_answer(SPOKEN))):  # ~3200 characters
+            self.assertEqual(transcribe.ask(self.a, "k", mins=7)[0], "ok")
+            self.assertEqual(transcribe.ask(self.a, "k", mins=9)[0], "bad")  # a 9-minute video: cut short or a summary
         with mock.patch.object(gemini, "generate", return_value=(None, None)):
             self.assertEqual(transcribe.ask(self.a, "k"), ("none", None, None))
 
@@ -87,7 +90,7 @@ class Run(unittest.TestCase):
                 return None, None
             i = vid[1:]
             return model, gemini_answer(a.replace("Artist 1", f"Artist {i}").replace("Album 1", f"Album {i}"))
-        lengths = lengths or {f"v{i}": 8 for i in range(1, 7)}
+        lengths = lengths or {f"v{i}": 6 for i in range(1, 7)}
         with mock.patch.object(transcribe, "DATA", self.dir), mock.patch.object(briefs, "DATA", self.dir), \
                 mock.patch.object(gemini, "MODELS", list(models)), mock.patch.object(gemini, "generate", side_effect=gen), \
                 mock.patch.object(transcribe, "minutes", side_effect=lambda ids: {i: lengths[i] for i in ids if i in lengths}), \
@@ -114,7 +117,7 @@ class Run(unittest.TestCase):
     def test_keeps_the_days_share_of_video(self):
         with mock.patch.object(transcribe, "VIDEO_MINUTES", 20):
             calls, _ = self.go(lambda n: SPOKEN)
-        self.assertEqual(len(calls), 2)  # 8 + 8 minutes; a third would pass 20
+        self.assertEqual(len(calls), 3)  # 6 + 6 + 6 minutes; a fourth would pass 20
 
     def test_skips_long_and_missing_videos(self):
         lengths = {"v6": transcribe.MAX_VIDEO_MIN + 1, "v4": 5, "v3": 5, "v2": 5, "v1": 5}  # v5: gone
@@ -132,7 +135,7 @@ class Run(unittest.TestCase):
         self.assertEqual(len(calls), 3)  # m1: two requests for no answer, so its share is gone; m2: two answers
 
     def test_no_answer_still_counts_its_minutes(self):
-        with mock.patch.object(transcribe, "VIDEO_MINUTES", 20):
+        with mock.patch.object(transcribe, "VIDEO_MINUTES", 14):
             calls, _ = self.go(lambda n: None if n == 1 else SPOKEN)
         self.assertEqual(len(calls), 2)
 
@@ -189,7 +192,27 @@ class BriefsFromTranscript(unittest.TestCase):
         _, data = self.go(None)
         self.assertEqual(data[self.archive[0]["id"]]["brief"], "пересказ")
         none = data[self.archive[1]["id"]]
-        self.assertEqual((none["who"], none["short"], none["fail"]), ("кто", "none", 1))
+        self.assertEqual((none["who"], none["short"], none["tf"]), ("кто", "none", 1))
+        self.assertEqual(data[self.archive[0]["id"]]["tf"], 1)
+
+    def test_an_earlier_failure_of_the_retelling_does_not_count(self):
+        self.data[self.archive[1]["id"]]["fail"] = 2
+        (self.dir / "briefs.json").write_text(json.dumps(self.data))
+        summ, _ = self.go(LUNA)
+        self.assertEqual(len(summ.call_args_list), 2)
+
+    def test_given_up_after_two_failures_from_the_transcript(self):
+        for k in (self.archive[0]["id"], self.archive[1]["id"]):
+            self.data[k]["tf"] = 2
+        (self.dir / "briefs.json").write_text(json.dumps(self.data))
+        summ, _ = self.go(LUNA)
+        self.assertEqual(len(summ.call_args_list), 0)
+
+    def test_a_long_transcript_keeps_its_end(self):
+        (self.dir / "transcripts" / f"{1:024x}.txt").write_text("start " + "x" * 40000 + " the conclusion")
+        with mock.patch.object(briefs, "DATA", self.dir):
+            t = briefs.transcript(f"{1:024x}")
+        self.assertTrue(t.startswith("start ") and t.endswith(" the conclusion") and len(t) <= 30010)
 
     def test_briefs_never_rewrites_one_from_a_transcript(self):
         self.assertTrue(briefs.finished({"brief": "x", "en": {"brief": "y"}, "tr": "m", "p": 1, "src": "video"}, "both"))

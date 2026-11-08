@@ -69,14 +69,15 @@ def short_lines(text, note):
     return "\n".join(lines)
 
 
+HEAD, TAIL = 20000, 10000  # a long transcript to the model: its start and its end, where the conclusion is
+
+
 def transcript(review_id):
-    """What Fantano says in the video, written down by Gemini (lmn/transcribe.py), or ""."""
+    """What Fantano says in the video, written down by Gemini (lmn/transcribe.py), or "". A longer one than the model
+    is given (30000 characters, lmn/llm.py) keeps its last part: the conclusion, not only the score, is at the end."""
     p = DATA / "transcripts" / f"{review_id}.txt"
-    return p.read_text().strip() if p.exists() else ""
-
-
-def gave_up(v):
-    return (v.get("rf", 0) >= FAIL_MAX and v.get("rf_p") == PROMPT_V) or v.get("fail", 0) >= FAIL_MAX
+    t = p.read_text().strip() if p.exists() else ""
+    return t if len(t) <= HEAD + TAIL else t[:HEAD] + "\n[…]\n" + t[-TAIL:]
 
 
 def finished(v, lang="ru"):
@@ -307,7 +308,7 @@ def run():
     tdir = DATA / "transcripts"
     heard = {p.stem for p in tdir.glob("*.txt")} if lang == "both" and tdir.is_dir() else set()
     todo = targets(archive, reviews, {k for k, v in data.items() if finished(v, lang)
-                                      and not (k in heard and v.get("src") != "video" and not gave_up(v))})
+                                      and not (k in heard and v.get("src") != "video" and v.get("tf", 0) < FAIL_MAX)})
     print(f"briefs ({lang}): {sum(1 for v in data.values() if v.get('brief'))} done, {len(untranslated(data))} to translate, "
           f"{len(todo)} to write, this run up to {limit}")
     made = failed = tried = 0
@@ -362,11 +363,13 @@ def run():
             streak.append((a["id"], data.get(a["id"])))
             failed += 1
             prev = data.get(a["id"]) or {}
-            if prev.get("brief"):  # an old brief to write again is kept until a new one comes; tried FAIL_MAX runs
+            if src:  # from a transcript: its own count ("tf"), the retelling and "who" stay meanwhile
+                data[a["id"]] = {**prev, "tf": prev.get("tf", 0) + 1}
+            elif prev.get("brief"):  # an old brief to write again is kept until a new one comes; tried FAIL_MAX runs
                 rf = prev.get("rf", 0) if prev.get("rf_p") == PROMPT_V else 0  # counted again for a new prompt
                 data[a["id"]] = {**prev, "rf": rf + 1, "rf_p": PROMPT_V}  # (a new dict: an outage restores the old one)
-            else:  # given up after FAIL_MAX runs; one with no brief by his lines keeps its "who"
-                data[a["id"]] = {**(prev if src else {}), "fail": prev.get("fail", 0) + 1}
+            else:
+                data[a["id"]] = {"fail": prev.get("fail", 0) + 1}  # given up after FAIL_MAX runs
             if len(streak) >= GIVE_UP:  # likely an outage, not these reviews: their failures are not counted
                 for k, prev in streak:
                     if prev is None:
