@@ -69,9 +69,19 @@ def short_lines(text, note):
     return "\n".join(lines)
 
 
+def transcript(review_id):
+    """What Fantano says in the video, written down by Gemini (lmn/transcribe.py), or ""."""
+    p = DATA / "transcripts" / f"{review_id}.txt"
+    return p.read_text().strip() if p.exists() else ""
+
+
+def gave_up(v):
+    return (v.get("rf", 0) >= FAIL_MAX and v.get("rf_p") == PROMPT_V) or v.get("fail", 0) >= FAIL_MAX
+
+
 def finished(v, lang="ru"):
     if v.get("src") == "video":
-        return True  # written by the video itself (lmn/videobriefs.py): a new prompt here would only retell his one line
+        return True  # written from the video's transcript (lmn/transcribe.py); a new prompt needs its own pass over them
     if lang == "both" and v.get("skip") and not v.get("short"):
         return False  # only Fantano's short lines: told from them since 2026-11-04 ("src": "short")
     if v.get("rf", 0) >= FAIL_MAX and v.get("rf_p") == PROMPT_V:
@@ -293,7 +303,11 @@ def run():
     max_rub = float(os.environ.get("BRIEFS_MAX_RUB") or "150")
     npath = DATA / "notes.json"
     notes = json.loads(npath.read_text()) if npath.exists() else {}
-    todo = targets(archive, reviews, {k for k, v in data.items() if finished(v, lang)})
+    # a retelling of his one line whose video now has a transcript: written again from it (owner, 2026-11-08)
+    tdir = DATA / "transcripts"
+    heard = {p.stem for p in tdir.glob("*.txt")} if lang == "both" and tdir.is_dir() else set()
+    todo = targets(archive, reviews, {k for k, v in data.items() if finished(v, lang)
+                                      and not (k in heard and v.get("src") != "video" and not gave_up(v))})
     print(f"briefs ({lang}): {sum(1 for v in data.values() if v.get('brief'))} done, {len(untranslated(data))} to translate, "
           f"{len(todo)} to write, this run up to {limit}")
     made = failed = tried = 0
@@ -313,6 +327,9 @@ def run():
         if not llm.available(lang):  # no key, or every provider gave up: the setup's fault, not this review's
             print("::warning::no model available (keys missing, wrong or out of quota), stopping")
             break
+        src = None
+        if len(text) < MIN_TEXT and a["id"] in heard:  # only a video, but Gemini wrote down what he says in it
+            text, src = transcript(a["id"]), "video"
         short = len(text) < MIN_TEXT
         if short:  # the review is only in the video: Fantano's own lines instead (lang "both" only)
             lines = short_lines(text, notes.get(a["id"])) if lang == "both" else ""
@@ -325,7 +342,7 @@ def run():
         out = llm.summarize(title, text, lang=lang, verdict=verdict(a), tags=tags(a), **({"short": True} if short else {}))
         if out and (out.get("brief") or "").strip():
             old = data.get(a["id"]) or {}
-            data[a["id"]] = {**entry(out, lang), **({"src": "short"} if short else {})}
+            data[a["id"]] = {**entry(out, lang), **({"src": "short"} if short else {"src": src} if src else {})}
             if lang == "en" and old.get("brief"):  # the old Russian one stays on the site until the translation comes
                 data[a["id"]].update({f: old[f] for f in ("brief", "about", "who") if old.get(f)})
             made += 1
@@ -348,8 +365,8 @@ def run():
             if prev.get("brief"):  # an old brief to write again is kept until a new one comes; tried FAIL_MAX runs
                 rf = prev.get("rf", 0) if prev.get("rf_p") == PROMPT_V else 0  # counted again for a new prompt
                 data[a["id"]] = {**prev, "rf": rf + 1, "rf_p": PROMPT_V}  # (a new dict: an outage restores the old one)
-            else:
-                data[a["id"]] = {"fail": prev.get("fail", 0) + 1}  # given up after FAIL_MAX runs
+            else:  # given up after FAIL_MAX runs; one with no brief by his lines keeps its "who"
+                data[a["id"]] = {**(prev if src else {}), "fail": prev.get("fail", 0) + 1}
             if len(streak) >= GIVE_UP:  # likely an outage, not these reviews: their failures are not counted
                 for k, prev in streak:
                     if prev is None:

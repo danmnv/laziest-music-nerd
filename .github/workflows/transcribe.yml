@@ -1,0 +1,70 @@
+name: Расшифровки старых обзоров по видео
+on:
+  # Каждый день (с 08.11.2026): бесплатный Gemini записывает, что Фантано говорит в видео старых обзоров, у которых на
+  # theneedledrop.com только одна строка. По расшифровке «Брифы для архива» (GPT-6 Luna) потом пишут полное описание
+  # вместо пересказа этой строки. Новым обзорам остаётся запас дневного лимита Gemini.
+  schedule:
+    - cron: "40 8 * * *"   # каждый день в 8:40 UTC, вскоре после того, как у Gemini обновился дневной лимит (полночь по Калифорнии); «Брифы» в 9:30 ждут конца этого запуска
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Сколько обзоров за запуск (пусто — сколько позволит дневная доля лимита)"
+        default: ""
+      compare:
+        description: "Только сравнить расшифровку Gemini с текстом сайта на N новых обзорах (ничего не сохраняет)"
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: briefs   # writes briefs.json too, and «Брифы для архива» should start after it: one at a time
+  cancel-in-progress: false
+
+jobs:
+  transcribe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v5
+      - name: Данные из приватного репозитория
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ vars.DATA_REPO || 'danmnv/laziest-music-nerd-data' }}
+          token: ${{ secrets.DATA_TOKEN }}
+          path: .data
+      - run: ln -sfn .data/data data
+        working-directory: .
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Расшифровки по видео
+        timeout-minutes: 280
+        run: python -m lmn.transcribe
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}   # only the videos' lengths
+          # every free model but gemini-3.8-flash, the one new reviews start with (lmn/gemini.py): its quota stays theirs.
+          # A model this key can't use answers 404 and is skipped for the run.
+          GEMINI_MODEL: gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite,gemini-3.5-flash,gemini-3.7-flash
+          VIDEO_LIMIT: ${{ inputs.limit }}
+          VIDEO_MINUTES: "420"   # of the free tier's 8 hours of video a day: an hour is left for new reviews
+          VIDEO_PER_MODEL: "12"   # requests a day on each model: the rest is for new reviews
+          TRANSCRIBE_COMPARE: ${{ inputs.compare }}
+          PYTHONUNBUFFERED: "1"
+      - name: Сохранить
+        if: ${{ always() && !inputs.compare }}
+        run: |
+          cd "$GITHUB_WORKSPACE/.data"   # the data repo: commits go there
+          git config user.name "laziest-music-nerd-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          [ -d data/transcripts ] && git add data/transcripts
+          [ -f data/briefs.json ] && git add data/briefs.json
+          git diff --cached --quiet && exit 0
+          git commit -q -m "data: расшифровки старых обзоров по видео"
+          for i in 1 2 3 4; do  # the hourly check may have pushed meanwhile
+            git pull --rebase -q origin main && git push -q origin HEAD:main && exit 0
+            git rebase --abort 2>/dev/null || true
+            sleep $((i * 5))
+          done
+          echo "::error::Не смог сохранить расшифровки в main"; exit 1
