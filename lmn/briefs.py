@@ -69,7 +69,20 @@ def short_lines(text, note):
     return "\n".join(lines)
 
 
+HEAD, TAIL = 20000, 10000  # a long transcript to the model: its start and its end, where the conclusion is
+
+
+def transcript(review_id):
+    """What Fantano says in the video, written down by Gemini (lmn/transcribe.py), or "". A longer one than the model
+    is given (30000 characters, lmn/llm.py) keeps its last part: the conclusion, not only the score, is at the end."""
+    p = DATA / "transcripts" / f"{review_id}.txt"
+    t = p.read_text().strip() if p.exists() else ""
+    return t if len(t) <= HEAD + TAIL else t[:HEAD] + "\n[…]\n" + t[-TAIL:]
+
+
 def finished(v, lang="ru"):
+    if v.get("src") == "video":
+        return True  # written from the video's transcript (lmn/transcribe.py); a new prompt needs its own pass over them
     if lang == "both" and v.get("skip") and not v.get("short"):
         return False  # only Fantano's short lines: told from them since 2026-11-04 ("src": "short")
     if v.get("rf", 0) >= FAIL_MAX and v.get("rf_p") == PROMPT_V:
@@ -291,7 +304,11 @@ def run():
     max_rub = float(os.environ.get("BRIEFS_MAX_RUB") or "150")
     npath = DATA / "notes.json"
     notes = json.loads(npath.read_text()) if npath.exists() else {}
-    todo = targets(archive, reviews, {k for k, v in data.items() if finished(v, lang)})
+    # a retelling of his one line whose video now has a transcript: written again from it (owner, 2026-11-08)
+    tdir = DATA / "transcripts"
+    heard = {p.stem for p in tdir.glob("*.txt")} if lang == "both" and tdir.is_dir() else set()
+    todo = targets(archive, reviews, {k for k, v in data.items() if finished(v, lang)
+                                      and not (k in heard and v.get("src") != "video" and v.get("tf", 0) < FAIL_MAX)})
     print(f"briefs ({lang}): {sum(1 for v in data.values() if v.get('brief'))} done, {len(untranslated(data))} to translate, "
           f"{len(todo)} to write, this run up to {limit}")
     made = failed = tried = 0
@@ -311,6 +328,9 @@ def run():
         if not llm.available(lang):  # no key, or every provider gave up: the setup's fault, not this review's
             print("::warning::no model available (keys missing, wrong or out of quota), stopping")
             break
+        src = None
+        if len(text) < MIN_TEXT and a["id"] in heard:  # only a video, but Gemini wrote down what he says in it
+            text, src = transcript(a["id"]), "video"
         short = len(text) < MIN_TEXT
         if short:  # the review is only in the video: Fantano's own lines instead (lang "both" only)
             lines = short_lines(text, notes.get(a["id"])) if lang == "both" else ""
@@ -323,7 +343,7 @@ def run():
         out = llm.summarize(title, text, lang=lang, verdict=verdict(a), tags=tags(a), **({"short": True} if short else {}))
         if out and (out.get("brief") or "").strip():
             old = data.get(a["id"]) or {}
-            data[a["id"]] = {**entry(out, lang), **({"src": "short"} if short else {})}
+            data[a["id"]] = {**entry(out, lang), **({"src": "short"} if short else {"src": src} if src else {})}
             if lang == "en" and old.get("brief"):  # the old Russian one stays on the site until the translation comes
                 data[a["id"]].update({f: old[f] for f in ("brief", "about", "who") if old.get(f)})
             made += 1
@@ -343,7 +363,9 @@ def run():
             streak.append((a["id"], data.get(a["id"])))
             failed += 1
             prev = data.get(a["id"]) or {}
-            if prev.get("brief"):  # an old brief to write again is kept until a new one comes; tried FAIL_MAX runs
+            if src:  # from a transcript: its own count ("tf"), the retelling and "who" stay meanwhile
+                data[a["id"]] = {**prev, "tf": prev.get("tf", 0) + 1}
+            elif prev.get("brief"):  # an old brief to write again is kept until a new one comes; tried FAIL_MAX runs
                 rf = prev.get("rf", 0) if prev.get("rf_p") == PROMPT_V else 0  # counted again for a new prompt
                 data[a["id"]] = {**prev, "rf": rf + 1, "rf_p": PROMPT_V}  # (a new dict: an outage restores the old one)
             else:
