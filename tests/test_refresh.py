@@ -157,6 +157,14 @@ class HourlyRefreshTest(unittest.TestCase):
         check.main()
         self.assertEqual(self.saved()["ai"]["brief"], "Бриф из видео.")
 
+    def test_a_post_with_an_older_layout_is_not_edited(self):
+        # owner, 2026-11-08: «уже опубликованные в канале не надо переписывать»; what is found still goes to the site
+        self.enrich = later_enrich
+        self.age(80, card_v=1)
+        check.main()
+        self.assertEqual(self.card_edits(), [])
+        self.assertEqual(self.saved()["ai"]["brief"], "Бриф из видео.")
+
     def test_photo_post_is_edited_in_its_caption(self):
         self.enrich = later_enrich
         self.age(80, tg_kind=None)

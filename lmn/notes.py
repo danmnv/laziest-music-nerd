@@ -15,7 +15,7 @@ import sys
 import time
 import urllib.parse
 
-from . import http, links
+from . import http, links, musicbrainz
 from .musicbrainz import norm
 from .youtube import parse_description
 from .yt_archive import title_keys
@@ -122,8 +122,42 @@ def deezer_album(artist, album, sleep=time.sleep):
     return {k: v for k, v in out.items() if v}
 
 
+FALLBACK = ("cv", "t", "min", "y", "mb")  # what a Deezer miss may still carry (fallback)
+
+
+def fallback(artist, album, known=None):
+    """For an album Deezer doesn't have (owner, 2026-11-08: leroy «status update music», no cover in the bot): its
+    MusicBrainz release group, the front cover from the Cover Art Archive and, when no tracklist is known yet (the AOTY
+    table's, lmn/aoty.py tracks), MusicBrainz's. What was found before is kept. {"fb": 1} marks that it was asked."""
+    keep = {k: known[k] for k in FALLBACK if isinstance(known, dict) and known.get(k)}
+    if keep.get("cv") and keep.get("t"):
+        return {**keep, "fb": 1}
+    rg = musicbrainz.find_release_group(artist, album)
+    if not rg:
+        return {**keep, "fb": 1}
+    keep["mb"] = rg["rg_id"]
+    if rg.get("date") and not keep.get("y"):
+        keep["y"] = rg["date"][:4]
+    if not keep.get("cv"):
+        try:
+            imgs = http.get_json(f"https://coverartarchive.org/release-group/{rg['rg_id']}").get("images") or []
+            front = next((i for i in imgs if i.get("front")), None)
+            if front:
+                th = front.get("thumbnails") or {}
+                keep["cv"] = (th.get("1200") or th.get("large") or front.get("image") or "").replace("http://", "https://") or None
+        except Exception as e:  # 404: no art for it; 503: the archive is busy, asked again at the next miss
+            print(f"  ! cover art {artist} - {album}: {e}", file=sys.stderr)
+    if not keep.get("t"):
+        d = musicbrainz.release_details(rg.get("releases") or [])
+        if d.get("tracks"):
+            keep["t"] = [[t["title"] or "", t["sec"] or 0] for t in d["tracks"]]
+            keep["min"] = d.get("duration_min")
+    return {**{k: v for k, v in keep.items() if v}, "fb": 1}
+
+
 def found(v):
-    """The album from data/albums.json, or None for a miss (0 or {"miss": date})."""
+    """The album from data/albums.json, or None for a miss (0 or {"miss": date}; a miss with a cover or a tracklist from
+    fallback counts as found where it is shown, see lmn/site.py deezer_found)."""
     return v if isinstance(v, dict) and v.get("dz") else None
 
 
@@ -155,14 +189,16 @@ def albums(archive, old, limit=1500, deadline=None, today=None):
         if not (a.get("artist_name") and a.get("album")) or a.get("track"):
             continue
         known = old.get(a["id"])
-        if known is not None and not (is_miss(known) and miss_due(known, a.get("published"), today)):
+        # a miss from before the fallback (2026-11-08) is asked once more, now with it
+        due = is_miss(known) and (miss_due(known, a.get("published"), today) or (isinstance(known, dict) and not known.get("fb")))
+        if known is not None and not due:
             out[a["id"]] = known
         elif n < limit and not (deadline and time.monotonic() > deadline):
             n += 1
             x = deezer_album(a["artist_name"], a["album"])
             time.sleep(SLEEP)
             if x is not None:
-                out[a["id"]] = x or {"miss": today.isoformat()}
+                out[a["id"]] = x or {"miss": today.isoformat(), **fallback(a["artist_name"], a["album"], known)}
             elif known is not None:
                 out[a["id"]] = known
         elif known is not None:

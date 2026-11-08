@@ -24,8 +24,16 @@ class AotyImport(unittest.TestCase):
 
     def test_entry_keeps_known_outlets_with_links_and_fantano_apart(self):
         e = aoty.entry(row("A", "B", reviews=[ODD, TND, PITCHFORK, {"publication": "AllMusic", "rating": 8.0}]))
+        # the known outlets first, then the others in the table's order (owner, 2026-11-08: a couple even outside the list)
         self.assertEqual(e, {"s": 79, "tnd": 8.0, "c": [{"outlet": "Pitchfork", "score": "8.3/10", "url": "https://pitchfork.com/r"},
-                                                       {"outlet": "AllMusic", "score": "4/5"}]})
+                                                       {"outlet": "AllMusic", "score": "4/5"},
+                                                       {"outlet": "Some Blog", "score": "9/10", "url": "https://blog"}]})
+
+    def test_an_album_only_the_needle_drop_reviewed_has_no_aoty_score(self):
+        # AOTY's critic score is then Fantano's own (127 rows of the owner's table, 2026-11-08)
+        self.assertEqual(aoty.entry(row("A", "B", reviews=[TND])), {"tnd": 8.0})
+        e = aoty.entry(row("A", "B", reviews=[TND, ODD]))
+        self.assertEqual((e["s"], e["c"]), (79, [{"outlet": "Some Blog", "score": "9/10", "url": "https://blog"}]))
 
     def test_scores_written_as_the_outlet_writes_them(self):
         self.assertEqual(aoty.score_text("AllMusic", 7.0), "3.5/5")

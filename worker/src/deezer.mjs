@@ -20,9 +20,13 @@ export function pickAlbum(results, names, album) {
   const want = nameKey(album);
   const same = (x) => nameKey(x.title) === want || nameKey(String(x.title || "").replace(/\s*[([].*$/, "")) === want;
   const keys = names.map(nameKey).filter(Boolean);
+  // a single named after the album comes first in the search for some (KNEECAP "FENIAN", 2026-11-08: a 3-track single
+  // with its own cover): the album itself first, then the exact title, then the longest (lmn/links.py _rank)
+  const rank = (x) => [x.record_type !== "single" ? 1 : 0, nameKey(x.title) === want ? 1 : 0, x.nb_tracks || 0];
+  const better = (a, b) => { const [p, q] = [rank(a), rank(b)]; for (let i = 0; i < 3; i++) if (p[i] !== q[i]) return p[i] > q[i]; return false; };
   for (const k of keys) {
-    const hit = (results || []).find((x) => x && x.artist && nameKey(x.artist.name) === k && same(x));
-    if (hit) return hit;
+    const hits = (results || []).filter((x) => x && x.artist && nameKey(x.artist.name) === k && same(x));
+    if (hits.length) return hits.reduce((a, b) => (better(b, a) ? b : a));
   }
   return null;
 }

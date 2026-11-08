@@ -337,6 +337,9 @@ async function onCallback(q, env) {
     const r = artistReviews(await archive(env), parts[1]);
     if (r.total) await tg(env, "sendMessage", { chat_id: uid, ...artistMessage(r.artist, r.total, r.items, 0, await rankingVideo(env, r.artist)) });
   } else if (parts[0] === "da") {
+    // from the channel's card (owner, 2026-11-08): the bot can't write first to someone who never started it
+    const user = await env.DB.prepare("SELECT 1 FROM users WHERE user_id=?").bind(uid).first();
+    if (!user) return tg(env, "answerCallbackQuery", { callback_query_id: q.id, url: `https://t.me/${env.BOT_USERNAME}?start=da_${parts[1]}` });
     await answerNow();
     const arch = await archive(env);
     const a = arch.find((x) => x.id === parts[1]);
@@ -571,6 +574,12 @@ async function openCard(env, uid, open) {
   if (kind === "dz") return sendDeezerAlbum(env, uid, id);
   if (kind === "mb") return sendMbAlbum(env, uid, id, null);
   if (kind === "q") return openQueueCard(env, uid, id);
+  if (kind === "t") return sendTracklist(env, uid, id);
+  if (kind === "da") { // «💿 Альбомы артиста» pressed in the channel before the bot was started (the "da" callback)
+    const arch = await archive(env);
+    const a = arch.find((x) => x.id === id);
+    return a ? sendOtherAlbums(env, uid, arch, a.artist_name, false) : tg(env, "sendMessage", { chat_id: uid, text: "Не нашёл этого артиста." });
+  }
   const a = (await archiveById(env, id)) || (await reviews(env)).find((x) => x.id === id);
   if (a) return sendAlbum(env, uid, a, "");
   return tg(env, "sendMessage", { chat_id: uid, text: "Не нашёл этот альбом." });
@@ -715,7 +724,7 @@ const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 // card (lmn/card.py SITE_MARK). Empty while the site is off.
 function siteLine(env, r) {
   return env.SITE_URL && env.SITE_LIVE === "1" && r.id
-    ? `\n🌐 <a href="${env.SITE_URL}/r/${encodeURIComponent(r.id)}.html">Этот альбом на нашем сайте</a>` : "";
+    ? `\n🌐 <a href="${env.SITE_URL}/r/${encodeURIComponent(r.id)}.html">На нашем сайте</a>` : ""; // shorter (owner, 2026-11-08)
 }
 
 // The album in Deezer's search. Plain words first: Deezer's field search (artist:"…" album:"…") answers nothing for
@@ -725,7 +734,8 @@ function siteLine(env, r) {
 async function deezerHit(artist, album) {
   const want = selfTitled(artist, album);
   const names = creditedNames(artist);
-  for (const q of [`${artist} ${want}`, `artist:"${names[names.length > 1 ? 1 : 0]}" album:"${want}"`]) {
+  // the title alone last: Deezer finds nothing for "Destroyer Kaputt" but finds it by the title (lmn/links.py find_album)
+  for (const q of [`${artist} ${want}`, `artist:"${names[names.length > 1 ? 1 : 0]}" album:"${want}"`, want]) {
     const r = await fetch(`https://api.deezer.com/search/album?q=${encodeURIComponent(q)}&limit=25`);
     const hit = pickAlbum(r.ok ? (await r.json()).data : [], names, want);
     if (hit) return hit;
@@ -774,15 +784,15 @@ function appleSearch(term) {
   });
 }
 
-// The streaming links of a card (owner, 2026-11-02): YouTube Music, Apple Music (when the album is found), SoundCloud, then Bandcamp, or
-// Google's search when no Bandcamp page is known. SoundCloud has no open API, so it is always its search.
+// The streaming links of a card (owner, 2026-11-02): YouTube Music, Apple Music (when the album is found), SoundCloud, then Bandcamp
+// when a page is known; no Google search in its place (owner, 2026-11-08). SoundCloud has no open API, so it is always its search.
 function listenLinks(q, ytm, apple, bandcamp) {
   return [
     ytm ? ["YouTube Music", ytm] : ["искать в YouTube Music", `https://music.youtube.com/search?q=${q}`],
     // only the album itself: Music on a Mac opens a search link but drops the query (owner, 2026-11-02)
     ...(apple ? [["Apple Music", apple]] : []),
     ["искать в SoundCloud", `https://soundcloud.com/search?q=${q}`],
-    bandcamp || ["искать в Google", `https://www.google.com/search?q=${q}`],
+    ...(bandcamp ? [bandcamp] : []),
   ];
 }
 
@@ -1053,11 +1063,12 @@ function bandcampLink(links, artist, album, fromVideo) {
   const label = (u) => (/^https?:\/\/[a-z0-9-]+\.bandcamp\.com\/?$/i.test(u) ? "Bandcamp артиста" : "Bandcamp");
   if (bc && !bc.includes("bandcamp.com/search")) return [label(bc), bc];
   if (fromVideo && /^https:\/\/([a-z0-9-]+\.)?bandcamp\.com\//i.test(fromVideo)) return [label(fromVideo), fromVideo];
-  return null; // no page known: the card offers Google's search instead (owner, 2026-11-02)
+  return null; // no page known: no Bandcamp link
 }
 
+// no «Ссылки:» word (owner, 2026-11-08: their colour says they are links)
 function linkItems(items) {
-  return "<b>Ссылки:</b> " + items.map(([t, u]) => `<a href="${esc(u).replace(/"/g, "&quot;")}">${esc(t)}</a>`).join(" · ");
+  return items.map(([t, u]) => `<a href="${esc(u).replace(/"/g, "&quot;")}">${esc(t)}</a>`).join(" · ");
 }
 
 // A full card for one review, as in the channel: cover, score, genres, length, links, marks and "🔔".
@@ -1066,10 +1077,14 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   const full = (await reviews(env)).find((x) => x.id === a.id);
   const r = full || a;
   const links = (full && full.links) || {};
-  const [dz, rt] = await Promise.all([
-    (full && full.covers && full.covers.length && full.duration_min) ? null : deezerAlbum(r.artist_name, r.album),
-    criticsOf(env, r.id),
-  ]);
+  const rt = await criticsOf(env, r.id);
+  // the album as checked from Actions (data/albums.json via the site's rt/<id>.json: Deezer, else the Cover Art Archive
+  // and the AOTY table); Deezer's live search only without it: it once found KNEECAP's single «FENIAN» (owner, 2026-11-08)
+  const al = rt && rt.al;
+  const dz = (full && full.covers && full.covers.length && full.duration_min) ? null
+    : al ? { cover: al.cv || null, tracks: al.t ? al.t.length : null, list: (al.t || []).map(([title, sec]) => ({ title, sec: sec || null })),
+             minutes: al.min || null, year: al.y || null }
+    : await deezerAlbum(r.artist_name, r.album);
   // a card the bot posted has it (lmn/links.py), an archive album from Actions (lmn/apple.py, in rt); the live search
   // last: Apple often refuses the Worker (429, its address is shared with other Cloudflare sites)
   const apple = links.apple || (rt && rt.apple) || await appleAlbum(r.artist_name, r.album);
@@ -1097,8 +1112,12 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   const fav = (full && full.ai && full.ai.best_tracks && full.ai.best_tracks.length ? full.ai.best_tracks : rt && rt.fav) || [];
   // Paragraphs (owner, 2026-11-01: one block read as glued): the title and score; Fantano's words; the critics;
   // when to listen; the tracklist folded, as in the channel's card.
+  // «Кто» and the review's summary in one paragraph, as on the channel's card (owner, 2026-11-08: the bot had no «Кто»);
+  // «Описание» renamed «Обзор»
+  const who = (full && full.ai && full.ai.who) || (rt && rt.who);
   const about = [
-    brief ? `<b>Описание:</b> ${esc(brief)}` : "",
+    who ? `<b>Кто:</b> ${esc(who)}` : "",
+    brief ? `<b>Обзор:</b> ${esc(brief)}` : "",
     rt && rt.blurb && !brief ? `💬 <i>${esc(rt.blurb)}</i>` : "",
     fav.length && !list.length ? `★ Любимые у Фантано: ${esc(fav.join(", "))}` : "", // with a tracklist, ★ marks them there
   ].filter(Boolean).join("\n");
@@ -1124,7 +1143,8 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   // a photo's caption takes 1024 characters: when even the text without a tracklist is longer, the card is a message
   // (4096, the whole tracklist) with the cover as its link preview above the text
   const asPhoto = cover && tgLen(base + "\n\n" + linkLine) <= CAPTION_LIMIT;
-  const text = withTracklist(base, list, fav, asPhoto ? CAPTION_LIMIT : MESSAGE_LIMIT, linkLine);
+  const more = `https://t.me/${env.BOT_USERNAME}?start=t_${r.id}`; // «… ещё N» sends the whole tracklist (sendTracklist)
+  const text = withTracklist(base, list, fav, asPhoto ? CAPTION_LIMIT : MESSAGE_LIMIT, linkLine, more);
   // only actions (owner, 2026-11-02); the links are the text's last line
   const liked = await isLiked(env, uid, r.id);
   const reply_markup = { inline_keyboard: [
@@ -1141,31 +1161,64 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
     if (d.ok) return d;
   }
   const preview = cover ? { url: cover, prefer_large_media: true, show_above_text: true } : { is_disabled: true };
-  return tg(env, "sendMessage", { chat_id: uid, text: asPhoto ? withTracklist(base, list, fav, MESSAGE_LIMIT, linkLine) : text,
+  return tg(env, "sendMessage", { chat_id: uid, text: asPhoto ? withTracklist(base, list, fav, MESSAGE_LIMIT, linkLine, more) : text,
     parse_mode: "HTML", reply_markup, link_preview_options: preview });
 }
 
 // The card's text with the tracklist folded at the end (an expandable quote, as in the channel's card), ★ on Fantano's
 // favourites. Lines go from the end while it is too long for the message; then the whole tracklist.
-function withTracklist(text, list, fav, limit, tail = "") {
+function withTracklist(text, list, fav, limit, tail = "", moreUrl = null) {
   // the links, under the tracklist (owner, 2026-11-02). The quote stands out by itself, so no blank lines around it
   // (owner, 2026-11-02); without a tracklist the links are a paragraph of their own
   const end = tail ? "\n\n" + tail : "";
   if (!list.length) return text + end;
-  const best = fav.map(nameKey).filter(Boolean);
-  const lines = list.map((t, i) => {
+  const lines = trackLines(list, fav);
+  const legend = lines.some((l) => l.endsWith("★")) ? " (★ — любимые у Фантано)" : "";
+  for (let k = lines.length; k > 0; k--) {
+    // what didn't fit: a link to the whole tracklist in this chat (owner, 2026-11-08)
+    const rest = `… ещё ${lines.length - k}`;
+    const shown = lines.slice(0, k).concat(k < lines.length ? [moreUrl ? `<a href="${esc(moreUrl)}">${rest}</a>` : rest] : []);
+    const out = `${text}\n<blockquote expandable><b>Треклист</b>${legend}\n${shown.join("\n")}</blockquote>${tail ? "\n" + tail : ""}`;
+    if (tgLen(out) <= limit) return out;
+  }
+  return text + end;
+}
+
+function trackLines(list, fav) {
+  const best = (fav || []).map(nameKey).filter(Boolean);
+  return list.map((t, i) => {
     const n = nameKey(t.title);
     const star = n && best.some((b) => b === n || (b.length > 3 && n.includes(b))) ? " ★" : "";
     const dur = t.sec ? ` ${Math.floor(t.sec / 60)}:${String(t.sec % 60).padStart(2, "0")}` : "";
     return `${i + 1}. ${esc(t.title)}${dur}${star}`;
   });
-  const legend = lines.some((l) => l.endsWith("★")) ? " (★ — любимые у Фантано)" : "";
-  for (let k = lines.length; k > 0; k--) {
-    const shown = lines.slice(0, k).concat(k < lines.length ? [`… ещё ${lines.length - k}`] : []);
-    const out = `${text}\n<blockquote expandable><b>Треклист</b>${legend}\n${shown.join("\n")}</blockquote>${tail ? "\n" + tail : ""}`;
-    if (tgLen(out) <= limit) return out;
+}
+
+// The whole tracklist of a review, for a card whose tracklist didn't fit (its «… ещё N» opens /start t_<id>): the title,
+// score, genres, date, length and every track, nothing else (owner, 2026-11-08: «я смогу из такой карточки как минимум в
+// канал сам треклист вписывать полный»). The tracks as plain lines, easy to copy.
+async function sendTracklist(env, uid, id) {
+  const a = (await archiveById(env, id)) || (await reviews(env)).find((x) => x.id === id);
+  if (!a) return tg(env, "sendMessage", { chat_id: uid, text: "Не нашёл этот альбом." });
+  const full = (await reviews(env)).find((x) => x.id === id);
+  const rt = full ? null : await criticsOf(env, id);
+  const al = (rt && rt.al) || {};
+  let list = full && full.tracks && full.tracks.length ? full.tracks : (al.t || []).map(([title, sec]) => ({ title, sec: sec || null }));
+  let minutes = (full && full.duration_min) || al.min;
+  let year = (full && full.year) || al.y;
+  if (!list.length) {
+    const dz = await deezerAlbum(a.artist_name, a.album);
+    if (dz) [list, minutes, year] = [dz.list, minutes || dz.minutes, year || dz.year];
   }
-  return text + end;
+  const fav = (full && full.ai && full.ai.best_tracks) || (rt && rt.fav) || [];
+  const date = (full && full.release_date) || year;
+  const facts = [badge(a), genresOf(a).slice(0, 3).join(", "), date ? `вышел ${date}` : "", minutes ? `${minutes} мин` : "",
+    list.length ? tracksWord(list.length) : ""].filter(Boolean).join(" · ");
+  const lines = trackLines(list, fav);
+  const legend = lines.some((l) => l.endsWith("★")) ? "\n<i>★ — любимые у Фантано</i>" : "";
+  const text = `<b>${esc(a.artist_name)} — ${esc(a.album)}</b>\n${esc(facts)}\n\n` + (lines.length ? lines.join("\n") + legend : "Треклист не нашёлся.");
+  return tg(env, "sendMessage", { chat_id: uid, text: text.length > MESSAGE_LIMIT ? text.slice(0, MESSAGE_LIMIT) : text,
+    parse_mode: "HTML", link_preview_options: { is_disabled: true } });
 }
 
 // ---------- «Наверстать» (was «Дослушать») ----------

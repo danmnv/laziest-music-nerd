@@ -93,7 +93,10 @@ def refresh_cards(reviews, posts, archive, tg, channel, started):
             continue
         refresh.add_critics(r, ratings, notes)
         need = refresh.missing(r)
-        stale = bool(r.get("tg_channel_msg")) and refresh.shown(r, wl) != r.get("tg_shown")
+        # a post sent with an older layout keeps it: the data is still filled in (for the site and the bot), the post
+        # isn't edited (owner, 2026-11-08: «уже опубликованные в канале не надо переписывать»)
+        same_layout = r.get("card_v") == card.CARD_V
+        stale = bool(r.get("tg_channel_msg")) and same_layout and refresh.shown(r, wl) != r.get("tg_shown")
         if not (need or stale):  # complete and posted as it is: nothing to do, nothing to write
             continue
         if looked >= refresh.MAX_PER_RUN or time.monotonic() - started > TIME_BUDGET_SEC:
@@ -108,7 +111,7 @@ def refresh_cards(reviews, posts, archive, tg, channel, started):
                 print(f"refresh {r['id']}: enrich failed ({type(ex).__name__}: {str(ex)[:200]})")
         if (r.get("ai") or {}).get("brief") or stage == refresh.LAST:
             r.pop("brief_pending", None)  # written, or the last try: the card stops promising it
-        if r.get("tg_channel_msg") and refresh.shown(r, wl) != r.get("tg_shown"):
+        if r.get("tg_channel_msg") and same_layout and refresh.shown(r, wl) != r.get("tg_shown"):
             if not tg:
                 print("---- edit ----\n" + card.caption(r))
             else:
@@ -299,6 +302,7 @@ def main():
                 r["tg_channel_msg"] = msg["message_id"]
                 r["tg_kind"] = "photo" if msg.get("photo") else "text"
                 r["tg_shown"] = refresh.shown(r, os.environ.get("WORKER_LIVE") == "1")
+                r["card_v"] = card.CARD_V  # the layout it went out with: an older one is never edited (refresh_cards)
             else:
                 print("----\n" + card.caption(r) + "\n" + json.dumps(card.buttons(r), ensure_ascii=False))
         r["refreshed"] = refresh.passed_stages(r)  # just looked up: a stage already behind it is not repeated

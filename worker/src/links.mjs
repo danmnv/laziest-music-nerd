@@ -8,6 +8,7 @@ export function startLink(env, open) {
 }
 
 export function openFromStart(text) {
-  const m = /^\/start (a|dz|mb|q)_([A-Za-z0-9_-]{1,60})$/.exec(text); // q: a card of «Дослушать»
+  // q: a card of «Наверстать»; t: an album's whole tracklist; da: the artist's albums (from the channel's card)
+  const m = /^\/start (a|dz|mb|q|t|da)_([A-Za-z0-9_-]{1,60})$/.exec(text);
   return m ? `${m[1]}:${m[2]}` : null;
 }

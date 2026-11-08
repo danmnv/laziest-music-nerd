@@ -24,14 +24,22 @@ def self_titled(artist, album):
     return f"{artist}{m.group(1)}" if m else album
 
 
+def _rank(want):
+    return lambda x: (x.get("record_type") != "single", norm(x.get("title")) == want, x.get("nb_tracks") or 0)
+
+
 def pick_album(results, names, album, editions=False):
     """The result for this album: the same title, or the title before a bracket ("Kid A (Remastered)"); with
     editions, also a title that starts the same and names an edition ("Kid A Deluxe Edition"), never another record
-    that merely starts the same ("Kid A Mnesia"). By the full artist name first, then by one of the credited names."""
+    that merely starts the same ("Kid A Mnesia"). By the full artist name first, then by one of the credited names.
+    Of several with the title, the album before a single of the same name (_rank)."""
     want = norm(album)
     for key in [norm(n) for n in names if norm(n)]:
         mine = [x for x in results or [] if x and norm((x.get("artist") or {}).get("name")) == key]
-        hit = next((x for x in mine if norm(x.get("title")) == want or norm(re.sub(r"\s*[(\[].*$", "", x.get("title") or "")) == want), None)
+        same = [x for x in mine if norm(x.get("title")) == want or norm(re.sub(r"\s*[(\[].*$", "", x.get("title") or "")) == want]
+        # a single named after the album comes first in the search for some (KNEECAP "FENIAN", 2026-11-08: a 3-track
+        # single with its own cover): the album itself first, then the exact title, then the longest
+        hit = max(same, key=_rank(want), default=None)
         if not hit and editions:
             hit = next((x for x in mine if norm(x.get("title")).startswith(want) and EDITION.search(x.get("title") or "")), None)
         if hit:
@@ -45,7 +53,9 @@ def find_album(artist, album, get=None, editions=False, sleep=None):
     Angine de Poitrine "Vol. II", Ghost "Skeletá"), so it is only the second try. Request errors are raised."""
     get = get or http.get_json
     want, names = self_titled(artist, album), credited_names(artist)
-    queries = [f"{artist} {want}", f'artist:"{names[1] if len(names) > 1 else names[0]}" album:"{want}"']
+    # the title alone last: Deezer's search finds nothing for "Destroyer Kaputt" or "Women Public Strain" but finds them by
+    # the title (checked from Actions 2026-11-08); pick_album still wants the artist's name
+    queries = [f"{artist} {want}", f'artist:"{names[1] if len(names) > 1 else names[0]}" album:"{want}"', want]
     for i, q in enumerate(queries):
         if i and sleep:
             sleep()

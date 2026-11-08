@@ -56,8 +56,11 @@ class ParseTest(unittest.TestCase):
                  links={"bandcamp": "https://b", "ytmusic": "https://y", "songlink": "https://album.link/x"})
         c = card.caption(r)
         self.assertIn("<b>Fontaines D.C. — Dopamine Chamber</b>", c)
-        self.assertIn("🟡 7/10 · darkwave, dream pop · 44 мин", c)
-        self.assertIn("Romance — 7; Skinty Fia — 6", c)
+        # the bot's score line: «N-й из M обзоров артиста» instead of «Фантано раньше» (owner, 2026-11-08)
+        self.assertIn("🟡 7/10 · darkwave, dream pop · 44 мин · 3-й из 3 обзоров артиста\n\n", c)
+        self.assertNotIn("Фантано раньше", c)
+        # «Кто» and «Обзор» (was «Описание») with no blank line between them
+        self.assertIn("<b>Кто:</b> ирландская рок-группа, пятый альбом\n<b>Обзор:</b> Ирландцы расширили звук.\n\n", c)
         self.assertLessEqual(card.tg_len(c), 1024)
         line = card.list_line(r)
         self.assertTrue(line.startswith("🟡 7 · <a href="))
@@ -65,7 +68,9 @@ class ParseTest(unittest.TestCase):
         kb = card.buttons(r, with_callbacks=True)
         # buttons only for actions; the links are the caption's last line, under the tracklist (owner, 2026-11-02)
         self.assertTrue(all("callback_data" in b for row in kb for b in row))
-        self.assertIn([{"text": "🔔 Следить за артистом", "callback_data": f"f:{r['id']}"}], kb)
+        # as the bot's card: the artist's albums next to «🔔 Следить» (owner, 2026-11-08)
+        self.assertIn([{"text": "🔔 Следить", "callback_data": f"f:{r['id']}"},
+                       {"text": "💿 Альбомы артиста", "callback_data": f"da:{r['id']}"}], kb)
         # as the bot's card (worker MARK_ROWS): «♡ Понравилось» is its own mark, «Отложить» is «⏳ Послушать потом»
         self.assertEqual([[b["callback_data"] for b in row] for row in kb[:2]],
                          [[f"m:{r['id']}:done", f"lk:{r['id']}"], [f"m:{r['id']}:later", f"m:{r['id']}:nope"]])
@@ -80,9 +85,11 @@ class ParseTest(unittest.TestCase):
         self.assertTrue(c.endswith("\n" + card.links_line(r)))
         self.assertNotIn("Все платформы", c)
         bare = dict(r, links={"bandcamp": "https://bandcamp.com/search?q=x", "ytmusic": "https://y", "apple": "https://music.apple.com/us/album/x/1"})
+        # no Google search where no Bandcamp page is known (owner, 2026-11-08)
         self.assertEqual(card.link_items(bare)[2:5], [("Apple Music", "https://music.apple.com/us/album/x/1"),
             ("искать в SoundCloud", "https://soundcloud.com/search?q=Fontaines%20D.C.%20Dopamine%20Chamber"),
-            ("искать в Google", "https://www.google.com/search?q=Fontaines+D.C.+Dopamine+Chamber")])
+            ("оценки на AOTY", "https://www.albumoftheyear.org/search/?q=Fontaines+D.C.+Dopamine+Chamber")])
+        self.assertFalse(card.links_line(r).startswith("<b>"))  # no «Ссылки:» word
         self.assertTrue(all(len(b["callback_data"].encode()) <= 64 for row in kb for b in row if "callback_data" in b))
         txt = card.pinned_text([r])
         self.assertIn("Dopamine Chamber", txt)
@@ -101,7 +108,7 @@ class ParseTest(unittest.TestCase):
         with mock.patch.object(card, "SITE_LIVE", True):
             cap = card.caption(r)
             self.assertIn("<b>Fontaines D.C. — Dopamine Chamber</b>", cap)  # copyable: not a link
-            self.assertTrue(cap.endswith(f'\n🌐 <a href="{card.SITE_URL}/r/{r["id"]}.html">Этот альбом на нашем сайте</a>'))
+            self.assertTrue(cap.endswith(f'\n🌐 <a href="{card.SITE_URL}/r/{r["id"]}.html">На нашем сайте</a>'))
 
     def test_pin_intro_is_the_same_in_the_worker(self):
         # The owner's marks edit the pin through the Worker, new reviews through check.py: two texts would make it flip
@@ -135,12 +142,12 @@ class ParseTest(unittest.TestCase):
                  tracks=[{"title": "Big Fire", "sec": 201}, {"title": "Favourite", "sec": 62}],
                  ai={"brief": "Бриф.", "best_tracks": ["big fire"]})
         c = card.caption(r)
-        self.assertIn("🟡 7/10 · darkwave · 2 трека, 44 мин", c)
+        self.assertIn("🟡 7/10 · darkwave · 2 трека · 44 мин", c)
         self.assertIn("1. Big Fire 3:21 ★", c)
         self.assertIn("2. Favourite 1:02</blockquote>", c)
-        self.assertIn("</blockquote>\n<b>Ссылки:</b> ", c)  # the links right under the tracklist (owner, 2026-11-02)
-        # paragraphs, as in the bot (owner, 2026-11-02: the channel card read as glued)
-        self.assertIn("44 мин\n\n<b>Фантано раньше:</b> обозревает впервые\n\n<b>Описание:</b> Бриф.\n<blockquote", c)
+        self.assertIn("</blockquote>\n<a href=", c)  # the links right under the tracklist (owner, 2026-11-02)
+        # paragraphs, as in the bot; nothing about the artist's other reviews on a first one
+        self.assertIn("44 мин\n\n<b>Обзор:</b> Бриф.\n<blockquote", c)
         self.assertIn("<blockquote expandable>", c)
         self.assertEqual(card.plural_tracks(11), "11 треков")
         self.assertEqual(card.plural_tracks(21), "21 трек")
@@ -150,7 +157,7 @@ class ParseTest(unittest.TestCase):
         r["ai"] = {"brief": "Очень длинный бриф. " * 40}
         c = card.caption(r)
         self.assertLessEqual(card.tg_len(c), 1024)
-        self.assertIn("<b>Описание:</b>", c)
+        self.assertIn("<b>Обзор:</b>", c)
         self.assertIn('<a href="https://youtu.be/UzvthnAU6nc">Видеообзор</a>', c)  # the links stay when the tracklist shrinks
         self.assertNotIn("Видеообзор на YouTube", c)
 
@@ -188,7 +195,7 @@ class CardExtrasTest(unittest.TestCase):
     def test_without_a_description_fantanos_line_and_a_promise(self):
         c = card.caption(dict(self.R, blurb="A big step forward.", brief_pending=1))
         self.assertIn("<b>Фантано под видео:</b> <i>A big step forward.</i>", c)
-        self.assertIn("Описание ещё пишется", c)
+        self.assertIn("Обзор ещё пишется", c)
         c = card.caption(dict(self.R, blurb="A big step forward.", brief_pending=1, ai={"brief": "Бриф."}))
         self.assertNotIn("Фантано под видео", c)
         self.assertNotIn("ещё пишется", c)
