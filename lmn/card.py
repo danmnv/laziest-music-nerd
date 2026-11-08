@@ -287,6 +287,7 @@ def link_items(r):
         ("YouTube Music", links["youtube_album"]) if links.get("youtube_album") else
         ("искать в YouTube Music", links.get("ytmusic") or f"https://music.youtube.com/search?q={q}") if named else None,
         ("Apple Music", links["apple"]) if links.get("apple") else None,
+        ("SoundCloud", links["soundcloud"]) if links.get("soundcloud") else
         ("искать в SoundCloud", f"https://soundcloud.com/search?q={q}") if named else None,
         # no «искать в Google» where no Bandcamp page is known (owner, 2026-11-08: no Google searches on cards)
         (bandcamp_label(bc).replace("Bandcamp · артист", "Bandcamp артиста"), bc) if bc and "bandcamp.com/search" not in bc else None,

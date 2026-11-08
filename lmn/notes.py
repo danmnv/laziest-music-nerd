@@ -309,9 +309,14 @@ def apply_dates(path, data_dir):
     # scores first: the links copy each review's score into the other one's "first"/"redo"
     filled = aoty.fill_scores(archive, json.loads((data_dir / "aoty.json").read_text())) if (data_dir / "aoty.json").exists() else 0
     print(f"archive: Fantano's score taken from the AOTY table for {filled} reviews")
+    genres = 0
+    if (data_dir / "aoty_top.json").exists():  # up to three genres where the archive has one or none (owner, 2026-11-08)
+        from . import aoty_top
+        genres = aoty_top.fill_genres(archive, json.loads((data_dir / "aoty_top.json").read_text()))
+        print(f"archive: genres from the second AOTY table for {genres} reviews")
     linked = rereviews.link(archive)
     print(f"archive: {linked} entries got or lost a link to another review of the same album")
-    if moved or linked or filled:
+    if moved or linked or filled or genres:
         (data_dir / "archive.json").write_text(json.dumps(archive, ensure_ascii=False, indent=1) + "\n")
 
 

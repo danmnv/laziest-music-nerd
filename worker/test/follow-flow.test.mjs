@@ -34,6 +34,7 @@ let mbDown = false;
 let longBrief = null; // a brief too long for a photo's caption
 let rtMoods = null; // the archive brief's mood guess for Kid A, when a test needs another
 let rtAl = null; // the album as checked from Actions (data/albums.json), in Kid A's rt file
+let topU = null; // the site's u/ra.json (the owner's AOTY table, lmn/aoty_top.py)
 let pinnedNow = null; // what getChat says is pinned in a private chat
 let freshAlbums = []; // albums Deezer lists for Radiohead on top of the old ones
 let fetched = []; // every URL the Worker asked outside Telegram
@@ -43,6 +44,7 @@ beforeEach(() => {
   longBrief = null;
   rtMoods = null;
   rtAl = null;
+  topU = null;
   pinnedNow = null;
   freshAlbums = [];
   db = new DatabaseSync(":memory:");
@@ -69,6 +71,8 @@ beforeEach(() => {
         brief: longBrief || "Radiohead уходят в электронику.", blurb: "Not shown when there is a brief.", moods: rtMoods || ["для работы за столом", "не то"],
         who: "британская рок-группа, четвёртый альбом", ...(rtAl ? { al: rtAl } : {}) }));
     }
+    if (String(url) === "https://site/u/ra.json" && topU) return new Response(JSON.stringify(topU));
+    if (String(url).startsWith("https://site/u/")) return new Response("not found", { status: 404 });
     if (String(url) === "https://site/wtb.json") return new Response(JSON.stringify([{ artist: "Radiohead", video_id: "uu8sC7YDOZg", date: "2017-04-17" }]));
     if (String(url) === "https://site/rt/p.json") {
       return new Response(JSON.stringify({ crit: [], sales: [], blurb: "Radiohead return & shine.", fav: ["DAYDREAMING", "TRUE LOVE WAITS"], fav_play: true,
@@ -413,6 +417,23 @@ test("when MusicBrainz is down, the list comes from Deezer: albums only, the fir
   calls = [];
   await press(OWNER, "dz:20");
   assert.match(calls.find((x) => x.method === "sendPhoto").caption, /^<b>Radiohead — The Bends<\/b> \(1995\)/);
+});
+
+test("an album without a review gets AOTY's genres, critics, tracklist and album links from the owner's table (2026-11-08)", async () => {
+  topU = { "radiohead--wallofeyes": { d: "2024-01-26", s: 83, g: ["art rock", "psychedelic rock"],
+    c: [["Pitchfork", "8.2/10"], ["The Guardian", "4/5"], ["NME", "4/5"], ["Mojo", "4/5"]], tr: [["Wall of Eyes", 315], ["Teleharmonic", 344]],
+    am: "https://music.apple.com/us/album/wall-of-eyes/1", bc: "https://thesmile.bandcamp.com/album/wall-of-eyes", sc: "https://soundcloud.com/thesmile/sets/wall-of-eyes" } };
+  await press(OWNER, "dz:30");
+  const c = calls.find((x) => x.method === "sendPhoto");
+  assert.ok(fetched.includes("https://site/u/ra.json"));
+  // AOTY's genres instead of Deezer's «Alternative»; Deezer's count and length stay; the table's year when Deezer gave none
+  assert.match(c.caption, /^<b>Radiohead — Wall of Eyes<\/b> \(2026\)\n⚪ Фантано не обозревал · art rock, psychedelic rock · 8 треков · 45 мин/);
+  assert.match(c.caption, /<b>Критики:<\/b> Pitchfork 8\.2\/10 · The Guardian 4\/5 · NME 4\/5 · AOTY 83\/100/);
+  assert.match(c.caption, /<blockquote expandable><b>Треклист<\/b>\n1\. Wall of Eyes 5:15\n2\. Teleharmonic 5:44<\/blockquote>/);
+  assert.deepEqual(cardLinks(c), [["искать в YouTube Music", "https://music.youtube.com/search?q=Radiohead%20Wall%20of%20Eyes"],
+    ["Apple Music", "https://music.apple.com/us/album/wall-of-eyes/1"], ["SoundCloud", "https://soundcloud.com/thesmile/sets/wall-of-eyes"],
+    ["Bandcamp", "https://thesmile.bandcamp.com/album/wall-of-eyes"], ["оценки на AOTY", "https://www.albumoftheyear.org/search/?q=Radiohead%20Wall%20of%20Eyes"]]);
+  assert.ok(!fetched.some((u) => u.startsWith("https://itunes.apple.com/"))); // the table's Apple link: no live search
 });
 
 test("an album without a review can be put off: it shows in «⏳ Послушать потом»", async () => {

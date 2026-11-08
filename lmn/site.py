@@ -9,7 +9,7 @@ import unicodedata
 import urllib.parse
 from pathlib import Path
 
-from . import aoty, card, gemini, ratings, specials, tnd
+from . import aoty, aoty_top, card, gemini, ratings, specials, tnd
 from .colors import color, label
 from .musicbrainz import norm
 
@@ -448,6 +448,8 @@ def build():
     bandcamp = load("bandcamp.json", {})  # direct Bandcamp links found through MusicBrainz (lmn/bandcamp.py)
     albums = load("albums.json", {})
     apple = load("apple.json", {})  # Apple Music links found from Actions (lmn/apple.py): the bot's cards read them from rt/
+    top = load("aoty_top.json", {})  # the owner's second AOTY table (lmn/aoty_top.py): SoundCloud links here, the rest in u/
+    top_hits = aoty_top.reviewed(list(by_id.values()), top)
     (OUT / "wtb.json").write_text(json.dumps([{k: r[k] for k in ("artist", "video_id", "date")} for r in sp.get("rankings", [])],
                                              ensure_ascii=False))  # the bot's artist lists link the "worst to best" video
     (OUT / "rt").mkdir(exist_ok=True)
@@ -486,7 +488,8 @@ def build():
         # the bot's critics line: the channel card's (card.critics_from: 3 outlets, Metacritic, AOTY), the same on both
         cc = [f"{c['o']} {c['s']}" for c in card.critics_from(rt)]
         am = apple.get(a["id"]) if isinstance(apple.get(a["id"]), str) else None
-        if crit or sales or li or nt or bf or bm or am or again_vid or who or al:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
+        sc = (top_hits.get(a["id"]) or {}).get("sc")  # the album's SoundCloud page instead of a search (owner, 2026-11-08)
+        if crit or sales or li or nt or bf or bm or am or again_vid or who or al or sc:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
             (OUT / "rt" / f"{a['id']}.json").write_text(json.dumps(
                 {"crit": cc, "sales": sales[:4], "wp_url": (rt or {}).get("wp_url"), "contested": contested(a, rt),
                  **({"lists": li[:4]} if li else {}), **({"blurb": nt["blurb"]} if nt.get("blurb") else {}),
@@ -494,12 +497,22 @@ def build():
                  **({"al": al} if al else {}),
                  **({"video_id": nt["video_id"]} if nt.get("video_id") and not a.get("video_id") else {}),
                  **({"bc": nt["bc"]} if nt.get("bc") else {}),
-                 **({"apple": am} if am else {}),
+                 **({"apple": am} if am else {}), **({"sc": sc} if sc else {}),
                  **({"again_vid": again_vid} if again_vid else {}),  # the other review's video: the bot's «🔁 Первый обзор» links it
                  **({"fav": [track_name(f["t"], fav_titles(a, deezer_found(albums.get(a["id"])))) for f in nt["fav"]], "fav_play": any(f.get("dz") or f.get("am") for f in nt["fav"])} if nt.get("fav") else {})},
                 ensure_ascii=False))
     for k, items in by_artist.items():
         (OUT / "a" / f"{k}.html").write_text(artist_page(items[0]["artist_name"], items))
+    # albums Fantano didn't review, for the bot's card of one (worker/src/index.js unreviewedCard): a few hundred files by
+    # the key's first letters, not one per album (Cloudflare Pages takes at most 20 000 files)
+    done = {aoty_top.key(a["artist_name"], a["album"]) for a in by_id.values() if a.get("artist_name") and a.get("album")}
+    shards = {}
+    for k, v in top.items():
+        if k not in done:
+            shards.setdefault(aoty_top.shard(k), {})[k] = {f: v[f] for f in ("d", "s", "g", "c", "tr", "am", "bc", "sc") if v.get(f)}
+    (OUT / "u").mkdir(exist_ok=True)
+    for sh, items in shards.items():
+        (OUT / "u" / f"{sh}.json").write_text(json.dumps(items, ensure_ascii=False, separators=(",", ":")))
     # an album reviewed again is listed once, by the later review (as in the bot's search)
     cat = sorted((catalog_entry(a) for a in by_id.values() if not a.get("redo")), key=lambda x: x["d"], reverse=True)
     (OUT / "catalog.json").write_text(json.dumps(cat, ensure_ascii=False, separators=(",", ":")))

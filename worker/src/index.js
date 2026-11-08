@@ -15,6 +15,7 @@ import { genresOf } from "./genres.mjs";
 import { creditedNames, selfTitled, pickAlbum } from "./deezer.mjs";
 import { untitled, sortOut, quietHour, ruDate, RECHECK_HOURS } from "./releases.mjs";
 import { ce, plainEmoji } from "./emoji.mjs";
+import { topAlbum, topCritics } from "./top.mjs";
 
 // «later» is shown as «Послушать потом» since 2026-11-02 (the owner: «может быть отложенное должно называться послушать потом»)
 const STATUS_LABEL = { later: "⏳ послушать потом", done: "✓ прослушано", nope: "✗ не понравилось" };
@@ -785,13 +786,14 @@ function appleSearch(term) {
 }
 
 // The streaming links of a card (owner, 2026-11-02): YouTube Music, Apple Music (when the album is found), SoundCloud, then Bandcamp
-// when a page is known; no Google search in its place (owner, 2026-11-08). SoundCloud has no open API, so it is always its search.
-function listenLinks(q, ytm, apple, bandcamp) {
+// when a page is known; no Google search in its place (owner, 2026-11-08). SoundCloud has no open API: its search, or the
+// album's page from the owner's AOTY table (lmn/aoty_top.py).
+function listenLinks(q, ytm, apple, bandcamp, sc) {
   return [
     ytm ? ["YouTube Music", ytm] : ["искать в YouTube Music", `https://music.youtube.com/search?q=${q}`],
     // only the album itself: Music on a Mac opens a search link but drops the query (owner, 2026-11-02)
     ...(apple ? [["Apple Music", apple]] : []),
-    ["искать в SoundCloud", `https://soundcloud.com/search?q=${q}`],
+    sc ? ["SoundCloud", sc] : ["искать в SoundCloud", `https://soundcloud.com/search?q=${q}`],
     ...(bandcamp ? [bandcamp] : []),
   ];
 }
@@ -1021,23 +1023,35 @@ async function sendCard(env, uid, { text, reply_markup, cover }) {
 // The card of an album without Fantano's review. x.fresh: the release date of a just-released album (watchReleases).
 async function unreviewedCard(env, x, arch) {
   const k = nameKey(x.artist);
-  const [rt, apple] = await Promise.all([wikiCritics(x.artist, untitled(x.title)), appleAlbum(x.artist, x.title)]);
+  // the owner's AOTY table (top 5000 of the 2010s and 2020s, lmn/aoty_top.py): AOTY's genres, critics, tracklist, links
+  const top = (await topAlbum(env.SITE_URL, x.artist, x.title)) || {};
+  const [wiki, live] = await Promise.all([wikiCritics(x.artist, untitled(x.title)), top.am ? null : appleAlbum(x.artist, x.title)]);
+  const apple = top.am || live;
+  // Wikipedia's critics first (with the charts); the table's where Wikipedia has none
+  const rt = wiki && wiki.crit && wiki.crit.length ? wiki : (topCritics(top).length ? { ...(wiki || {}), crit: topCritics(top) } : wiki);
+  const list = (top.tr || []).map(([title, sec]) => ({ title, sec: sec || null }));
+  const tracks = x.tracks || list.length;
+  const minutes = x.minutes || (list.length && list.every((t) => t.sec) ? Math.round(list.reduce((n, t) => n + t.sec, 0) / 60) : null);
+  const year = x.year || (top.d ? String(top.d).slice(0, 4) : "");
   const facts = [
-    (x.genres || []).slice(0, 3).join(", "),
+    // AOTY's genres are finer than Deezer's ("Rap/Hip Hop")
+    ((top.g && top.g.length ? top.g : x.genres) || []).slice(0, 3).join(", "),
     x.kind,
-    x.tracks ? tracksWord(x.tracks) : "",
-    x.minutes ? `${x.minutes} мин` : "",
+    tracks ? tracksWord(tracks) : "",
+    minutes ? `${minutes} мин` : "",
   ].filter(Boolean).join(" · ");
   // a just-released album: "no reviews yet" only while Wikipedia has no critics either (the owner: not Fantano-centric)
   const status = x.fresh ? `🆕 Вышел ${ruDate(x.fresh)}${criticsText(rt) ? "" : ", обзоров пока нет"}` : "⚪ Фантано не обозревал";
   const head = (x.intro ? x.intro + "\n\n" : "") +
-    `<b>${esc(x.artist)} — ${esc(x.title)}</b>${x.year ? ` (${x.year})` : ""}\n${status}${facts ? " · " + esc(facts) : ""}${criticsText(rt) ? "\n" + criticsText(rt) : ""}`;
+    `<b>${esc(x.artist)} — ${esc(x.title)}</b>${year ? ` (${year})` : ""}\n${status}${facts ? " · " + esc(facts) : ""}${criticsText(rt) ? "\n" + criticsText(rt) : ""}`;
   const q = encodeURIComponent(`${x.artist} ${x.title}`);
   const known = arch.find((a) => nameKey(a.artist_name) === k); // any review of the artist: follow and their list work through it
-  const text = head + "\n\n" + linkItems([
-    ...listenLinks(q, null, apple, bandcampLink({}, x.artist, x.title)),
+  const linkLine = linkItems([
+    ...listenLinks(q, null, apple, bandcampLink({ bandcamp: top.bc }, x.artist, x.title), top.sc),
     ["оценки на AOTY", `https://www.albumoftheyear.org/search/?q=${q}`],
   ]);
+  // the tracklist as on a review's card; what doesn't fit a photo's caption is cut («… ещё N», no link: no review id)
+  const text = withTracklist(head, list, [], x.cover ? CAPTION_LIMIT : MESSAGE_LIMIT, linkLine);
   const rows = []; // only actions: the links are in the text
   if (x.key) {
     // remembered so that "⏳ Послушать потом", "♥ Понравившееся", the reminder and "▶ Отрывки" know what this ID is
@@ -1133,7 +1147,7 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   const linkLine = linkItems([
     vid ? ["Видеообзор", `https://youtu.be/${vid}`] : ["Обзор", r.url],
     // no «Все платформы» (album.link) in the bot: the owner didn't like how it reads or what it opens (2026-11-02); the site keeps it
-    ...listenLinks(q, links.youtube_album, apple, bandcampLink(links, r.artist_name, r.album, rt && rt.bc)),
+    ...listenLinks(q, links.youtube_album, apple, bandcampLink(links, r.artist_name, r.album, rt && rt.bc), rt && rt.sc),
     ["оценки на AOTY", `https://www.albumoftheyear.org/search/?q=${q}`],
     // no «любимые треки на сайте» (owner, 2026-11-02: services instead); the site keeps the player
   ]) + siteLine(env, r);
