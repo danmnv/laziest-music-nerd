@@ -100,7 +100,7 @@ def search_buttons(artist, album):
 
 def critics_parts(rt):
     """Critic scores and chart/sales facts from data/ratings.json (the ratings workflow; source: the album's
-    Wikipedia article; for the archive also AOTY's, lmn/aoty.py). Two lists of short strings; both empty when there's
+    Wikipedia article; for the archive also the music-database table's, lmn/aoty.py). Two lists of short strings; both empty when there's
     nothing."""
     if not rt:
         return [], []
@@ -180,7 +180,7 @@ def fav_section(n, titles=()):
 
 def deezer_found(v):
     """The album from data/albums.json, or None. A Deezer miss ({"miss": date}) may still carry a cover from the Cover
-    Art Archive and a tracklist from the owner's AOTY table (lmn/notes.py fallback); 0 holds nothing."""
+    Art Archive and a tracklist from the owner's music-database table (lmn/notes.py fallback); 0 holds nothing."""
     return v if isinstance(v, dict) and (v.get("dz") or v.get("cv") or v.get("t")) else None
 
 
@@ -439,7 +439,7 @@ def build():
         items.sort(key=lambda x: x["published"], reverse=True)
     enriched = {r["id"] for r in reviews}
     ratings = load("ratings.json", {})
-    aoty_data = load("aoty.json", {})  # the owner's AOTY table (lmn/aoty.py): outlets where Wikipedia has none, AOTY's score
+    aoty_data = load("aoty.json", {})  # the owner's music-database table (lmn/aoty.py): outlets where Wikipedia has none, AOTY's score
     artists = load("artists.json", {})
     sp = load("specials.json", {})
     lists = specials.badges(sp)
@@ -448,7 +448,7 @@ def build():
     bandcamp = load("bandcamp.json", {})  # direct Bandcamp links found through MusicBrainz (lmn/bandcamp.py)
     albums = load("albums.json", {})
     apple = load("apple.json", {})  # Apple Music links found from Actions (lmn/apple.py): the bot's cards read them from rt/
-    top = load("aoty_top.json", {})  # the owner's second AOTY table (lmn/aoty_top.py): SoundCloud links here, the rest in u/
+    top = load("aoty_top.json", {})  # the owner's second music-database table (lmn/aoty_top.py): SoundCloud links here, the rest in u/
     top_hits = aoty_top.reviewed(list(by_id.values()), top)
     (OUT / "wtb.json").write_text(json.dumps([{k: r[k] for k in ("artist", "video_id", "date")} for r in sp.get("rankings", [])],
                                              ensure_ascii=False))  # the bot's artist lists link the "worst to best" video

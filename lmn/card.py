@@ -189,7 +189,7 @@ CARD_CRITICS = 3  # outlets on a card, in ratings.PRIORITY order (Pitchfork firs
 
 
 def critics_from(rt):
-    """The few critic scores a card shows, from a data/ratings.json entry (with AOTY's merged in, aoty.merge):
+    """The few critic scores a card shows, from a data/ratings.json entry (with the music-database table's merged in, aoty.merge):
     [{"o", "s", "u"}], or []."""
     if not rt or not (rt.get("wp") or rt.get("aoty") is not None or rt.get("critics")):
         return []
