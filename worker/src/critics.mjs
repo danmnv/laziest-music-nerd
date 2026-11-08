@@ -14,7 +14,7 @@ export function criticsText(rt) {
   const lists = rt.lists && rt.lists.length ? "🏆 " + rt.lists.map((b) => `<a href="${esc(b.url)}">${esc(b.text)}</a>`).join(" · ") : "";
   if (rt.contested) lines.push(`⚡ Спорно: ${esc(rt.contested)}`); // Fantano vs the critics' average, 4+ points apart
   // the outlets are the primary source of the scores; the charts line names the article it comes from (owner, 2026-11-01)
-  if (rt.crit && rt.crit.length) lines.push(`Критики: ${esc(rt.crit.join(" · "))}`);
+  if (rt.crit && rt.crit.length) lines.push(`<b>Критики:</b> ${esc(rt.crit.join(" · "))}`); // bold, as in the channel (owner, 2026-11-08)
   if (rt.sales && rt.sales.length) lines.push(`Чарты и продажи: ${esc(rt.sales.join(" · "))}${src}`);
   const out = [lists, lines.join("\n")].filter(Boolean).join("\n\n");
   return out ? "\n" + out : "";

@@ -80,13 +80,14 @@ class Build(unittest.TestCase):
         archive = [{"id": "a", "artist_name": "A", "album": "X", "published": "2020"}, {"id": "b", "artist_name": "B", "album": "Y", "published": "2021"},
                    {"id": "s", "artist_name": "C", "album": "Song", "published": "2022", "track": True}]
         b = {"dz": 9, "cv": "https://cdn/b.jpg"}
-        with mock.patch.object(notes, "deezer_album", return_value=b) as da, mock.patch.object(notes.time, "sleep"):
+        with mock.patch.object(notes, "deezer_album", return_value=b) as da, mock.patch.object(notes.time, "sleep"), \
+                mock.patch.object(notes.musicbrainz, "find_release_group", return_value=None):
             out = notes.albums(archive, {}, limit=1)
             self.assertEqual(out, {"b": b})
             da.reset_mock()
             da.return_value = 0
             today = datetime.date(2026, 11, 2)
-            self.assertEqual(notes.albums(archive, out, limit=5, today=today), {"b": b, "a": {"miss": "2026-11-02"}})
+            self.assertEqual(notes.albums(archive, out, limit=5, today=today), {"b": b, "a": {"miss": "2026-11-02", "fb": 1}})
             da.assert_called_once_with("A", "X")
 
     def test_deezer_album_checks_the_artist_and_keeps_what_the_card_shows(self):
@@ -113,6 +114,29 @@ class Build(unittest.TestCase):
         self.assertEqual(g.call_args_list[2].args[0], "https://api.deezer.com/album/4/tracks?limit=500")
         with mock.patch.object(notes.http, "get_json", return_value={"error": {"code": 4, "message": "Quota limit exceeded"}}):
             self.assertIsNone(notes.deezer_album("Radiohead", "Kid A", sleep=lambda s: None))
+
+    def test_a_deezer_miss_gets_a_cover_and_tracks_from_musicbrainz_once(self):
+        # owner, 2026-11-08: leroy «status update music» had no cover; a miss from before is asked once more
+        archive = [{"id": "l", "artist_name": "leroy", "album": "status update music", "published": "2026-05-24"}]
+        rg = {"rg_id": "R", "date": "2026-05-22", "releases": ["r1"]}
+        caa = {"images": [{"front": False, "image": "http://x/back.jpg"},
+                          {"front": True, "image": "http://x/f.jpg", "thumbnails": {"1200": "http://x/f-1200.jpg"}}]}
+        with mock.patch.object(notes, "deezer_album", return_value=0), mock.patch.object(notes.time, "sleep"), \
+                mock.patch.object(notes.musicbrainz, "find_release_group", return_value=rg), \
+                mock.patch.object(notes.musicbrainz, "release_details", return_value={"tracks": [{"title": "A", "sec": 61}], "duration_min": 1}), \
+                mock.patch.object(notes.http, "get_json", return_value=caa):
+            out = notes.albums(archive, {"l": {"miss": "2026-11-02", "t": [["Kept", 5]]}}, today=datetime.date(2026, 11, 8))
+        self.assertEqual(out, {"l": {"miss": "2026-11-08", "t": [["Kept", 5]], "mb": "R", "y": "2026",
+                                     "cv": "https://x/f-1200.jpg", "fb": 1}})  # the table's tracklist is kept
+        from lmn import site
+        self.assertEqual(site.card_album(archive[0], site.deezer_found(out["l"])),
+                         {"cv": "https://x/f-1200.jpg", "t": [["Kept", 5]], "y": "2026"})
+
+    def test_the_album_comes_before_a_single_of_the_same_name(self):
+        from lmn import links
+        res = [{"id": 1, "title": "FENIAN", "record_type": "single", "nb_tracks": 3, "artist": {"name": "Kneecap"}},
+               {"id": 2, "title": "FENIAN", "record_type": "album", "nb_tracks": 14, "artist": {"name": "Kneecap"}}]
+        self.assertEqual(links.pick_album(res, ["KNEECAP"], "FENIAN")["id"], 2)
 
     def test_find_album_plain_words_first_then_the_field_search(self):
         from lmn import links
@@ -146,8 +170,8 @@ class Build(unittest.TestCase):
             new = [{"id": "n", "artist_name": "N", "album": "Z", "published": "2026-10-20"}]
             old_ = [{"id": "o", "artist_name": "O", "album": "W", "published": "2020-01-01"}]
             # a review under 60 days old: asked again after a week; an older one after 90 days
-            self.assertEqual(notes.albums(new, {"n": {"miss": "2026-10-30"}}, today=day), {"n": {"miss": "2026-10-30"}})
-            self.assertEqual(notes.albums(old_, {"o": {"miss": "2026-09-01"}}, today=day), {"o": {"miss": "2026-09-01"}})
+            self.assertEqual(notes.albums(new, {"n": {"miss": "2026-10-30", "fb": 1}}, today=day), {"n": {"miss": "2026-10-30", "fb": 1}})
+            self.assertEqual(notes.albums(old_, {"o": {"miss": "2026-09-01", "fb": 1}}, today=day), {"o": {"miss": "2026-09-01", "fb": 1}})
             da.assert_not_called()
             da.return_value = hit
             self.assertEqual(notes.albums(new, {"n": {"miss": "2026-10-26"}}, today=day), {"n": hit})

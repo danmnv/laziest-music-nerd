@@ -9,7 +9,7 @@ import unicodedata
 import urllib.parse
 from pathlib import Path
 
-from . import aoty, card, gemini, ratings, specials, tnd
+from . import aoty, aoty_top, card, gemini, ratings, specials, tnd
 from .colors import color, label
 from .musicbrainz import norm
 
@@ -179,8 +179,20 @@ def fav_section(n, titles=()):
 
 
 def deezer_found(v):
-    """The album from data/albums.json, or None for a miss (0 or {"miss": date}; lmn/notes.py albums)."""
-    return v if isinstance(v, dict) and v.get("dz") else None
+    """The album from data/albums.json, or None. A Deezer miss ({"miss": date}) may still carry a cover from the Cover
+    Art Archive and a tracklist from the owner's AOTY table (lmn/notes.py fallback); 0 holds nothing."""
+    return v if isinstance(v, dict) and (v.get("dz") or v.get("cv") or v.get("t")) else None
+
+
+def card_album(a, album):
+    """What the bot's card shows of the album, checked from Actions (data/albums.json), so the Worker needn't search
+    Deezer live (owner, 2026-11-08: the live search found KNEECAP's single «FENIAN», not the album): {"cv", "y", "min",
+    "t"}. The year only when it isn't after the review: Deezer may only have a later reissue."""
+    if not album:
+        return None
+    out = {"cv": album.get("cv"), "min": album.get("min"), "t": album.get("t"),
+           "y": album.get("y") if (album.get("y") or "9999") <= a["published"][:4] else None}
+    return {k: v for k, v in out.items() if v} or None
 
 
 def fav_titles(r, album):
@@ -276,7 +288,7 @@ def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, 
     others = [x for x in artist_reviews if x["id"] != a["id"]]
     hist = (f'<h2>Фантано об этом артисте</h2>{history_list(artist_reviews, a["id"], 1)}' if others else "")
     brief = brief or {}
-    rows = again_rows(a) + [(k, e(v)) for k, v in (("Кто", brief.get("who")), ("Описание", brief.get("about") or brief.get("brief"))) if v]
+    rows = again_rows(a) + [(k, e(v)) for k, v in (("Кто", brief.get("who")), ("Обзор", brief.get("about") or brief.get("brief"))) if v]
     # Fantano's line only where there's no brief (as on bot-card pages)
     rows += notes_rows({**(note or {}), "blurb": None if brief.get("brief") else (note or {}).get("blurb")} if note else None, a["id"])
     if album.get("t"):  # Fantano's favourites marked with ★, as on bot-card pages
@@ -341,7 +353,7 @@ def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None, artis
     if before and not others:  # with other reviews, they are listed below as on archive pages, each linked to its page
         rows.append(("Фантано раньше", before))
     if ai.get("brief"):  # the site has room for the longer one; the card in Telegram keeps the short one
-        rows.append(("Описание", e(ai.get("about") or ai["brief"])))
+        rows.append(("Обзор", e(ai.get("about") or ai["brief"])))  # was «Описание» (owner, 2026-11-08)
     if gemini.shown_moods(ai.get("moods")):
         rows.append(("Вайб для", '<span class="moods">' + e(" / ".join(gemini.vibe(m) for m in gemini.shown_moods(ai["moods"])[:2])) + ' <span class="muted">(догадка ИИ)</span></span>'))
     dossier = []
@@ -436,6 +448,8 @@ def build():
     bandcamp = load("bandcamp.json", {})  # direct Bandcamp links found through MusicBrainz (lmn/bandcamp.py)
     albums = load("albums.json", {})
     apple = load("apple.json", {})  # Apple Music links found from Actions (lmn/apple.py): the bot's cards read them from rt/
+    top = load("aoty_top.json", {})  # the owner's second AOTY table (lmn/aoty_top.py): SoundCloud links here, the rest in u/
+    top_hits = aoty_top.reviewed(list(by_id.values()), top)
     (OUT / "wtb.json").write_text(json.dumps([{k: r[k] for k in ("artist", "video_id", "date")} for r in sp.get("rankings", [])],
                                              ensure_ascii=False))  # the bot's artist lists link the "worst to best" video
     (OUT / "rt").mkdir(exist_ok=True)
@@ -469,20 +483,36 @@ def build():
         nt = nt or {}
         bf = (a.get("ai") or {}).get("brief") or (br or {}).get("brief")
         bm = (br or {}).get("moods") if not (a.get("ai") or {}).get("moods") else None  # the bot's mood vote for archive cards
+        who = (a.get("ai") or {}).get("who") or (br or {}).get("who")  # the bot's card has «Кто» too (owner, 2026-11-08)
+        al = card_album(a, deezer_found(albums.get(a["id"]))) if a["id"] not in enriched else None
+        # the bot's critics line: the channel card's (card.critics_from: 3 outlets, Metacritic, AOTY), the same on both
+        cc = [f"{c['o']} {c['s']}" for c in card.critics_from(rt)]
         am = apple.get(a["id"]) if isinstance(apple.get(a["id"]), str) else None
-        if crit or sales or li or nt or bf or bm or am or again_vid:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
+        sc = (top_hits.get(a["id"]) or {}).get("sc")  # the album's SoundCloud page instead of a search (owner, 2026-11-08)
+        if crit or sales or li or nt or bf or bm or am or again_vid or who or al or sc:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
             (OUT / "rt" / f"{a['id']}.json").write_text(json.dumps(
-                {"crit": crit[:4], "sales": sales[:4], "wp_url": (rt or {}).get("wp_url"), "contested": contested(a, rt),
+                {"crit": cc, "sales": sales[:4], "wp_url": (rt or {}).get("wp_url"), "contested": contested(a, rt),
                  **({"lists": li[:4]} if li else {}), **({"blurb": nt["blurb"]} if nt.get("blurb") else {}),
-                 **({"brief": bf} if bf else {}), **({"moods": bm} if bm else {}),
+                 **({"brief": bf} if bf else {}), **({"moods": bm} if bm else {}), **({"who": who} if who else {}),
+                 **({"al": al} if al else {}),
                  **({"video_id": nt["video_id"]} if nt.get("video_id") and not a.get("video_id") else {}),
                  **({"bc": nt["bc"]} if nt.get("bc") else {}),
-                 **({"apple": am} if am else {}),
+                 **({"apple": am} if am else {}), **({"sc": sc} if sc else {}),
                  **({"again_vid": again_vid} if again_vid else {}),  # the other review's video: the bot's «🔁 Первый обзор» links it
                  **({"fav": [track_name(f["t"], fav_titles(a, deezer_found(albums.get(a["id"])))) for f in nt["fav"]], "fav_play": any(f.get("dz") or f.get("am") for f in nt["fav"])} if nt.get("fav") else {})},
                 ensure_ascii=False))
     for k, items in by_artist.items():
         (OUT / "a" / f"{k}.html").write_text(artist_page(items[0]["artist_name"], items))
+    # albums Fantano didn't review, for the bot's card of one (worker/src/index.js unreviewedCard): a few hundred files by
+    # the key's first letters, not one per album (Cloudflare Pages takes at most 20 000 files)
+    done = {aoty_top.key(a["artist_name"], a["album"]) for a in by_id.values() if a.get("artist_name") and a.get("album")}
+    shards = {}
+    for k, v in top.items():
+        if k not in done:
+            shards.setdefault(aoty_top.shard(k), {})[k] = {f: v[f] for f in ("d", "s", "g", "c", "tr", "am", "bc", "sc") if v.get(f)}
+    (OUT / "u").mkdir(exist_ok=True)
+    for sh, items in shards.items():
+        (OUT / "u" / f"{sh}.json").write_text(json.dumps(items, ensure_ascii=False, separators=(",", ":")))
     # an album reviewed again is listed once, by the later review (as in the bot's search)
     cat = sorted((catalog_entry(a) for a in by_id.values() if not a.get("redo")), key=lambda x: x["d"], reverse=True)
     (OUT / "catalog.json").write_text(json.dumps(cat, ensure_ascii=False, separators=(",", ":")))

@@ -33,6 +33,8 @@ const [KIDA, BENDS, OKNOTOK, PABLO, TKOL, LUNG, UNDATED, AMNESIAC] = [1, 2, 3, 4
 let mbDown = false;
 let longBrief = null; // a brief too long for a photo's caption
 let rtMoods = null; // the archive brief's mood guess for Kid A, when a test needs another
+let rtAl = null; // the album as checked from Actions (data/albums.json), in Kid A's rt file
+let topU = null; // the site's u/ra.json (the owner's AOTY table, lmn/aoty_top.py)
 let pinnedNow = null; // what getChat says is pinned in a private chat
 let freshAlbums = []; // albums Deezer lists for Radiohead on top of the old ones
 let fetched = []; // every URL the Worker asked outside Telegram
@@ -41,6 +43,8 @@ beforeEach(() => {
   mbDown = false;
   longBrief = null;
   rtMoods = null;
+  rtAl = null;
+  topU = null;
   pinnedNow = null;
   freshAlbums = [];
   db = new DatabaseSync(":memory:");
@@ -64,8 +68,11 @@ beforeEach(() => {
     if (String(url).endsWith("archive.json")) return new Response(JSON.stringify(ARCHIVE));
     if (String(url) === "https://site/rt/k.json") {
       return new Response(JSON.stringify({ crit: ["Metacritic 91", "Pitchfork 10/10"], sales: ["US #1", "UK #1"], wp_url: "https://en.wikipedia.org/wiki/Kid_A", video_id: "kidavideo01", bc: "https://radiohead.bandcamp.com/album/kid-a",
-        brief: longBrief || "Radiohead уходят в электронику.", blurb: "Not shown when there is a brief.", moods: rtMoods || ["для работы за столом", "не то"] }));
+        brief: longBrief || "Radiohead уходят в электронику.", blurb: "Not shown when there is a brief.", moods: rtMoods || ["для работы за столом", "не то"],
+        who: "британская рок-группа, четвёртый альбом", ...(rtAl ? { al: rtAl } : {}) }));
     }
+    if (String(url) === "https://site/u/ra.json" && topU) return new Response(JSON.stringify(topU));
+    if (String(url).startsWith("https://site/u/")) return new Response("not found", { status: 404 });
     if (String(url) === "https://site/wtb.json") return new Response(JSON.stringify([{ artist: "Radiohead", video_id: "uu8sC7YDOZg", date: "2017-04-17" }]));
     if (String(url) === "https://site/rt/p.json") {
       return new Response(JSON.stringify({ crit: [], sales: [], blurb: "Radiohead return & shine.", fav: ["DAYDREAMING", "TRUE LOVE WAITS"], fav_play: true,
@@ -168,9 +175,10 @@ async function newReviews(reviews) {
 const card = (id, mbid = "H", msg = 123) => ({ id, artist_name: "HMLTD", mbid, album: "FANGS " + id, score: "🟡 5/10", msg });
 const answers = () => calls.filter((c) => c.method === "answerCallbackQuery");
 
-// The card's «Ссылки:» line as [[text, url], …] (links are text, not buttons, since 2026-11-02)
+// The card's links line as [[text, url], …] (links are text, not buttons, since 2026-11-02; no «Ссылки:» word since
+// 2026-11-08): the last line made of links only, not our site's 🌐 line
 function cardLinks(c) {
-  const line = ((c.caption || c.text || "").split("\n").find((l) => l.startsWith("<b>Ссылки:</b>"))) || "";
+  const line = (c.caption || c.text || "").split("\n").filter((l) => /^<a href=/.test(l)).at(-1) || "";
   return [...line.matchAll(/<a href="([^"]+)">([^<]+)<\/a>/g)].map((m) => [m[2], m[1].replace(/&amp;/g, "&")]);
 }
 
@@ -258,21 +266,21 @@ test("with the site up, the card's last line is our site's page, named as ours (
   const c = calls.find((x) => x.method === "sendPhoto");
   assert.match(c.caption, /^<b>Radiohead — Kid A<\/b>/); // the title itself is text: a link's text can't be copied
   // apart from the links by a blank line: it read as one of them (owner, 2026-11-02)
-  assert.match(c.caption, /<\/blockquote>\n<b>Ссылки:<\/b> [^\n]+\n🌐 <a href="https:\/\/site\/r\/[^"]+\.html">Этот альбом на нашем сайте<\/a>$/);
+  assert.match(c.caption, /<\/blockquote>\n<a href=[^\n]+\n🌐 <a href="https:\/\/site\/r\/[^"]+\.html">На нашем сайте<\/a>$/);
 });
 
 test("one hit is sent as a full card: cover, length, links, marks and follow", async () => {
   await say(OWNER, "kid a");
   const c = calls.find((x) => x.method === "sendPhoto");
   assert.equal(c.photo, "https://cdn/kida.jpg");
-  assert.match(c.caption, /<b>Radiohead — Kid A<\/b> \(2000\)\n🟢 10\/10 · art rock · 10 треков · 50 мин · 2-й из 2 обзоров артиста\n\n<b>Описание:<\/b> Radiohead уходят в электронику\.\n/);
+  assert.match(c.caption, /<b>Radiohead — Kid A<\/b> \(2000\)\n🟢 10\/10 · art rock · 10 треков · 50 мин · 2-й из 2 обзоров артиста\n\n<b>Кто:<\/b> британская рок-группа, четвёртый альбом\n<b>Обзор:<\/b> Radiohead уходят в электронику\.\n/);
   assert.doesNotMatch(c.caption, /Not shown/); // the archive's brief (lmn/briefs.py) replaces Fantano's line
   // paragraphs: title and score, Fantano's words, the critics, when to listen (owner, 2026-11-01: one block read as glued)
-  assert.match(c.caption, /электронику\.\n\nКритики: Metacritic 91 · Pitchfork 10\/10\nЧарты и продажи: US #1 · UK #1 \(<a href="https:\/\/en.wikipedia.org\/wiki\/Kid_A">Википедия<\/a>\)\n\n<b>Вайб для:<\/b>/);
+  assert.match(c.caption, /электронику\.\n\n<b>Критики:<\/b> Metacritic 91 · Pitchfork 10\/10\nЧарты и продажи: US #1 · UK #1 \(<a href="https:\/\/en.wikipedia.org\/wiki\/Kid_A">Википедия<\/a>\)\n\n<b>Вайб для:<\/b>/);
   // the tracklist folded at the end, as in the channel's card
   // the tracklist folded, as in the channel's card, and the links under it (owner, 2026-11-02)
   // the quote stands out by itself: no blank lines around it (owner, 2026-11-02)
-  assert.match(c.caption, /[^\n]\n<blockquote expandable><b>Треклист<\/b>\n1\. Everything in Its Right Place 4:11\n2\. Kid A 4:44<\/blockquote>\n<b>Ссылки:<\/b> [^\n]+$/);
+  assert.match(c.caption, /[^\n]\n<blockquote expandable><b>Треклист<\/b>\n1\. Everything in Its Right Place 4:11\n2\. Kid A 4:44<\/blockquote>\n<a href=[^\n]+$/);
   const btns = c.reply_markup.inline_keyboard.flat();
   // only actions are buttons; the links are the text's last line, under the tracklist (owner, 2026-11-02)
   assert.ok(btns.every((b) => !b.url));
@@ -303,21 +311,45 @@ test("one hit is sent as a full card: cover, length, links, marks and follow", a
   assert.match(answers().at(-1).text, /Ты следишь за Radiohead/);
 });
 
+test("the album checked from Actions comes before Deezer's live search; a long tracklist links to all of it (owner, 2026-11-08)", async () => {
+  rtAl = { cv: "https://caa/kida.jpg", y: "2000", min: 50, t: Array.from({ length: 60 }, (_, i) => [`Track number ${i + 1} with a long title`, 200]) };
+  await say(OWNER, "kid a");
+  assert.ok(!fetched.some((u) => u.startsWith("https://api.deezer.com/search/album"))); // no live search
+  const c = calls.find((x) => x.method === "sendPhoto");
+  assert.equal(c.photo, "https://caa/kida.jpg");
+  // «Кто» and «Обзор» in one paragraph (owner, 2026-11-08)
+  assert.match(c.caption, /\n\n<b>Кто:<\/b> британская рок-группа, четвёртый альбом\n<b>Обзор:<\/b> Radiohead уходят/);
+  assert.match(c.caption, /\n<a href="https:\/\/t\.me\/bot\?start=t_k">… ещё \d+<\/a><\/blockquote>/);
+  calls = [];
+  await say(OWNER, "/start t_k"); // the link: the whole tracklist, nothing else
+  const t = calls.find((x) => x.method === "sendMessage");
+  assert.match(t.text, /^<b>Radiohead — Kid A<\/b>\n🟢 10\/10 · art rock · вышел 2000 · 50 мин · 60 треков\n\n1\. Track number 1 with a long title 3:20\n/);
+  assert.match(t.text, /\n60\. Track number 60 with a long title 3:20$/);
+  assert.ok(!t.reply_markup);
+});
+
+test("«💿 Альбомы артиста» from the channel opens the bot for someone who never started it", async () => {
+  await tgUpdate({ callback_query: { id: "q", from: { id: 777 }, data: "da:k" } });
+  assert.equal(answers().at(-1).url, "https://t.me/bot?start=da_k");
+  calls = [];
+  await say(777, "/start da_k");
+  assert.ok(calls.some((x) => x.method === "sendMessage" && /^Radiohead — альбомы/.test(x.text || "")));
+});
+
 test("a card too long for a photo's caption is a message with the cover above and the whole tracklist", async () => {
   longBrief = "Очень длинное описание. ".repeat(45); // ~1100 characters
   await say(OWNER, "kid a");
   assert.ok(!calls.some((x) => x.method === "sendPhoto")); // not tried: it would fail
   const c = calls.find((x) => x.method === "sendMessage" && /Kid A/.test(x.text));
   assert.deepEqual(c.link_preview_options, { url: "https://cdn/kida.jpg", prefer_large_media: true, show_above_text: true });
-  assert.match(c.text, /<b>Ссылки:<\/b> /);
-  assert.match(c.text, /1\. Everything in Its Right Place 4:11\n2\. Kid A 4:44<\/blockquote>\n<b>Ссылки:<\/b> [^\n]+$/);
+  assert.match(c.text, /1\. Everything in Its Right Place 4:11\n2\. Kid A 4:44<\/blockquote>\n<a href=[^\n]+$/);
 });
 
 test("without a Deezer match the card is text, with the same links", async () => {
   await press(OWNER, "a:x");
   const c = calls.find((x) => x.method === "sendMessage" && /Obscure/.test(x.text));
   assert.match(c.text, /⚪ без оценки · обзор 2011/);
-  assert.deepEqual(cardLinks(c).map(([t]) => t), ["Обзор", "искать в YouTube Music", "искать в SoundCloud", "искать в Google", "оценки на AOTY"]);
+  assert.deepEqual(cardLinks(c).map(([t]) => t), ["Обзор", "искать в YouTube Music", "искать в SoundCloud", "оценки на AOTY"]);
 });
 
 test("an artist's albums without Fantano's review, and a card for one of them", async () => {
@@ -353,9 +385,9 @@ test("an artist's albums without Fantano's review, and a card for one of them", 
   const c = calls.find((x) => x.method === "sendPhoto");
   assert.equal(c.photo, "https://cdn/bends.jpg");
   assert.match(c.caption, new RegExp('^<b>Radiohead — The Bends</b> \\(1995\\)\n⚪ Фантано не обозревал · Alternative · 12 треков · 49 мин' +
-    '\n\nКритики: Pitchfork 10/10 · AllMusic 5/5\nЧарты и продажи: US #88 · UK #4 · UK 4× Platinum \\(<a href="https://en.wikipedia.org/wiki/The_Bends">Википедия</a>\\)\n\n<b>Ссылки:</b> '));
+    '\n\n<b>Критики:</b> Pitchfork 10/10 · AllMusic 5/5\nЧарты и продажи: US #88 · UK #4 · UK 4× Platinum \\(<a href="https://en.wikipedia.org/wiki/The_Bends">Википедия</a>\\)\n\n<a href='));
   const btns = c.reply_markup.inline_keyboard.flat();
-  assert.deepEqual(cardLinks(c).map(([t]) => t), ["искать в YouTube Music", "искать в SoundCloud", "искать в Google", "оценки на AOTY"]);
+  assert.deepEqual(cardLinks(c).map(([t]) => t), ["искать в YouTube Music", "искать в SoundCloud", "оценки на AOTY"]);
   assert.ok(btns.some((b) => b.callback_data === "f:k"));
   calls = [];
   mbDown = true; // MusicBrainz busy: the card is made from the list button's title and year
@@ -387,13 +419,30 @@ test("when MusicBrainz is down, the list comes from Deezer: albums only, the fir
   assert.match(calls.find((x) => x.method === "sendPhoto").caption, /^<b>Radiohead — The Bends<\/b> \(1995\)/);
 });
 
+test("an album without a review gets AOTY's genres, critics, tracklist and album links from the owner's table (2026-11-08)", async () => {
+  topU = { "radiohead--wallofeyes": { d: "2024-01-26", s: 83, g: ["art rock", "psychedelic rock"],
+    c: [["Pitchfork", "8.2/10"], ["The Guardian", "4/5"], ["NME", "4/5"], ["Mojo", "4/5"]], tr: [["Wall of Eyes", 315], ["Teleharmonic", 344]],
+    am: "https://music.apple.com/us/album/wall-of-eyes/1", bc: "https://thesmile.bandcamp.com/album/wall-of-eyes", sc: "https://soundcloud.com/thesmile/sets/wall-of-eyes" } };
+  await press(OWNER, "dz:30");
+  const c = calls.find((x) => x.method === "sendPhoto");
+  assert.ok(fetched.includes("https://site/u/ra.json"));
+  // AOTY's genres instead of Deezer's «Alternative»; Deezer's count and length stay; the table's year when Deezer gave none
+  assert.match(c.caption, /^<b>Radiohead — Wall of Eyes<\/b> \(2026\)\n⚪ Фантано не обозревал · art rock, psychedelic rock · 8 треков · 45 мин/);
+  assert.match(c.caption, /<b>Критики:<\/b> Pitchfork 8\.2\/10 · The Guardian 4\/5 · NME 4\/5 · AOTY 83\/100/);
+  assert.match(c.caption, /<blockquote expandable><b>Треклист<\/b>\n1\. Wall of Eyes 5:15\n2\. Teleharmonic 5:44<\/blockquote>/);
+  assert.deepEqual(cardLinks(c), [["искать в YouTube Music", "https://music.youtube.com/search?q=Radiohead%20Wall%20of%20Eyes"],
+    ["Apple Music", "https://music.apple.com/us/album/wall-of-eyes/1"], ["SoundCloud", "https://soundcloud.com/thesmile/sets/wall-of-eyes"],
+    ["Bandcamp", "https://thesmile.bandcamp.com/album/wall-of-eyes"], ["оценки на AOTY", "https://www.albumoftheyear.org/search/?q=Radiohead%20Wall%20of%20Eyes"]]);
+  assert.ok(!fetched.some((u) => u.startsWith("https://itunes.apple.com/"))); // the table's Apple link: no live search
+});
+
 test("an album without a review can be put off: it shows in «⏳ Послушать потом»", async () => {
   await press(OWNER, `mb:${BENDS}`);
   const card = calls.find((x) => x.method === "sendPhoto");
   const btns = card.reply_markup.inline_keyboard;
   // two a row; «♡ Понравилось» is its own mark (owner, 2026-11-02)
   assert.deepEqual(btns.slice(0, 2).map((r) => r.map((b) => b.text)), [["✓ Слушал", "♡ Понравилось"], ["⏳ Послушать потом", "✗ Не моё"]]);
-  assert.ok(cardLinks(card).some(([t, u]) => t === "искать в Google" && u === "https://www.google.com/search?q=Radiohead%20The%20Bends"));
+  assert.ok(!cardLinks(card).some(([t]) => /Google/.test(t))); // no Google search on cards (owner, 2026-11-08)
   assert.ok(btns.flat().every((b) => !b.url)); // only actions are buttons
   await press(OWNER, `m:${BENDS}:later`);
   calls = [];
@@ -643,7 +692,7 @@ test("a card from the list: «✓ Послушал → дальше» marks it, 
   assert.deepEqual(kb[0], [{ text: "♡ Понравилось", callback_data: "lk:x" }, { text: "✓ Послушал → дальше", callback_data: "qd:x" }]);
   assert.deepEqual(kb[1], [{ text: "⏳ Потом → дальше", callback_data: "qd:x:later" }, { text: "✗ Не моё → дальше", callback_data: "qd:x:nope" }]);
   assert.deepEqual(kb[2], [{ text: "← Назад", callback_data: "qb:x" }, { text: "Пропустить →", callback_data: "qs:x" }]);
-  assert.match(first.caption || first.text, /^▶ <i>Наверстываю · после этого ещё 2 обзора<\/i>/);
+  assert.match(first.caption || first.text, /^▶ <i>Навёрстываю · после этого ещё 2 обзора<\/i>/);
   calls = [];
   await press(OWNER, "qd:x", 901);
   assert.equal(db.prepare("SELECT status FROM marks WHERE user_id=? AND review_id='x'").get(OWNER).status, "done");
@@ -662,7 +711,7 @@ test("a card from the list: «✓ Послушал → дальше» marks it, 
   await press(OWNER, "qd:p:later", 904); // put off: in «Послушать потом», this card goes, the next comes
   assert.equal(db.prepare("SELECT status FROM marks WHERE user_id=? AND review_id='p'").get(OWNER).status, "later");
   assert.ok(calls.some((c) => c.method === "deleteMessage" && c.message_id === 904));
-  assert.ok(calls.some((c) => (c.method === "sendPhoto" || c.method === "sendMessage") && /Наверстываю/.test(c.caption || c.text || "")));
+  assert.ok(calls.some((c) => (c.method === "sendPhoto" || c.method === "sendMessage") && /Навёрстываю/.test(c.caption || c.text || "")));
   calls = [];
   await say(OWNER, "⏳ Послушать потом");
   assert.match(calls.find((c) => c.method === "sendMessage").text, /^Послушать потом: 1/);
@@ -714,7 +763,7 @@ test("«Наверстать» lists «Послушать потом» first, go
   calls = [];
   await press(OWNER, "qo:k");
   const card = calls.find((c) => c.method === "sendPhoto" || c.method === "sendMessage");
-  assert.match(card.caption || card.text, /^▶ <i>Наверстываю · послушать потом, это последний, потом новые обзоры<\/i>/);
+  assert.match(card.caption || card.text, /^▶ <i>Навёрстываю · послушать потом, это последний, потом новые обзоры<\/i>/);
   assert.deepEqual(card.reply_markup.inline_keyboard.slice(0, 3), [
     [{ text: "♡ Понравилось", callback_data: "lk:k" }, { text: "✓ Послушал → дальше", callback_data: "qd:k:done:l" }],
     [{ text: "✗ Не моё → дальше", callback_data: "qd:k:nope:l" }, { text: "Пропустить →", callback_data: "qs:k:l" }],
@@ -727,7 +776,7 @@ test("«Наверстать» lists «Послушать потом» first, go
   await press(OWNER, "qd:k:done:l", 910);
   assert.equal(db.prepare("SELECT status FROM marks WHERE user_id=? AND review_id='k'").get(OWNER).status, "done");
   const next = calls.find((c) => c.method === "sendPhoto" || (c.method === "sendMessage" && /Moon/.test(c.text)));
-  assert.match(next.caption || next.text, /^▶ <i>Наверстываю · после этого ещё 1 обзор<\/i>.*A Moon Shaped Pool/s);
+  assert.match(next.caption || next.text, /^▶ <i>Навёрстываю · после этого ещё 1 обзор<\/i>.*A Moon Shaped Pool/s);
   assert.equal(next.reply_markup.inline_keyboard[0][1].callback_data, "qd:p");
   calls = [];
   await say(OWNER, "/listen"); // the list too goes on from the place, not from Kid A
@@ -751,18 +800,18 @@ test("the «Послушать потом» block: the first put off first, the 
   assert.ok(block.indexOf("start=q_k") < block.indexOf("start=q_p"), "Kid A, put off first, first");
   calls = [];
   await press(OWNER, "qo:k");
-  assert.match(calls.find((c) => c.method === "sendPhoto" || c.method === "sendMessage").caption, /^▶ <i>Наверстываю · послушать потом, после этого ещё 1<\/i>/);
+  assert.match(calls.find((c) => c.method === "sendPhoto" || c.method === "sendMessage").caption, /^▶ <i>Навёрстываю · послушать потом, после этого ещё 1<\/i>/);
   calls = [];
   await press(OWNER, "qd:k:done:l", 920); // Kid A leaves the block; the next is the block's next, not a newer review
   const next = calls.find((c) => c.method === "sendPhoto" || (c.method === "sendMessage" && /Moon/.test(c.text)));
-  assert.match(next.caption || next.text, /^▶ <i>Наверстываю · послушать потом, это последний, потом новые обзоры<\/i>.*A Moon Shaped Pool/s);
+  assert.match(next.caption || next.text, /^▶ <i>Навёрстываю · послушать потом, это последний, потом новые обзоры<\/i>.*A Moon Shaped Pool/s);
   calls = [];
   await press(OWNER, "qb:p:l"); // Kid A was heard: nothing before it in the block now
   assert.equal(calls.find((c) => c.method === "sendMessage").text, "Это первый альбом в «Послушать потом».");
   calls = [];
   await press(OWNER, "qb:k:l"); // a card that has left the block goes back to the block's last
   const last = calls.find((c) => c.method === "sendPhoto" || (c.method === "sendMessage" && /Moon/.test(c.text)));
-  assert.match(last.caption || last.text, /^▶ <i>Наверстываю · послушать потом.*A Moon Shaped Pool/s);
+  assert.match(last.caption || last.text, /^▶ <i>Навёрстываю · послушать потом.*A Moon Shaped Pool/s);
   calls = [];
   await press(OWNER, "qs:p:l"); // skipped: stays put off; the block is done and both reviews after Obscure are marked
   assert.equal(db.prepare("SELECT status FROM marks WHERE user_id=? AND review_id='p'").get(OWNER).status, "later");

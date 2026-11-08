@@ -11,8 +11,8 @@ BRIEFS_LANG=both: the model writes the Russian texts and their English ("en") in
 Selectel's router, 2026-11-03), so no Gemini translation.
 
 Writes data/briefs.json: {review id: {"brief", "about", "who", "moods", "m": model, "tr": translating model, "en": the
-English}}; an entry with "en" and no "tr" waits for its translation. Skipped: guest reviews (not Fantano's
-opinion), single-song reviews, reviews whose card already has a Gemini brief; posts without a text are kept as
+English}}; an entry with "en" and no "tr" waits for its translation. Guest reviews too (owner, 2026-11-08: The Black
+Keys «Peaches!» had none), told apart in the prompt (verdict). Skipped: single-song reviews, reviews whose card already has a Gemini brief; posts without a text are kept as
 {"skip": ...}, reviews no model answered for as {"fail": n} (left alone after FAIL_MAX runs).
 
 Run: python -m lmn.briefs (workflow «Брифы для архива»). BRIEFS_COMPARE=1 writes nothing and instead puts other Groq
@@ -38,7 +38,7 @@ TR_BATCH = 10  # briefs per Gemini translation request
 def targets(archive, reviews, done):
     have = {r["id"] for r in reviews if (r.get("ai") or {}).get("brief")}
     out = [tnd.tidy_entry(a) for a in archive]
-    out = [a for a in out if a.get("artist_name") and a.get("album") and not a.get("guest") and not a.get("track")
+    out = [a for a in out if a.get("artist_name") and a.get("album") and not a.get("track")
            and a["id"] not in done and a["id"] not in have and len(a["id"]) == 24]  # 24 hex: a TND post id
     return sorted(out, key=lambda a: a["published"], reverse=True)
 
@@ -95,6 +95,9 @@ def verdict(a):
     """The score as the review gives it, for the English prompt: for the model's sense of how much he liked it, not to
     write (owner, 2026-11-01: a repeat of the card's score line). Without it the models made one up (Kid Rock's
     "NOT GOOD" came back as 0/10, 1/10 and 2/10)."""
+    if a.get("guest"):  # another The Needle Drop writer's review (owner, 2026-11-08: Peaches! had no description)
+        return ("This is a guest review by another The Needle Drop writer, not by Fantano: never name Fantano, say "
+                "«автор обзора» / \"the reviewer\". Don't write a score.")
     if a.get("score") is not None:
         return f"Fantano's score: {a['score']}/10. {NO_SCORE}"
     if a.get("not_good"):

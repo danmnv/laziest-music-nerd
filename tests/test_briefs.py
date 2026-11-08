@@ -233,7 +233,8 @@ class Run(unittest.TestCase):
                     mock.patch.object(briefs.llm, "available", return_value=True), \
                     mock.patch.object(briefs.llm, "summarize", return_value=dict(gemini.parse_answer(json.dumps(ANSWER)), model="m")) as s:
                 briefs.run()
-            self.assertEqual(ft.call_args[0][0], ["a" * 24, "e" * 24])  # no guest, song, done or YouTube-only review
+            # a guest review too (owner, 2026-11-08); no song, done or YouTube-only review
+            self.assertEqual(ft.call_args[0][0], ["b" * 24, "a" * 24, "e" * 24])
             self.assertEqual(s.call_count, 1)
             out = json.loads((p / "briefs.json").read_text())
             self.assertEqual(out["e" * 24], {"skip": "short"})  # not fetched again next run
@@ -451,7 +452,7 @@ class Site(unittest.TestCase):
     def test_archive_page_shows_the_long_brief_and_hides_the_quote(self):
         html = site.archive_page(self.A, [self.A], note={"blurb": "Fantano's line."},
                                  brief={"brief": "Коротко.", "about": "Длинно и подробно.", "who": "Группа из Оксфорда."})
-        self.assertIn("<dt>Кто</dt><dd>Группа из Оксфорда.</dd><dt>Описание</dt><dd>Длинно и подробно.</dd>", html)
+        self.assertIn("<dt>Кто</dt><dd>Группа из Оксфорда.</dd><dt>Обзор</dt><dd>Длинно и подробно.</dd>", html)
         self.assertNotIn("Fantano&#x27;s line", html)
         self.assertNotIn("Коротко.", html)
 

@@ -26,3 +26,9 @@ test("Fantano's Self-Titled is the artist's name", () => {
   assert.equal(selfTitled("Weezer", "Self-Titled (Gold)"), "Weezer (Gold)");
   assert.equal(selfTitled("X", "Vol. II"), "Vol. II");
 });
+
+test("the album comes before a single of the same name (KNEECAP «FENIAN», owner 2026-11-08)", () => {
+  const res = [{ id: 1, title: "FENIAN", record_type: "single", nb_tracks: 3, artist: { name: "Kneecap" } },
+    { id: 2, title: "FENIAN", record_type: "album", nb_tracks: 14, artist: { name: "Kneecap" } }];
+  assert.equal(pickAlbum(res, creditedNames("KNEECAP"), "FENIAN").id, 2);
+});

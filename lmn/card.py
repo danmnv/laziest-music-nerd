@@ -91,7 +91,7 @@ def _norm(t):
     return "".join(ch for ch in (t or "").lower() if ch.isalnum())
 
 
-def tracklist(r, limit=None):
+def tracklist(r, limit=None, more_url=None):
     tracks = r.get("tracks") or []
     best = [_norm(b) for b in (r.get("ai") or {}).get("best_tracks", []) if _norm(b)]
     out = []
@@ -101,14 +101,27 @@ def tracklist(r, limit=None):
         dur = f" {t['sec'] // 60}:{t['sec'] % 60:02d}" if t.get("sec") else ""
         out.append(f"{i}. {e(t.get('title'))}{dur}{star}")
     if limit is not None and len(tracks) > limit:
-        out.append(f"… ещё {len(tracks) - limit}")
+        more = f"… ещё {len(tracks) - limit}"
+        out.append(f'<a href="{html.escape(more_url)}">{more}</a>' if more_url else more)
     return out
+
+
+CARD_V = 2  # the card's layout: 2 = the bot's and the channel's cards made the same (owner, 2026-11-08). A channel post
+#            sent with an older layout is not edited any more (refresh): "уже опубликованные в канале не надо переписывать"
+
+
+def nth_line(r):
+    """«5-й из 5 обзоров артиста», as on the bot's card, instead of the old «Фантано раньше» line (owner, 2026-11-08:
+    the channel has «💿 Альбомы артиста» for the rest). Nothing for an artist's first review."""
+    n = len(r.get("previous") or [])
+    return f"{n + 1}-й из {n + 1} обзоров артиста" if n else ""
 
 
 def _caption(r, ai, limit, drop=()):
     name = f"{e(r['artist_name'])} — {e(r['album'])}"
-    # plain text, not a link to the site: a link's text can't be copied in Telegram (owner, 2026-11-02)
-    lines = [f"<b>{name}</b>"]
+    # plain text, not a link to the site: a link's text can't be copied in Telegram (owner, 2026-11-02); the year as
+    # on the bot's card
+    lines = [f"<b>{name}</b>" + (f" ({r['year']})" if r.get("year") else "")]
     genres = ", ".join(tnd.genres(r)[:4])
     kind = TYPE_RU.get(r.get("type"))
     second = f"{EMOJI[color(r.get('score'), r.get('not_good'), r.get('classic'))]} {score_text(r)}"
@@ -119,29 +132,26 @@ def _caption(r, ai, limit, drop=()):
     size = [plural_tracks(len(r["tracks"])) if r.get("tracks") else None,
             f"{r['duration_min']} мин" if r.get("duration_min") else None]
     if any(size):
-        second += " · " + ", ".join(x for x in size if x)
+        second += " · " + " · ".join(x for x in size if x)  # as on the bot's card
     if r.get("guest"):
         second += " · гостевой обзор"
+    if nth_line(r):
+        second += " · " + nth_line(r)
     lines.append(second)
-    # paragraphs, as in the bot's card (owner, 2026-11-02: the channel card read as glued): title and score; who and
-    # Fantano before; the description; critics; when to listen; the tracklist; the links and our site
+    # paragraphs, the same as the bot's card (owner, 2026-11-08): title and score; who and the review's summary with no
+    # blank line between them; critics; when to listen; the tracklist; the links and our site
     paras = ["\n".join(lines)]
     lines = []
     who = who_line(r) if "who" not in drop else None
     if who:
         lines.append(f"<b>Кто:</b> {who}")
-    before = fantano_before(r) if "before" not in drop else None
-    if before:
-        lines.append(f"<b>Фантано раньше:</b> {before}")
-    paras.append("\n".join(lines))
-    lines = []
     if ai.get("brief"):
-        lines.append(f"<b>Описание:</b> {e(ai['brief'])}")
+        lines.append(f"<b>Обзор:</b> {e(ai['brief'])}")  # «Описание» renamed «Обзор» (owner, 2026-11-08)
     else:
         if r.get("blurb") and "blurb" not in drop:  # Fantano's own line under the video, in English as he wrote it
             lines.append(f"<b>Фантано под видео:</b> <i>{e(r['blurb'])}</i>")
         if r.get("brief_pending"):  # Gemini failed at posting time; refresh.py tries again and edits this post
-            lines.append("<i>Описание ещё пишется: допишется прямо в этот пост.</i>")
+            lines.append("<i>Обзор ещё пишется: допишется прямо в этот пост.</i>")
     paras.append("\n".join(lines))
     crit = critics_line(r) if "critics" not in drop else None
     if crit:
@@ -149,7 +159,7 @@ def _caption(r, ai, limit, drop=()):
     moods = gemini.shown_moods(ai.get("moods"))[:2]  # the same list as the buttons (and the Worker's cardMoods)
     if moods and "moods" not in drop:
         paras.append(f"<b>Вайб для:</b> {e(' / '.join(gemini.vibe(m) for m in moods))} <i>(догадка ИИ, поправь кнопками)</i>")
-    tl = tracklist(r, limit) if limit != 0 else []
+    tl = tracklist(r, limit, more_url=tracks_url(r)) if limit != 0 else []
     if tl:
         legend = " (★ — выделил Фантано)" if any(x.endswith("★") for x in tl) else ""
         # the quote stands out by itself: no blank lines around it, the links right under it (owner, 2026-11-02)
@@ -160,24 +170,35 @@ def _caption(r, ai, limit, drop=()):
         paras.append(links_line(r))
     if SITE_LIVE:  # our site, worded so it can't be taken for the artist's or the album's (owner, 2026-11-02); right under
         # the links with no blank line, set apart by its own mark instead (owner, 2026-11-03)
-        paras[-1] += f'\n{SITE_MARK} <a href="{page_url(r)}">Этот альбом на нашем сайте</a>'
+        paras[-1] += f'\n{SITE_MARK} <a href="{page_url(r)}">{SITE_WORDS}</a>'
     return "\n\n".join(p for p in paras if p)
 
 
 SITE_MARK = "🌐"  # the line with our site's page, on the channel's and the bot's cards
+SITE_WORDS = "На нашем сайте"  # was «Этот альбом на нашем сайте» (owner, 2026-11-08: shorter)
 
 
-CARD_CRITICS = 3  # outlets on a channel card, in ratings.PRIORITY order (Pitchfork first), then Metacritic
+def tracks_url(r):
+    """The bot's link that sends the album's whole tracklist (title, score, genres, date, length and every track), for
+    a card whose tracklist didn't fit (owner, 2026-11-08). None without the bot."""
+    return f"https://t.me/{BOT_USERNAME}?start=t_{r['id']}" if WORKER_LIVE and r.get("id") else None
+
+
+CARD_CRITICS = 3  # outlets on a card, in ratings.PRIORITY order (Pitchfork first), then Metacritic and AOTY; the same
+#                  in the bot's card (lmn/site.py card_critics)
 
 
 def critics_from(rt):
-    """The few critic scores a channel card shows, from a data/ratings.json entry: [{"o", "s", "u"}], or []."""
-    if not rt or not rt.get("wp"):
+    """The few critic scores a card shows, from a data/ratings.json entry (with AOTY's merged in, aoty.merge):
+    [{"o", "s", "u"}], or []."""
+    if not rt or not (rt.get("wp") or rt.get("aoty") is not None or rt.get("critics")):
         return []
     out = [{"o": c["outlet"], "s": c["score"], "u": c.get("url")}
            for c in (rt.get("critics") or []) if c.get("outlet") and c.get("score")][:CARD_CRITICS]
     if rt.get("metacritic") is not None:
         out.append({"o": "Metacritic", "s": f"{rt['metacritic']}/100", "u": rt.get("mc_url")})
+    if rt.get("aoty") is not None:  # an average like Metacritic's (owner, 2026-11-03)
+        out.append({"o": "AOTY", "s": f"{rt['aoty']}/100"})
     return [{k: v for k, v in c.items() if v} for c in out]
 
 
@@ -204,7 +225,7 @@ def caption(r):
         if tg_len(text) > CAPTION_LIMIT:
             ai = dict(ai, brief=None)
     drop = []
-    for part in (None, "moods", "blurb", "critics", "before", "who"):
+    for part in (None, "moods", "blurb", "critics", "who"):
         if part:
             drop.append(part)
         text = _caption(r, ai, 0, drop)
@@ -266,16 +287,18 @@ def link_items(r):
         ("YouTube Music", links["youtube_album"]) if links.get("youtube_album") else
         ("искать в YouTube Music", links.get("ytmusic") or f"https://music.youtube.com/search?q={q}") if named else None,
         ("Apple Music", links["apple"]) if links.get("apple") else None,
+        ("SoundCloud", links["soundcloud"]) if links.get("soundcloud") else
         ("искать в SoundCloud", f"https://soundcloud.com/search?q={q}") if named else None,
-        (bandcamp_label(bc).replace("Bandcamp · артист", "Bandcamp артиста"), bc) if bc and "bandcamp.com/search" not in bc else
-        ("искать в Google", google_search(r["artist_name"], r["album"])) if named else None,
+        # no «искать в Google» where no Bandcamp page is known (owner, 2026-11-08: no Google searches on cards)
+        (bandcamp_label(bc).replace("Bandcamp · артист", "Bandcamp артиста"), bc) if bc and "bandcamp.com/search" not in bc else None,
         ("оценки на AOTY", aoty_search(r["artist_name"], r["album"])) if named else None,
     ]
     return [(t, u) for t, u in (x for x in items if x) if u]
 
 
 def links_line(r):
-    return "<b>Ссылки:</b> " + " · ".join(f'<a href="{html.escape(u)}">{e(t)}</a>' for t, u in link_items(r))
+    # no «Ссылки:» word (owner, 2026-11-08: their colour says they are links)
+    return " · ".join(f'<a href="{html.escape(u)}">{e(t)}</a>' for t, u in link_items(r))
 
 
 def buttons(r, with_callbacks=False):
@@ -293,7 +316,9 @@ def buttons(r, with_callbacks=False):
             {"text": "⏳ Послушать потом", "callback_data": f"m:{sid}:later"},
             {"text": "✗ Не моё", "callback_data": f"m:{sid}:nope"},
         ])
-        rows.append([{"text": "🔔 Следить за артистом", "callback_data": f"f:{sid}"}])
+        # as the bot's card (worker artistButton): the artist's albums replace the old «Фантано раньше» line (owner, 2026-11-08)
+        rows.append([{"text": "🔔 Следить", "callback_data": f"f:{sid}"},
+                     {"text": "💿 Альбомы артиста", "callback_data": f"da:{sid}"}])
         # w:<id>:<index in MOODS>: MOODS only grows, so a button keeps meaning the same word (the Worker's handler)
         moods = gemini.shown_moods((r.get("ai") or {}).get("moods"))[:2]
         for mood in moods:
