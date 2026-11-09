@@ -201,8 +201,8 @@ def compare(api_key, n):
         print("  site:  ", site[:600].replace("\n", " "))
 
 
-def probe(api_key, ids, models=2):
-    """Why these reviews got no transcript: each one asked of the first few models in turn, with what each answered.
+def probe(api_key, ids):
+    """Why these reviews got no transcript: each one asked of every model in turn, with what each answered.
     Saves nothing."""
     data = _load("briefs.json", {})
     items = [a for a in todo(_load("archive.json", []), {k: {**data.get(k, {}), "vf": 0} for k in ids}, set())
