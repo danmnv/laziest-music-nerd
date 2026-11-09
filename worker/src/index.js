@@ -1048,7 +1048,7 @@ async function unreviewedCard(env, x, arch) {
   const known = arch.find((a) => nameKey(a.artist_name) === k); // any review of the artist: follow and their list work through it
   const linkLine = linkItems([
     ...listenLinks(q, null, apple, bandcampLink({ bandcamp: top.bc }, x.artist, x.title), top.sc),
-    ["оценки на AOTY", `https://www.albumoftheyear.org/search/?q=${q}`],
+    ["AOTY", `https://www.albumoftheyear.org/search/?q=${q}`],
   ]);
   // the tracklist as on a review's card; what doesn't fit a photo's caption is cut («… ещё N», no link: no review id)
   const text = withTracklist(head, list, [], x.cover ? CAPTION_LIMIT : MESSAGE_LIMIT, linkLine);
@@ -1148,7 +1148,7 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
     vid ? ["Видеообзор", `https://youtu.be/${vid}`] : ["Обзор", r.url],
     // no «Все платформы» (album.link) in the bot: the owner didn't like how it reads or what it opens (2026-11-02); the site keeps it
     ...listenLinks(q, links.youtube_album, apple, bandcampLink(links, r.artist_name, r.album, rt && rt.bc), rt && rt.sc),
-    ["оценки на AOTY", `https://www.albumoftheyear.org/search/?q=${q}`],
+    ["AOTY", `https://www.albumoftheyear.org/search/?q=${q}`],
     // no «любимые треки на сайте» (owner, 2026-11-02: services instead); the site keeps the player
   ]) + siteLine(env, r);
   const paras = [head, about, criticsText(rt).trim(),

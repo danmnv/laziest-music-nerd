@@ -2,11 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { criticsText } from "../src/critics.mjs";
 
-test("critics lines: the outlets are the source, the charts line names its article (escaped for an HTML attribute)", () => {
+test("critics lines: outlets and charts, no Wikipedia link (the site has it)", () => {
   assert.equal(criticsText(null), "");
   assert.equal(criticsText({ crit: ["Pitchfork 9/10", "Metacritic 91/100"], sales: ["US #1"], wp_url: 'https://en.wikipedia.org/wiki/A"B' }),
-    '\n<b>Критики:</b> Pitchfork 9/10 · Metacritic 91/100\nЧарты и продажи: US #1 (<a href="https://en.wikipedia.org/wiki/A&quot;B">Википедия</a>)');
-  assert.equal(criticsText({ crit: [], sales: ["US #1"], wp_url: "https://w/x" }), '\nЧарты и продажи: US #1 (<a href="https://w/x">Википедия</a>)');
+    '\n<b>Критики:</b> Pitchfork 9/10 · Metacritic 91/100\nЧарты и продажи: US #1');
+  assert.equal(criticsText({ crit: [], sales: ["US #1"], wp_url: "https://w/x" }), '\nЧарты и продажи: US #1');
   assert.equal(criticsText({ contested: "Фантано 3/10, критики 8/10 (Metacritic)", crit: ["Metacritic 80/100"], sales: [], wp_url: "https://w/x" }),
     '\n⚡ Спорно: Фантано 3/10, критики 8/10 (Metacritic)\n<b>Критики:</b> Metacritic 80/100');
 });

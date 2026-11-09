@@ -291,7 +291,7 @@ def link_items(r):
         ("искать в SoundCloud", f"https://soundcloud.com/search?q={q}") if named else None,
         # no «искать в Google» where no Bandcamp page is known (owner, 2026-11-08: no Google searches on cards)
         (bandcamp_label(bc).replace("Bandcamp · артист", "Bandcamp артиста"), bc) if bc and "bandcamp.com/search" not in bc else None,
-        ("оценки на AOTY", aoty_search(r["artist_name"], r["album"])) if named else None,
+        ("AOTY", aoty_search(r["artist_name"], r["album"])) if named else None,
     ]
     return [(t, u) for t, u in (x for x in items if x) if u]
 
