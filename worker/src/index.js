@@ -787,7 +787,7 @@ function appleSearch(term) {
 
 // The streaming links of a card (owner, 2026-11-02): YouTube Music, Apple Music (when the album is found), SoundCloud, then Bandcamp
 // when a page is known; no Google search in its place (owner, 2026-11-08). SoundCloud has no open API: its search, or the
-// album's page from the owner's AOTY table (lmn/aoty_top.py).
+// album's page from the owner's music-database table (lmn/aoty_top.py).
 function listenLinks(q, ytm, apple, bandcamp, sc) {
   return [
     ytm ? ["YouTube Music", ytm] : ["искать в YouTube Music", `https://music.youtube.com/search?q=${q}`],
@@ -1023,7 +1023,7 @@ async function sendCard(env, uid, { text, reply_markup, cover }) {
 // The card of an album without Fantano's review. x.fresh: the release date of a just-released album (watchReleases).
 async function unreviewedCard(env, x, arch) {
   const k = nameKey(x.artist);
-  // the owner's AOTY table (top 5000 of the 2010s and 2020s, lmn/aoty_top.py): AOTY's genres, critics, tracklist, links
+  // the owner's music-database table (top 5000 of the 2010s and 2020s, lmn/aoty_top.py): its genres, critics, tracklist, links
   const top = (await topAlbum(env.SITE_URL, x.artist, x.title)) || {};
   const [wiki, live] = await Promise.all([wikiCritics(x.artist, untitled(x.title)), top.am ? null : appleAlbum(x.artist, x.title)]);
   const apple = top.am || live;
@@ -1034,7 +1034,7 @@ async function unreviewedCard(env, x, arch) {
   const minutes = x.minutes || (list.length && list.every((t) => t.sec) ? Math.round(list.reduce((n, t) => n + t.sec, 0) / 60) : null);
   const year = x.year || (top.d ? String(top.d).slice(0, 4) : "");
   const facts = [
-    // AOTY's genres are finer than Deezer's ("Rap/Hip Hop")
+    // The table's genres are finer than Deezer's ("Rap/Hip Hop")
     ((top.g && top.g.length ? top.g : x.genres) || []).slice(0, 3).join(", "),
     x.kind,
     tracks ? tracksWord(tracks) : "",
@@ -1048,7 +1048,7 @@ async function unreviewedCard(env, x, arch) {
   const known = arch.find((a) => nameKey(a.artist_name) === k); // any review of the artist: follow and their list work through it
   const linkLine = linkItems([
     ...listenLinks(q, null, apple, bandcampLink({ bandcamp: top.bc }, x.artist, x.title), top.sc),
-    ["оценки на AOTY", `https://www.albumoftheyear.org/search/?q=${q}`],
+    ["AOTY", `https://www.albumoftheyear.org/search/?q=${q}`],
   ]);
   // the tracklist as on a review's card; what doesn't fit a photo's caption is cut («… ещё N», no link: no review id)
   const text = withTracklist(head, list, [], x.cover ? CAPTION_LIMIT : MESSAGE_LIMIT, linkLine);
@@ -1093,7 +1093,7 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   const links = (full && full.links) || {};
   const rt = await criticsOf(env, r.id);
   // the album as checked from Actions (data/albums.json via the site's rt/<id>.json: Deezer, else the Cover Art Archive
-  // and the AOTY table); Deezer's live search only without it: it once found KNEECAP's single «FENIAN» (owner, 2026-11-08)
+  // and the music-database table); Deezer's live search only without it: it once found KNEECAP's single «FENIAN» (owner, 2026-11-08)
   const al = rt && rt.al;
   const dz = (full && full.covers && full.covers.length && full.duration_min) ? null
     : al ? { cover: al.cv || null, tracks: al.t ? al.t.length : null, list: (al.t || []).map(([title, sec]) => ({ title, sec: sec || null })),
@@ -1148,7 +1148,7 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
     vid ? ["Видеообзор", `https://youtu.be/${vid}`] : ["Обзор", r.url],
     // no «Все платформы» (album.link) in the bot: the owner didn't like how it reads or what it opens (2026-11-02); the site keeps it
     ...listenLinks(q, links.youtube_album, apple, bandcampLink(links, r.artist_name, r.album, rt && rt.bc), rt && rt.sc),
-    ["оценки на AOTY", `https://www.albumoftheyear.org/search/?q=${q}`],
+    ["AOTY", `https://www.albumoftheyear.org/search/?q=${q}`],
     // no «любимые треки на сайте» (owner, 2026-11-02: services instead); the site keeps the player
   ]) + siteLine(env, r);
   const paras = [head, about, criticsText(rt).trim(),

@@ -1,6 +1,6 @@
-"""The owner's second AOTY table (2026-11-08): albumoftheyear.org's top 5000 albums of the 2010s and of the 2020s
-(10 000 rows: genres, tracklist, critic score and reviews, streaming links), collected by someone else's script. A
-one-off import, not a scraper: we never fetch AOTY ourselves.
+"""The owner's second music-database table (2026-11-08): the top 5000 albums of the 2010s and of the 2020s
+(10 000 rows: genres, tracklist, critic score and reviews, streaming links), put together by someone else. A
+one-off import, not a scraper: we never fetch music databases ourselves.
 
 Two uses (owner, 2026-11-08: «чтобы карточки были полноценнее»):
 - albums Fantano reviewed: genres up to three where the archive has one or none, Apple Music, Bandcamp and SoundCloud
@@ -64,7 +64,7 @@ def _date(s):
 
 
 def _url(u, host):
-    """The album's own page, without AOTY's affiliate and tracking parameters."""
+    """The album's own page, without the source's affiliate and tracking parameters."""
     if not isinstance(u, str) or not u.startswith("http") or host not in u:
         return None
     u = u.split("?")[0]
@@ -76,7 +76,7 @@ def _norm_genre(g):
 
 
 def genres(v2):
-    """AOTY's genres, primary first, as TND writes them (lower case), without long names."""
+    """The table's genres, primary first, as TND writes them (lower case), without long names."""
     out = []
     for g in (v2.get("genre_primary") or []) + (v2.get("genre_secondary") or []):
         g = (g or "").strip().lower()

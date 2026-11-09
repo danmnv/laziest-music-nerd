@@ -1,4 +1,4 @@
-// Albums Fantano didn't review, from the owner's second AOTY table (lmn/aoty_top.py, 2026-11-08): genres, AOTY's score,
+// Albums Fantano didn't review, from the owner's second music-database table (lmn/aoty_top.py, 2026-11-08): genres, AOTY's score,
 // a few critics, the tracklist and album links, in the site's u/<shard>.json. The key and shard as in lmn/aoty_top.py.
 import { nameKey } from "./follow.mjs";
 import { untitled } from "./releases.mjs";

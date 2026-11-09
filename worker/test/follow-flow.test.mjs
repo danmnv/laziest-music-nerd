@@ -34,7 +34,7 @@ let mbDown = false;
 let longBrief = null; // a brief too long for a photo's caption
 let rtMoods = null; // the archive brief's mood guess for Kid A, when a test needs another
 let rtAl = null; // the album as checked from Actions (data/albums.json), in Kid A's rt file
-let topU = null; // the site's u/ra.json (the owner's AOTY table, lmn/aoty_top.py)
+let topU = null; // the site's u/ra.json (the owner's music-database table, lmn/aoty_top.py)
 let pinnedNow = null; // what getChat says is pinned in a private chat
 let freshAlbums = []; // albums Deezer lists for Radiohead on top of the old ones
 let fetched = []; // every URL the Worker asked outside Telegram
@@ -276,7 +276,7 @@ test("one hit is sent as a full card: cover, length, links, marks and follow", a
   assert.match(c.caption, /<b>Radiohead — Kid A<\/b> \(2000\)\n🟢 10\/10 · art rock · 10 треков · 50 мин · 2-й из 2 обзоров артиста\n\n<b>Кто:<\/b> британская рок-группа, четвёртый альбом\n<b>Обзор:<\/b> Radiohead уходят в электронику\.\n/);
   assert.doesNotMatch(c.caption, /Not shown/); // the archive's brief (lmn/briefs.py) replaces Fantano's line
   // paragraphs: title and score, Fantano's words, the critics, when to listen (owner, 2026-11-01: one block read as glued)
-  assert.match(c.caption, /электронику\.\n\n<b>Критики:<\/b> Metacritic 91 · Pitchfork 10\/10\nЧарты и продажи: US #1 · UK #1 \(<a href="https:\/\/en.wikipedia.org\/wiki\/Kid_A">Википедия<\/a>\)\n\n<b>Вайб для:<\/b>/);
+  assert.match(c.caption, /электронику\.\n\n<b>Критики:<\/b> Metacritic 91 · Pitchfork 10\/10\nЧарты и продажи: US #1 · UK #1\n\n<b>Вайб для:<\/b>/);
   // the tracklist folded at the end, as in the channel's card
   // the tracklist folded, as in the channel's card, and the links under it (owner, 2026-11-02)
   // the quote stands out by itself: no blank lines around it (owner, 2026-11-02)
@@ -303,7 +303,7 @@ test("one hit is sent as a full card: cover, length, links, marks and follow", a
   assert.ok(!btns.some((b) => b.text === "✨ Вайб для чего?"));
   await press(OWNER, "w:k:14:y");
   assert.deepEqual({ ...db.prepare("SELECT review_id, mood, vote FROM mood_votes").get() }, { review_id: "k", mood: "фоном для работы", vote: "y" });
-  assert.ok(links.some(([t, u]) => t === "оценки на AOTY" && u === "https://www.albumoftheyear.org/search/?q=Radiohead%20Kid%20A"));
+  assert.ok(links.some(([t, u]) => t === "AOTY" && u === "https://www.albumoftheyear.org/search/?q=Radiohead%20Kid%20A"));
   assert.ok(btns.some((b) => b.callback_data === "m:k:done"));
   assert.ok(btns.some((b) => b.callback_data === "f:k"));
   assert.ok(btns.some((b) => b.text === "💿 Альбомы артиста" && b.callback_data === "da:k"));
@@ -349,7 +349,7 @@ test("without a Deezer match the card is text, with the same links", async () =>
   await press(OWNER, "a:x");
   const c = calls.find((x) => x.method === "sendMessage" && /Obscure/.test(x.text));
   assert.match(c.text, /⚪ без оценки · обзор 2011/);
-  assert.deepEqual(cardLinks(c).map(([t]) => t), ["Обзор", "искать в YouTube Music", "искать в SoundCloud", "оценки на AOTY"]);
+  assert.deepEqual(cardLinks(c).map(([t]) => t), ["Обзор", "искать в YouTube Music", "искать в SoundCloud", "AOTY"]);
 });
 
 test("an artist's albums without Fantano's review, and a card for one of them", async () => {
@@ -385,9 +385,9 @@ test("an artist's albums without Fantano's review, and a card for one of them", 
   const c = calls.find((x) => x.method === "sendPhoto");
   assert.equal(c.photo, "https://cdn/bends.jpg");
   assert.match(c.caption, new RegExp('^<b>Radiohead — The Bends</b> \\(1995\\)\n⚪ Фантано не обозревал · Alternative · 12 треков · 49 мин' +
-    '\n\n<b>Критики:</b> Pitchfork 10/10 · AllMusic 5/5\nЧарты и продажи: US #88 · UK #4 · UK 4× Platinum \\(<a href="https://en.wikipedia.org/wiki/The_Bends">Википедия</a>\\)\n\n<a href='));
+    '\n\n<b>Критики:</b> Pitchfork 10/10 · AllMusic 5/5\nЧарты и продажи: US #88 · UK #4 · UK 4× Platinum\n\n<a href='));
   const btns = c.reply_markup.inline_keyboard.flat();
-  assert.deepEqual(cardLinks(c).map(([t]) => t), ["искать в YouTube Music", "искать в SoundCloud", "оценки на AOTY"]);
+  assert.deepEqual(cardLinks(c).map(([t]) => t), ["искать в YouTube Music", "искать в SoundCloud", "AOTY"]);
   assert.ok(btns.some((b) => b.callback_data === "f:k"));
   calls = [];
   mbDown = true; // MusicBrainz busy: the card is made from the list button's title and year
@@ -432,7 +432,7 @@ test("an album without a review gets AOTY's genres, critics, tracklist and album
   assert.match(c.caption, /<blockquote expandable><b>Треклист<\/b>\n1\. Wall of Eyes 5:15\n2\. Teleharmonic 5:44<\/blockquote>/);
   assert.deepEqual(cardLinks(c), [["искать в YouTube Music", "https://music.youtube.com/search?q=Radiohead%20Wall%20of%20Eyes"],
     ["Apple Music", "https://music.apple.com/us/album/wall-of-eyes/1"], ["SoundCloud", "https://soundcloud.com/thesmile/sets/wall-of-eyes"],
-    ["Bandcamp", "https://thesmile.bandcamp.com/album/wall-of-eyes"], ["оценки на AOTY", "https://www.albumoftheyear.org/search/?q=Radiohead%20Wall%20of%20Eyes"]]);
+    ["Bandcamp", "https://thesmile.bandcamp.com/album/wall-of-eyes"], ["AOTY", "https://www.albumoftheyear.org/search/?q=Radiohead%20Wall%20of%20Eyes"]]);
   assert.ok(!fetched.some((u) => u.startsWith("https://itunes.apple.com/"))); // the table's Apple link: no live search
 });
 

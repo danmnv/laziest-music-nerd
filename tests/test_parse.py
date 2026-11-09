@@ -81,14 +81,14 @@ class ParseTest(unittest.TestCase):
                          [["✓ Слушал", "♡ Понравилось"], ["⏳ Послушать потом", "✗ Не моё"]])
         self.assertEqual(card.buttons(r), [])
         self.assertEqual([t for t, _ in card.link_items(r)],
-                         ["Видеообзор", "искать в YouTube Music", "искать в SoundCloud", "Bandcamp", "оценки на AOTY"])
+                         ["Видеообзор", "искать в YouTube Music", "искать в SoundCloud", "Bandcamp", "AOTY"])
         self.assertTrue(c.endswith("\n" + card.links_line(r)))
         self.assertNotIn("Все платформы", c)
         bare = dict(r, links={"bandcamp": "https://bandcamp.com/search?q=x", "ytmusic": "https://y", "apple": "https://music.apple.com/us/album/x/1"})
         # no Google search where no Bandcamp page is known (owner, 2026-11-08)
         self.assertEqual(card.link_items(bare)[2:5], [("Apple Music", "https://music.apple.com/us/album/x/1"),
             ("искать в SoundCloud", "https://soundcloud.com/search?q=Fontaines%20D.C.%20Dopamine%20Chamber"),
-            ("оценки на AOTY", "https://www.albumoftheyear.org/search/?q=Fontaines+D.C.+Dopamine+Chamber")])
+            ("AOTY", "https://www.albumoftheyear.org/search/?q=Fontaines+D.C.+Dopamine+Chamber")])
         self.assertFalse(card.links_line(r).startswith("<b>"))  # no «Ссылки:» word
         self.assertTrue(all(len(b["callback_data"].encode()) <= 64 for row in kb for b in row if "callback_data" in b))
         txt = card.pinned_text([r])
