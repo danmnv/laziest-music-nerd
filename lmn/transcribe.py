@@ -201,24 +201,42 @@ def compare(api_key, n):
         print("  site:  ", site[:600].replace("\n", " "))
 
 
+PROBE_MAX = 3  # reviews a probe: each one is watched by every model, from the same daily share as new reviews
+
+
 def probe(api_key, ids):
     """Why these reviews got no transcript: each one asked of every model in turn, with what each answered.
-    Saves nothing."""
+    Saves nothing, but spends the day's video share like a run: up to PROBE_MAX reviews and VIDEO_MINUTES minutes."""
+    if len(ids) > PROBE_MAX:
+        print(f"::warning::probe: {len(ids)} reviews, at most {PROBE_MAX} (each one is watched by every model)")
+        return
     data = _load("briefs.json", {})
     items = [a for a in todo(_load("archive.json", []), {k: {**data.get(k, {}), "vf": 0} for k in ids}, set())
              if a["id"] in ids]
+    for k in set(ids) - {a["id"] for a in items}:
+        print(f"{k}: not a review with only a retelling and a known video, skipped")
     lengths = minutes([a["video_id"] for a in items]) if items else {}
+    left = VIDEO_MINUTES
+    print(f"probe: up to {sum(lengths.values()) * len(gemini.MODELS):.0f} min of video")
     for a in items:
         mins = lengths.get(a["video_id"])
         print(f"{a['artist_name']} - {a['album']} ({a['video_id']}, {mins or 0:.0f} min)")
+        if mins is None:
+            print("  not on YouTube any more, skipped")
+            continue
         for m in gemini.MODELS:
+            if mins > left:
+                print(f"  today's {VIDEO_MINUTES} min of video used up")
+                return
             keep = set(gemini._unavailable)
             gemini._unavailable.update(x for x in gemini.MODELS if x != m)  # this model only
-            got, text, model = ask(a, api_key, mins)
-            gemini._unavailable.clear()
-            gemini._unavailable.update(keep)
+            try:
+                got, text, model = ask(a, api_key, mins)
+            finally:
+                gemini._unavailable.clear()
+                gemini._unavailable.update(keep)
+            left -= mins
             print(f"  {m}: {got}" + (f", {len(text)} characters: {text[:200]!r}" if text else ""))
-
 
 if __name__ == "__main__":
     run()
