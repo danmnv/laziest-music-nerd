@@ -33,9 +33,16 @@ GIVE_UP = 3  # no answer at all this many times in a row: the key, the quota or 
 
 PROMPT = """Transcribe everything the host says in this video review, word for word, in English, as plain text.
 No timestamps, no speaker labels, no descriptions of sounds or music, no headings, no comments or summary of your own.
-Leave out music clips. Write album, song and artist names as he says them. Start a new paragraph when he moves on to
+Leave out music clips; when he reads out or sings song lyrics, write only [lyrics]. Write album, song and artist names as he says them. Start a new paragraph when he moves on to
 another part of the review. If you cannot hear the video, answer with nothing at all: never invent a transcript.
 The video: "{title}"."""
+# Asked again when the first answer was stopped for RECITATION (2026-11-09: 2 of 5 reviews from 2024, on every model,
+# 0 characters): the answer matched text already on the web too closely. A close wording keeps every point for Luna.
+CLOSE = """
+Write it in close wording rather than character for character: drop filler words, stutters and repetitions, and keep
+every point he makes, in his order."""
+BLOCKED = {"PROHIBITED_CONTENT", "SAFETY", "BLOCKLIST", "SPII", "IMAGE_SAFETY"}  # the same video is refused again
+watched = 0  # answered requests in the last ask(): each one watched the video
 
 
 def path(review_id):
@@ -85,19 +92,24 @@ def plausible(text, mins=None):
     return len(text) >= max(MIN_CHARS, CHARS_A_MINUTE * (mins or 0)) and bool(HOST.search(text))
 
 
-def ask(a, api_key, mins=None):
-    """("ok", text, model) | ("bad", None, model): the model answered, but no whole transcript | ("none", None, None)."""
+def ask(a, api_key, mins=None, close=False):
+    """("ok", text, model) | ("bad", None, model): the model answered, but no whole transcript | ("blocked", None, model):
+    the video is refused, and would be again | ("none", None, None)."""
+    global watched
+    watched = 0 if not close else watched
+    prompt = PROMPT.format(title=f"{a['artist_name']} - {a['album']}") + (CLOSE if close else "")
     body = {"contents": [{"parts": [{"fileData": {"fileUri": f"https://www.youtube.com/watch?v={a['video_id']}"}},
-                                    {"text": PROMPT.format(title=f"{a['artist_name']} - {a['album']}")}]}],
+                                    {"text": prompt}]}],
             "generationConfig": {"temperature": 0.1, "maxOutputTokens": 24000, "mediaResolution": "MEDIA_RESOLUTION_LOW"}}
     model, raw = gemini.generate(body, api_key, budget=gemini.VIDEO_BUDGET_SEC, call_timeout=gemini.VIDEO_CALL_TIMEOUT)
     if raw is None:
-        return "none", None, None
+        return ("bad", None, model) if close else ("none", None, None)  # the first answer was there: not "no answer"
+    watched += 1
     cands = raw.get("candidates") if isinstance(raw, dict) else None
     if not cands:  # the request itself was refused: why, so a run's log tells
         fb = (raw.get("promptFeedback") if isinstance(raw, dict) else None) or {}
         print(f"gemini {model}: no answer, refused: {fb.get('blockReason')} {fb.get('blockReasonMessage') or ''}".rstrip())
-        return "bad", None, model
+        return ("blocked" if fb.get("blockReason") else "bad"), None, model
     cand = cands[0] if isinstance(cands[0], dict) else {}
     parts = (cand.get("content") or {}).get("parts") or []
     text = "".join(p.get("text", "") for p in parts if isinstance(p, dict)).strip()
@@ -106,7 +118,9 @@ def ask(a, api_key, mins=None):
                    or r.get("probability") in ("MEDIUM", "HIGH")]
         print(f"gemini {model}: stopped ({cand.get('finishReason')}) after {len(text)} characters"
               + (f", flagged: {', '.join(map(str, flagged))}" if flagged else ""))
-        return "bad", None, model
+        if cand.get("finishReason") == "RECITATION" and not close:
+            return ask(a, api_key, mins, close=True)
+        return ("blocked" if cand.get("finishReason") in BLOCKED else "bad"), None, model
     if not plausible(text, mins):
         print(f"gemini {model}: {len(text)} characters for {mins or 0:.0f} min, host named: {bool(HOST.search(text))}")
         if len(text) < 300:  # not a transcript: a refusal or an excuse, worth seeing
@@ -159,7 +173,7 @@ def run():
         for m, k in gemini.requests.items():  # every request counts, a retry or a timed-out one too
             if k >= PER_MODEL:
                 gemini._unavailable.add(m)  # its rest of the day is for new reviews
-        left -= mins  # the video may have been watched even with no answer: it counts against the day either way
+        left -= mins * max(1, watched)  # watched even with no answer: it counts against the day either way
         if got == "none":
             streak += 1
             if streak >= GIVE_UP:
@@ -173,10 +187,11 @@ def run():
             made += 1
             print(f"  + {a['artist_name']} - {a['album']} ({mins:.0f} min, {len(text)} characters, {model})")
         else:
-            data[a["id"]] = {**data[a["id"]], "vf": data[a["id"]].get("vf", 0) + 1}
+            vf = FAIL_MAX if got == "blocked" else data[a["id"]].get("vf", 0) + 1  # refused: no use asking again
+            data[a["id"]] = {**data[a["id"]], "vf": vf}
             briefs.save(bpath, data)
             failed += 1
-            print(f"  - {a['artist_name']} - {a['album']}: no usable transcript ({model})")
+            print(f"  - {a['artist_name']} - {a['album']}: no usable transcript ({got}, {model})")
     print(f"transcripts: made {made}, unusable {failed}, {VIDEO_MINUTES - left:.0f} min of video watched")
 
 
@@ -201,7 +216,7 @@ def compare(api_key, n):
         print("  site:  ", site[:600].replace("\n", " "))
 
 
-def probe(api_key, ids, models=2):
+def probe(api_key, ids, models=1):
     """Why these reviews got no transcript: each one asked of the first few models in turn, with what each answered.
     Saves nothing."""
     data = _load("briefs.json", {})
