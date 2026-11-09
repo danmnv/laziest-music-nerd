@@ -54,7 +54,9 @@ class Ask(unittest.TestCase):
     def test_what_is_not_a_transcript(self):
         cases = [(gemini_answer("Too short."), "bad"), (gemini_answer(SPOKEN, "MAX_TOKENS"), "bad"),
                  (gemini_answer(SPOKEN.replace("Anthony Fantano", "a guy").replace("music nerd", "fan")), "bad"),
-                 ({"candidates": []}, "bad")]
+                 ({"candidates": []}, "bad"), ({"promptFeedback": {"blockReason": "OTHER"}}, "bad"),
+                 ({"candidates": [{"finishReason": "RECITATION"}]}, "bad"),  # no content at all (2026-11-09)
+                 ({"candidates": [{"content": {}, "finishReason": "STOP"}]}, "bad")]
         for raw, want in cases:
             with mock.patch.object(gemini, "generate", return_value=("m1", raw)):
                 self.assertEqual(transcribe.ask(self.a, "k")[0], want)

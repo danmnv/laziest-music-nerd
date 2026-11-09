@@ -13,6 +13,9 @@ on:
       compare:
         description: "Только сравнить расшифровку Gemini с текстом сайта на N новых обзорах (ничего не сохраняет)"
         default: ""
+      probe:
+        description: "Только проверить, что модели отвечают на эти обзоры (id через запятую; ничего не сохраняет)"
+        default: ""
 
 permissions:
   contents: write
@@ -51,9 +54,10 @@ jobs:
           VIDEO_MINUTES: "420"   # of the free tier's 8 hours of video a day: an hour is left for new reviews
           VIDEO_PER_MODEL: "12"   # requests a day on each model: the rest is for new reviews
           TRANSCRIBE_COMPARE: ${{ inputs.compare }}
+          TRANSCRIBE_PROBE: ${{ inputs.probe }}
           PYTHONUNBUFFERED: "1"
       - name: Сохранить
-        if: ${{ always() && !inputs.compare }}
+        if: ${{ always() && !inputs.compare && !inputs.probe }}
         run: |
           cd "$GITHUB_WORKSPACE/.data"   # the data repo: commits go there
           git config user.name "laziest-music-nerd-bot"

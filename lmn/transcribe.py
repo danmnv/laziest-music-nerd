@@ -93,17 +93,24 @@ def ask(a, api_key, mins=None):
     model, raw = gemini.generate(body, api_key, budget=gemini.VIDEO_BUDGET_SEC, call_timeout=gemini.VIDEO_CALL_TIMEOUT)
     if raw is None:
         return "none", None, None
-    try:
-        cand = raw["candidates"][0]
-        text = "".join(p.get("text", "") for p in cand["content"]["parts"]).strip()
-    except (KeyError, IndexError, TypeError, AttributeError) as e:
-        print(f"gemini {model}: bad response {e!r}")
+    cands = raw.get("candidates") if isinstance(raw, dict) else None
+    if not cands:  # the request itself was refused: why, so a run's log tells
+        fb = (raw.get("promptFeedback") if isinstance(raw, dict) else None) or {}
+        print(f"gemini {model}: no answer, refused: {fb.get('blockReason')} {fb.get('blockReasonMessage') or ''}".rstrip())
         return "bad", None, model
-    if cand.get("finishReason") not in (None, "STOP"):  # cut at the token limit, or blocked: not the whole review
-        print(f"gemini {model}: stopped ({cand.get('finishReason')}) after {len(text)} characters")
+    cand = cands[0] if isinstance(cands[0], dict) else {}
+    parts = (cand.get("content") or {}).get("parts") or []
+    text = "".join(p.get("text", "") for p in parts if isinstance(p, dict)).strip()
+    if cand.get("finishReason") not in (None, "STOP"):  # cut at the token limit, blocked, or recitation: not the whole review
+        flagged = [r.get("category") for r in cand.get("safetyRatings") or [] if r.get("blocked")
+                   or r.get("probability") in ("MEDIUM", "HIGH")]
+        print(f"gemini {model}: stopped ({cand.get('finishReason')}) after {len(text)} characters"
+              + (f", flagged: {', '.join(map(str, flagged))}" if flagged else ""))
         return "bad", None, model
     if not plausible(text, mins):
         print(f"gemini {model}: {len(text)} characters for {mins or 0:.0f} min, host named: {bool(HOST.search(text))}")
+        if len(text) < 300:  # not a transcript: a refusal or an excuse, worth seeing
+            print(f"  answer: {text!r}")
         return "bad", None, model
     return "ok", text, model
 
@@ -120,6 +127,8 @@ def run():
         return
     if os.environ.get("TRANSCRIBE_COMPARE"):
         return compare(api_key, int(os.environ["TRANSCRIBE_COMPARE"]))
+    if os.environ.get("TRANSCRIBE_PROBE"):
+        return probe(api_key, re.findall(r"[0-9a-f]{24}", os.environ["TRANSCRIBE_PROBE"]))
     archive = _load("archive.json", [])
     bpath = DATA / "briefs.json"
     data = _load("briefs.json", {})
@@ -190,6 +199,25 @@ def compare(api_key, n):
               f"{ratio:.0%} the same words in the same order")
         print("  Gemini:", text[:600].replace("\n", " "))
         print("  site:  ", site[:600].replace("\n", " "))
+
+
+def probe(api_key, ids, models=2):
+    """Why these reviews got no transcript: each one asked of the first few models in turn, with what each answered.
+    Saves nothing."""
+    data = _load("briefs.json", {})
+    items = [a for a in todo(_load("archive.json", []), {k: {**data.get(k, {}), "vf": 0} for k in ids}, set())
+             if a["id"] in ids]
+    lengths = minutes([a["video_id"] for a in items]) if items else {}
+    for a in items:
+        mins = lengths.get(a["video_id"])
+        print(f"{a['artist_name']} - {a['album']} ({a['video_id']}, {mins or 0:.0f} min)")
+        for m in gemini.MODELS[:models]:
+            keep = set(gemini._unavailable)
+            gemini._unavailable.update(x for x in gemini.MODELS if x != m)  # this model only
+            got, text, model = ask(a, api_key, mins)
+            gemini._unavailable.clear()
+            gemini._unavailable.update(keep)
+            print(f"  {m}: {got}" + (f", {len(text)} characters: {text[:200]!r}" if text else ""))
 
 
 if __name__ == "__main__":
