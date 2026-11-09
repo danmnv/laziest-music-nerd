@@ -226,7 +226,7 @@ def probe(api_key, ids, models=1):
     for a in items:
         mins = lengths.get(a["video_id"])
         print(f"{a['artist_name']} - {a['album']} ({a['video_id']}, {mins or 0:.0f} min)")
-        for m in gemini.MODELS[:models]:
+        for m in gemini.MODELS:
             keep = set(gemini._unavailable)
             gemini._unavailable.update(x for x in gemini.MODELS if x != m)  # this model only
             got, text, model = ask(a, api_key, mins)
