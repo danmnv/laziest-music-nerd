@@ -4,7 +4,6 @@ MODE=run   (default) normal hourly run
 MODE=dry   no Telegram calls, print what would be sent
 MODE=test  send the newest review's card to the owner's private chat only; nothing is saved
 """
-import hashlib
 import json
 import os
 import sys
@@ -13,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import card, http, refresh, tnd, youtube
+from . import card, http, refresh, tnd, watch, youtube
 from .colors import EMOJI, color
 from .enrich import archive_entry, enrich
 from .telegram import Telegram
@@ -154,13 +153,8 @@ def owner_chat(tg):
 
 
 def worker():
-    f = DATA / "worker_url.txt"
-    url = f.read_text().strip() if f.exists() else None
-    token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
-    if not (url and token):
-        return None, None
-    # same derivation as the deploy workflow, so no extra secret is needed
-    return url.rstrip("/"), hashlib.sha256(f"{token}:actions".encode()).hexdigest()[:48]
+    """The Worker's address and the secret Actions call it with (lmn/watch.py)."""
+    return watch.worker(DATA)
 
 
 def worker_owner_id():
@@ -232,6 +226,8 @@ def bare(rev):
 
 def main():
     started = time.monotonic()
+    if MODE == "run":  # the watchdog: the Worker tells the owner when checks stop coming (lmn/watch.py)
+        watch.heartbeat(DATA)
     reviews = load("reviews.json", [])
     state = load("state.json", {})
     archive = load("archive.json", [])

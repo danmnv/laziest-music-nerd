@@ -24,7 +24,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import gemini, http, llm, tnd
+from . import gemini, http, llm, tnd, watch
 
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 BATCH = 15
@@ -394,6 +394,10 @@ def run():
           f"waiting for translation {len(untranslated(data))}")
     if llm.stats["rub"] or llm.stats["timeouts"]:
         print(f"briefs: spent {llm.stats['rub']:.2f} ₽, {llm.stats['timeouts']} requests timed out")
+    if llm.stats.get("denied"):  # no money on the router's account, or its key is refused: the run stays green and
+        # writes nothing from now on, so the bot tells the owner (worker/src/watchdog.mjs ALERTS.llm)
+        print(f"::warning::the paid router refused the key (HTTP {llm.stats['denied']}): telling the owner")
+        watch.alert("llm", llm.stats["denied"])
 
 
 if __name__ == "__main__":

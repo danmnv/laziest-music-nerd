@@ -30,7 +30,7 @@ on:
         default: false
 
 permissions:
-  contents: write
+  contents: read   # commits go to the data repo with DATA_TOKEN; this repo is only read
 
 concurrency:
   group: briefs
@@ -75,6 +75,7 @@ jobs:
           BRIEFS_COMPARE_IDS: ${{ inputs.compare_ids }}
           BRIEFS_PING: ${{ inputs.ping && '1' || '' }}
           SELECTEL_API_KEY: ${{ secrets.SELECTEL_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}   # only to call the Worker: it tells the owner when the router refuses the key or the money is out (lmn/watch.py)
           SELECTEL_TIMEOUT: ${{ inputs.compare && '300' || '' }}   # a comparison waits for slow thinking models too
       - name: Сохранить
         if: ${{ always() && !inputs.compare }}

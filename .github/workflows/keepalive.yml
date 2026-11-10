@@ -1,0 +1,41 @@
+name: Не дать расписанию уснуть
+# GitHub turns off scheduled workflows in a public repo after 60 days without activity in it. Since the split of
+# 2026-11-02 the bot's daily commits go to the private data repo, so this repo is quiet whenever nobody changes the code:
+# every schedule here (new reviews, backups, briefs…) would stop about two months after the last code change, without
+# a red run. Twice a month this workflow enables each scheduled workflow again through GitHub's API, which restarts
+# the 60 days. It leaves alone a workflow someone turned off by hand.
+on:
+  schedule:
+    - cron: "23 6 1,15 * *"   # 1-го и 15-го числа: два раза на случай, если GitHub пропустит запуск
+  workflow_dispatch:
+
+permissions:
+  actions: write   # to enable workflows; nothing else
+  contents: read
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Включить заново каждый workflow с расписанием
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bad=0
+          for f in $(grep -l '^  schedule:' .github/workflows/*.yml); do
+            name=$(basename "$f")
+            state=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$name" --jq .state)
+            case "$state" in
+              active|disabled_inactivity)
+                if gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/$name/enable" >/dev/null; then
+                  echo "$name: включён (был $state)"
+                else
+                  echo "::error::$name: GitHub не дал включить"; bad=1
+                fi ;;
+              *) echo "$name: $state, выключен вручную, не трогаю" ;;
+            esac
+          done
+          exit $bad

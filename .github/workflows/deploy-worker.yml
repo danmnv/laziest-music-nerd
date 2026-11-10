@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read   # commits go to the data repo with DATA_TOKEN; this repo is only read
 
 jobs:
   deploy:

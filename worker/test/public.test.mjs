@@ -9,7 +9,8 @@ function d1(sqlite) {
   return {
     prepare(sql) {
       let args = [];
-      const st = { bind(...a) { args = a; return st; }, async all() { return { results: sqlite.prepare(sql).all(...args) }; } };
+      const st = { bind(...a) { args = a; return st; }, async all() { return { results: sqlite.prepare(sql).all(...args) }; },
+        async first() { return sqlite.prepare(sql).get(...args) ?? null; }, async run() { sqlite.prepare(sql).run(...args); return {}; } };
       return st;
     },
   };
