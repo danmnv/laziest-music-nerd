@@ -2,7 +2,7 @@ name: Архив оценок из YouTube
 on:
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read   # commits go to the data repo with DATA_TOKEN; this repo is only read
 concurrency:
   group: check-reviews   # never at the same time as the hourly check: both write data/
 jobs:

@@ -16,6 +16,7 @@ import { creditedNames, selfTitled, pickAlbum } from "./deezer.mjs";
 import { untitled, sortOut, quietHour, ruDate, RECHECK_HOURS } from "./releases.mjs";
 import { ce, plainEmoji } from "./emoji.mjs";
 import { topAlbum, topCritics } from "./top.mjs";
+import { silentFor, daysLeft, TOKEN_WARN_DAYS, ALERTS } from "./watchdog.mjs";
 
 // «later» is shown as «Послушать потом» since 2026-11-02 (the owner: «может быть отложенное должно называться послушать потом»)
 const STATUS_LABEL = { later: "⏳ послушать потом", done: "✓ прослушано", nope: "✗ не понравилось" };
@@ -93,7 +94,7 @@ export default {
         return new Response("ok");
       }
       if (url.pathname === "/auth/telegram" && req.method === "POST") return cors(env, await login(await req.json(), env));
-      if (url.pathname === "/api/public") return cors(env, json(await publicStats(env)));
+      if (url.pathname === "/api/public") return cors(env, await publicResponse(env));
       if (url.pathname === "/api/me/marks") {
         const uid = await sessionUser(req, env);
         if (!uid) return cors(env, json({ error: "login" }, 401));
@@ -103,6 +104,10 @@ export default {
         const uid = await sessionUser(req, env);
         if (!uid) return cors(env, json({ error: "login" }, 401));
         const b = await req.json();
+        // the site sends a review's id (24 or 11 letters and digits) and a whole score; anything else isn't stored
+        if (!REVIEW_ID.test(String(b.review_id)) || ("score" in b && b.score !== null && !Number.isFinite(Number(b.score)))) {
+          return cors(env, json({ error: "bad request" }, 400));
+        }
         // null clears (a second press of the same mark, «—» for the score); a missing field keeps what is there
         await setMark(env, uid, String(b.review_id), "status" in b ? b.status : undefined, "score" in b ? b.score : undefined);
         const later = b.status === "later";
@@ -132,6 +137,27 @@ export default {
           if (!x.done) pending.push(String(r.id));
         }
         return json({ ok: true, sent, pending });
+      }
+      if (url.pathname === "/api/heartbeat" && req.method === "POST") {
+        // Called by every check of new reviews (lmn/check.py): the watchdog's "GitHub Actions are alive" (watchdog.mjs)
+        if (req.headers.get("Authorization") !== `Bearer ${env.ACTIONS_SECRET}`) return new Response("forbidden", { status: 403 });
+        const alerted = await getSetting(env, "check_alerted");
+        await setSetting(env, "check_seen", now());
+        if (alerted) { // the owner was told about the silence: tell them it's over
+          await setSetting(env, "check_alerted", "");
+          await tellOwner(env, "✅ Проверка новых обзоров снова работает.");
+        }
+        return json({ ok: true });
+      }
+      if (url.pathname === "/api/alert" && req.method === "POST") {
+        // Called by GitHub Actions when a job can't go on and no red run says so (lmn/watch.py). The kind picks one of
+        // the texts in watchdog.mjs; nothing from the request is shown but a number.
+        if (req.headers.get("Authorization") !== `Bearer ${env.ACTIONS_SECRET}`) return new Response("forbidden", { status: 403 });
+        const body = await req.json().catch(() => ({}));
+        const text = Object.hasOwn(ALERTS, body.kind) ? ALERTS[body.kind](Number.isInteger(body.code) ? body.code : null) : null;
+        if (!text) return json({ error: "unknown kind" }, 400);
+        await tellOwner(env, text);
+        return json({ ok: true });
       }
       if (url.pathname === "/api/owner/id") {
         // For GitHub Actions' test mode and key check: once the webhook is set, Telegram's getUpdates is closed to them.
@@ -163,8 +189,9 @@ export default {
     if (event.cron === "0 7 * * SUN") { if (env.DIGEST === "1") ctx.waitUntil(sendDigest(env)); }
     else if (event.cron === RELEASES_CRON) ctx.waitUntil(watchReleases(env, new Date(event.scheduledTime || Date.now())));
     else ctx.waitUntil((async () => {
-      const budget = { left: DAILY_BUDGET - 3 }; // setCommands: a setting, and when the commands change, Telegram and a setting
+      const budget = { left: DAILY_BUDGET - 4 }; // setCommands: a setting, and when the commands change, Telegram and a setting; the tokens' reminder
       await setCommands(env);
+      await remindTokens(env, new Date(event.scheduledTime || Date.now())).catch((e) => console.log("token reminder failed", e.stack));
       await moveDupMarks(env, budget);
       await sendReminders(env, budget);
       await migrateDmPins(env, budget);
@@ -535,6 +562,21 @@ function statusMap(marks) {
 // is only "fewer than 10" or "10 or more" (many).
 const PUBLIC_MIN = 3;
 const PUBLIC_MANY = 10;
+
+// /api/public is open to anyone and every release page of the site asks for it, so the answer is counted at most once
+// in PUBLIC_TTL and kept in a settings row: one row read instead of three whole-table queries per page view (someone
+// calling it in a loop would otherwise use up the free plan's daily D1 reads, and the bot would stop till midnight UTC).
+// A new score or vote shows up within PUBLIC_TTL. The row holds only what the site may show (publicStats).
+const PUBLIC_TTL = 600e3;
+async function publicResponse(env) {
+  const headers = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=300" };
+  const kept = await getSetting(env, "public_stats");
+  const at = kept ? Number(kept.slice(0, kept.indexOf("|"))) : 0;
+  if (kept && Date.now() - at < PUBLIC_TTL) return new Response(kept.slice(kept.indexOf("|") + 1), { headers });
+  const body = JSON.stringify(await publicStats(env));
+  await setSetting(env, "public_stats", `${Date.now()}|${body}`);
+  return new Response(body, { headers });
+}
 
 async function publicStats(env) {
   const avg = {};
@@ -1618,6 +1660,40 @@ async function tellFollowers(env, r, budget) {
   return { sent, done: part.length === todo.length };
 }
 
+// ---------- the watchdog (hourly and daily cron, watchdog.mjs) ----------
+
+const REVIEW_ID = /^[A-Za-z0-9_-]{1,64}$/; // a review's id as the site sends it (/api/mark)
+
+async function tellOwner(env, text) {
+  if (!env.OWNER_ID) return { ok: false };
+  return tg(env, "sendMessage", { chat_id: Number(env.OWNER_ID), text, link_preview_options: { is_disabled: true } });
+}
+
+// No check of new reviews has reported for SILENT_HOURS: the owner is told once, then once a day while it lasts
+// (/api/heartbeat tells them when it's over). At night it waits for the morning, like everything the bot sends.
+async function watchChecks(env, when, quiet) {
+  const { results } = await env.DB.prepare("SELECT key, value FROM settings WHERE key IN ('check_seen', 'check_alerted')").all();
+  const st = Object.fromEntries(results.map((r) => [r.key, r.value]));
+  if (!st.check_seen) return setSetting(env, "check_seen", when.toISOString()); // the first run after this was deployed: count from now
+  const h = silentFor(st.check_seen, st.check_alerted, when);
+  if (!h || quiet) return;
+  const where = env.CODE_REPO ? `\n\nПосмотри, идут ли запуски: https://github.com/${env.CODE_REPO}/actions` : "";
+  const d = await tellOwner(env, `⚠️ Проверка новых обзоров молчит уже ${h} ч. Похоже, GitHub Actions не запускаются: ` +
+    `новые карточки не выходят, бэкапы не делаются. Бот и сайт работают на том, что уже есть.${where}`);
+  if (d.ok) await setSetting(env, "check_alerted", when.toISOString());
+}
+
+// The tokens that open the private data repo end on DATA_TOKEN_EXPIRES (wrangler.toml): without them the workflows and
+// this Worker stop seeing the data. A reminder on a few days before that (TOKEN_WARN_DAYS).
+async function remindTokens(env, when) {
+  const left = daysLeft(env.DATA_TOKEN_EXPIRES, when);
+  if (left == null || !TOKEN_WARN_DAYS.includes(left)) return;
+  await tellOwner(env, `⏰ Токены GitHub для репозитория данных (DATA_TOKEN и DATA_READ_TOKEN) ` +
+    `${left > 0 ? `перестанут работать через ${left} дн. (${env.DATA_TOKEN_EXPIRES})` : "перестают работать сегодня"}. ` +
+    "Без них бот и расписание не увидят данные. Нужно выпустить новые и обновить секреты, порядок в docs/restore-everything.md. " +
+    "После замены поправь дату DATA_TOKEN_EXPIRES в worker/wrangler.toml.");
+}
+
 // ---------- new releases of followed artists (hourly cron, releases.mjs) ----------
 
 const RELEASES_CRON = "30 * * * *";
@@ -1627,8 +1703,9 @@ const RELEASE_CARD_COST = 7; // Deezer album, archive, reviews, Wikipedia (up to
 // Each run: first tell followers about albums found earlier (one card per album, sent to each follower once), then
 // check a few followed artists that weren't checked for RECHECK_HOURS. Quiet hours: checks only, the news waits.
 async function watchReleases(env, when) {
-  const budget = { left: RELEASE_BUDGET };
+  const budget = { left: RELEASE_BUDGET - 4 }; // the watchdog: its two settings in one query, a message, a setting
   const quiet = quietHour(when);
+  await watchChecks(env, when, quiet).catch((e) => console.log("watchdog failed", e.stack));
   if (!quiet) await tellNewReleases(env, budget); // news found earlier goes first
   await checkArtists(env, when, budget);
   if (!quiet) await tellNewReleases(env, budget); // then this run's, if requests are left

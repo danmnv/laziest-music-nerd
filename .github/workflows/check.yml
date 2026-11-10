@@ -1,7 +1,7 @@
 name: Проверка новых обзоров
 on:
   schedule:
-    - cron: "17,47 * * * *"   # дважды в час: GitHub иногда пропускает запуск по расписанию (так пропал 00:17 1 ноября)
+    - cron: "17,47 * * * *"   # дважды в час по расписанию; на деле GitHub запускает примерно раз в час (10.11.2026: промежутки 44–77 минут), поэтому слотов два
   workflow_dispatch:
     inputs:
       mode:
@@ -11,7 +11,7 @@ on:
         options: [run, test, dry]
 
 permissions:
-  contents: write
+  contents: read   # commits go to the data repo with DATA_TOKEN; this repo is only read
 
 concurrency:
   group: check-reviews

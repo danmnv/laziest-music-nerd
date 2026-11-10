@@ -10,6 +10,8 @@ SITE_LIVE = "1"   # the site is up (2026-11-01): album titles and lists link to 
 CUSTOM_EMOJI = "1"  # свои эмодзи (набор laziestmusicnerd) в сообщениях бота, которых нет в канале; "0" — обычные (если закончится Premium у владельца)
 CHANNEL = "@laziestmusicnerd"
 BOT_USERNAME = "laziest_music_nerd_bot"
+CODE_REPO = "danmnv/laziest-music-nerd"  # the watchdog's message links to its Actions page
+DATA_TOKEN_EXPIRES = "2027-10-31"  # the day DATA_TOKEN and DATA_READ_TOKEN end: the bot reminds the owner 30 days before (watchdog.mjs); set the new day after renewing them
 
 [[d1_databases]]
 binding = "DB"

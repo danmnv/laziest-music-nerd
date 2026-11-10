@@ -81,6 +81,8 @@ def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotoni
             print(f"{name} {model}: HTTP {e.status} {(e.body or '')[:200]}")
             if e.status in (401, 402, 403):  # wrong key, or no money left on the account
                 _dead.add(name)
+                if name in PAID:
+                    stats["denied"] = e.status  # the run tells the owner (briefs.py): nothing else would
                 return None
             if e.status == 404 and "model" in (e.body or "") and name in PAID:
                 print(f"::warning::{name}: model {model} is gone, set another one (SELECTEL_MODEL)")

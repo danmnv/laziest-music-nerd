@@ -39,6 +39,8 @@
    | `DATA_TOKEN` | github.com/settings/personal-access-tokens → Generate new token (fine-grained): только репозиторий `laziest-music-nerd-data`, Contents: Read and write. Им Actions читают и пишут данные |
    | `DATA_READ_TOKEN` | такой же токен, но Contents: Read-only. Его получает бот (Worker), чтобы читать `data/` |
 
+   У обоих токенов данных есть срок. День, когда они кончаются, записан в `worker/wrangler.toml` (`DATA_TOKEN_EXPIRES`): за 30 дней бот начнёт напоминать владельцу в личку. После выпуска новых токенов поправь там дату.
+
    Вкладка **Variables**: `CLOUDFLARE_READY` = `1`, `WORKER_LIVE` = `1`, `SITE_LIVE` = `1`.
 4. Claude запускает Actions по порядку:
    1. «Деплой Cloudflare Worker». Создаёт базу D1, Worker и webhook бота.
