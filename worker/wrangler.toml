@@ -4,7 +4,7 @@ compatibility_date = "2026-10-01"
 
 [vars]
 DATA_URL = "https://raw.githubusercontent.com/danmnv/laziest-music-nerd-data/main/data/reviews.json"  # private repo: read with the DATA_TOKEN secret
-SITE_URL = "https://laziest-music-nerd.pages.dev"  # moved from danmnv.github.io 2026-11-02; also the CORS origin
+SITE_URL = "https://laziest-music-nerd.pages.dev"  # moved from github.io 2026-11-02; also the CORS origin
 DIGEST = "0"      # «Лучшее за две недели» по воскресеньям: выключено (Даниил, 02.11.2026), "1" — включить
 SITE_LIVE = "1"   # the site is up (2026-11-01): album titles and lists link to its pages
 CUSTOM_EMOJI = "1"  # свои эмодзи (набор laziestmusicnerd) в сообщениях бота, которых нет в канале; "0" — обычные (если закончится Premium у владельца)
