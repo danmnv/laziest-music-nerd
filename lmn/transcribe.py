@@ -30,6 +30,11 @@ CHARS_A_MINUTE = 400  # he speaks ~150 words a minute (~800 characters): less is
 HOST = re.compile(r"fantano|needle ?drop|music nerd", re.I)
 FAIL_MAX = 2  # runs in which the model answered with no usable transcript for this video: then it keeps its retelling
 GIVE_UP = 3  # no answer at all this many times in a row: the key, the quota or the service is wrong today
+# A video the request itself is refused for (promptFeedback.blockReason: about the input, 2026-11-09/10 Moor Mother on
+# all 4 models) is not asked again. An answer stopped for one of REFUSED is one model's refusal (Bleachers, Kim Gordon:
+# RECITATION on both lite models, other models untested): the video is asked of another model on a later day ("vr":
+# the models that refused it), and given up after two models, or one that is not a lite model, have refused.
+REFUSED = {"RECITATION", "PROHIBITED_CONTENT", "SAFETY", "BLOCKLIST", "SPII", "IMAGE_SAFETY"}
 
 PROMPT = """Transcribe everything the host says in this video review, word for word, in English, as plain text.
 No timestamps, no speaker labels, no descriptions of sounds or music, no headings, no comments or summary of your own.
@@ -86,24 +91,33 @@ def plausible(text, mins=None):
 
 
 def ask(a, api_key, mins=None):
-    """("ok", text, model) | ("bad", None, model): the model answered, but no whole transcript | ("none", None, None)."""
+    """("ok", text, model) | ("bad", None, model): the model answered, but no whole transcript | ("blocked", None, model):
+    the request was refused (the video itself) | ("refused", None, model): this model stopped its answer (REFUSED) |
+    ("none", None, None)."""
     body = {"contents": [{"parts": [{"fileData": {"fileUri": f"https://www.youtube.com/watch?v={a['video_id']}"}},
                                     {"text": PROMPT.format(title=f"{a['artist_name']} - {a['album']}")}]}],
             "generationConfig": {"temperature": 0.1, "maxOutputTokens": 24000, "mediaResolution": "MEDIA_RESOLUTION_LOW"}}
     model, raw = gemini.generate(body, api_key, budget=gemini.VIDEO_BUDGET_SEC, call_timeout=gemini.VIDEO_CALL_TIMEOUT)
     if raw is None:
         return "none", None, None
-    try:
-        cand = raw["candidates"][0]
-        text = "".join(p.get("text", "") for p in cand["content"]["parts"]).strip()
-    except (KeyError, IndexError, TypeError, AttributeError) as e:
-        print(f"gemini {model}: bad response {e!r}")
-        return "bad", None, model
-    if cand.get("finishReason") not in (None, "STOP"):  # cut at the token limit, or blocked: not the whole review
-        print(f"gemini {model}: stopped ({cand.get('finishReason')}) after {len(text)} characters")
-        return "bad", None, model
+    cands = raw.get("candidates") if isinstance(raw, dict) else None
+    if not cands:  # the request itself was refused: why, so a run's log tells
+        fb = (raw.get("promptFeedback") if isinstance(raw, dict) else None) or {}
+        print(f"gemini {model}: no answer, refused: {fb.get('blockReason')} {fb.get('blockReasonMessage') or ''}".rstrip())
+        return ("blocked" if fb.get("blockReason") else "bad"), None, model
+    cand = cands[0] if isinstance(cands[0], dict) else {}
+    parts = (cand.get("content") or {}).get("parts") or []
+    text = "".join(p.get("text", "") for p in parts if isinstance(p, dict)).strip()
+    if cand.get("finishReason") not in (None, "STOP"):  # cut at the token limit, blocked, or recitation: not the whole review
+        flagged = [r.get("category") for r in cand.get("safetyRatings") or [] if r.get("blocked")
+                   or r.get("probability") in ("MEDIUM", "HIGH")]
+        print(f"gemini {model}: stopped ({cand.get('finishReason')}) after {len(text)} characters"
+              + (f", flagged: {', '.join(map(str, flagged))}" if flagged else ""))
+        return ("refused" if cand.get("finishReason") in REFUSED else "bad"), None, model
     if not plausible(text, mins):
         print(f"gemini {model}: {len(text)} characters for {mins or 0:.0f} min, host named: {bool(HOST.search(text))}")
+        if len(text) < 300:  # not a transcript: a refusal or an excuse, worth seeing
+            print(f"  answer: {text!r}")
         return "bad", None, model
     return "ok", text, model
 
@@ -120,6 +134,8 @@ def run():
         return
     if os.environ.get("TRANSCRIBE_COMPARE"):
         return compare(api_key, int(os.environ["TRANSCRIBE_COMPARE"]))
+    if os.environ.get("TRANSCRIBE_PROBE"):
+        return probe(api_key, re.findall(r"[0-9a-f]{24}", os.environ["TRANSCRIBE_PROBE"]))
     archive = _load("archive.json", [])
     bpath = DATA / "briefs.json"
     data = _load("briefs.json", {})
@@ -146,7 +162,16 @@ def run():
         if all(m in gemini._unavailable for m in gemini.MODELS):
             print("every model's share for today is used up")
             break
-        got, text, model = ask(a, api_key, mins)
+        v = data.get(a["id"]) or {}
+        tried = set(v.get("vr", []))  # models that refused this video: another one is asked
+        if all(m in gemini._unavailable or m in tried for m in gemini.MODELS):
+            continue  # the models it can still go to are used up today
+        masked = tried - gemini._unavailable
+        gemini._unavailable.update(masked)
+        try:
+            got, text, model = ask(a, api_key, mins)
+        finally:
+            gemini._unavailable.difference_update(masked)
         for m, k in gemini.requests.items():  # every request counts, a retry or a timed-out one too
             if k >= PER_MODEL:
                 gemini._unavailable.add(m)  # its rest of the day is for new reviews
@@ -164,10 +189,16 @@ def run():
             made += 1
             print(f"  + {a['artist_name']} - {a['album']} ({mins:.0f} min, {len(text)} characters, {model})")
         else:
-            data[a["id"]] = {**data[a["id"]], "vf": data[a["id"]].get("vf", 0) + 1}
+            if got == "refused":
+                vr = sorted(tried | {model})
+                final = len(vr) >= 2 or "lite" not in model  # two models, or a full one: the video stays retold
+                v = {**v, "vr": vr, **({"vf": FAIL_MAX} if final else {})}
+            else:  # blocked: not asked again; bad: one more day
+                v = {**v, "vf": FAIL_MAX if got == "blocked" else v.get("vf", 0) + 1}
+            data[a["id"]] = v
             briefs.save(bpath, data)
             failed += 1
-            print(f"  - {a['artist_name']} - {a['album']}: no usable transcript ({model})")
+            print(f"  - {a['artist_name']} - {a['album']}: no usable transcript ({got}, {model})")
     print(f"transcripts: made {made}, unusable {failed}, {VIDEO_MINUTES - left:.0f} min of video watched")
 
 
@@ -191,6 +222,43 @@ def compare(api_key, n):
         print("  Gemini:", text[:600].replace("\n", " "))
         print("  site:  ", site[:600].replace("\n", " "))
 
+
+PROBE_MAX = 3  # reviews a probe: each one is watched by every model, from the same daily share as new reviews
+
+
+def probe(api_key, ids):
+    """Why these reviews got no transcript: each one asked of every model in turn, with what each answered.
+    Saves nothing, but spends the day's video share like a run: up to PROBE_MAX reviews and VIDEO_MINUTES minutes."""
+    if len(ids) > PROBE_MAX:
+        print(f"::warning::probe: {len(ids)} reviews, at most {PROBE_MAX} (each one is watched by every model)")
+        return
+    data = _load("briefs.json", {})
+    items = [a for a in todo(_load("archive.json", []), {k: {**data.get(k, {}), "vf": 0} for k in ids}, set())
+             if a["id"] in ids]
+    for k in set(ids) - {a["id"] for a in items}:
+        print(f"{k}: not a review with only a retelling and a known video, skipped")
+    lengths = minutes([a["video_id"] for a in items]) if items else {}
+    left = VIDEO_MINUTES
+    print(f"probe: up to {sum(lengths.values()) * len(gemini.MODELS):.0f} min of video")
+    for a in items:
+        mins = lengths.get(a["video_id"])
+        print(f"{a['artist_name']} - {a['album']} ({a['video_id']}, {mins or 0:.0f} min)")
+        if mins is None:
+            print("  not on YouTube any more, skipped")
+            continue
+        for m in gemini.MODELS:
+            if mins > left:
+                print(f"  today's {VIDEO_MINUTES} min of video used up")
+                return
+            keep = set(gemini._unavailable)
+            gemini._unavailable.update(x for x in gemini.MODELS if x != m)  # this model only
+            try:
+                got, text, model = ask(a, api_key, mins)
+            finally:
+                gemini._unavailable.clear()
+                gemini._unavailable.update(keep)
+            left -= mins
+            print(f"  {m}: {got}" + (f", {len(text)} characters: {text[:200]!r}" if text else ""))
 
 if __name__ == "__main__":
     run()

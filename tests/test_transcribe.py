@@ -54,7 +54,10 @@ class Ask(unittest.TestCase):
     def test_what_is_not_a_transcript(self):
         cases = [(gemini_answer("Too short."), "bad"), (gemini_answer(SPOKEN, "MAX_TOKENS"), "bad"),
                  (gemini_answer(SPOKEN.replace("Anthony Fantano", "a guy").replace("music nerd", "fan")), "bad"),
-                 ({"candidates": []}, "bad")]
+                 ({"candidates": []}, "bad"), ({"promptFeedback": {"blockReason": "OTHER"}}, "blocked"),
+                 ({"promptFeedback": {}}, "bad"), ({"candidates": [{"finishReason": "PROHIBITED_CONTENT"}]}, "refused"),
+                 ({"candidates": [{"finishReason": "RECITATION"}]}, "refused"),  # no content at all (2026-11-09)
+                 ({"candidates": [{"content": {}, "finishReason": "STOP"}]}, "bad")]
         for raw, want in cases:
             with mock.patch.object(gemini, "generate", return_value=("m1", raw)):
                 self.assertEqual(transcribe.ask(self.a, "k")[0], want)
@@ -88,6 +91,8 @@ class Run(unittest.TestCase):
             gemini.requests[model] = gemini.requests.get(model, 0) + (2 if a is None else 1)  # no answer: a retry too
             if a is None:
                 return None, None
+            if isinstance(a, dict):  # a raw answer
+                return model, a
             i = vid[1:]
             return model, gemini_answer(a.replace("Artist 1", f"Artist {i}").replace("Album 1", f"Album {i}"))
         lengths = lengths or {f"v{i}": 6 for i in range(1, 7)}
@@ -113,6 +118,33 @@ class Run(unittest.TestCase):
         self.go(lambda n: SPOKEN, env={"VIDEO_LIMIT": "2"})
         calls, _ = self.go(lambda n: SPOKEN, env={"VIDEO_LIMIT": "1"})
         self.assertEqual(calls, ["v4"])
+
+    def test_a_blocked_video_is_not_asked_again(self):
+        blocked = {"promptFeedback": {"blockReason": "PROHIBITED_CONTENT"}}
+        calls, data = self.go(lambda n: blocked if n == 1 else "Too short.", env={"VIDEO_LIMIT": "2"})
+        self.assertEqual(data[f"{6:024x}"]["vf"], transcribe.FAIL_MAX)  # the video itself: its retelling stays
+        self.assertEqual(data[f"{5:024x}"]["vf"], 1)  # a bad answer: one more try another day
+
+    def test_a_recited_video_goes_to_another_model_then_stops(self):
+        recited = {"candidates": [{"finishReason": "RECITATION"}]}
+        models = ("a-lite", "b-lite", "full")
+        one = {"VIDEO_LIMIT": "1"}
+        _, data = self.go(lambda n: recited, env=one, models=models)
+        v6 = data[f"{6:024x}"]
+        self.assertEqual((v6["vr"], v6.get("vf", 0)), (["a-lite"], 0))  # one lite model: not final
+        gemini._unavailable.clear()
+        gemini.requests.clear()
+        asked = []
+        _, data = self.go(lambda n: (asked.append(sorted(gemini._unavailable)), recited)[1], env=one, models=models)
+        self.assertEqual(asked, [["a-lite"]])  # the next day: a-lite is skipped for this video
+        v6 = data[f"{6:024x}"]
+        self.assertEqual((v6["vr"], v6["vf"]), (["a-lite", "b-lite"], transcribe.FAIL_MAX))  # two models: given up
+        self.assertEqual(gemini._unavailable, set())  # the mask is lifted after the request
+
+    def test_a_full_model_refusing_is_final(self):
+        recited = {"candidates": [{"finishReason": "RECITATION"}]}
+        _, data = self.go(lambda n: recited, env={"VIDEO_LIMIT": "1"}, models=("full",))
+        self.assertEqual(data[f"{6:024x}"]["vf"], transcribe.FAIL_MAX)
 
     def test_keeps_the_days_share_of_video(self):
         with mock.patch.object(transcribe, "VIDEO_MINUTES", 20):
@@ -187,6 +219,17 @@ class BriefsFromTranscript(unittest.TestCase):
             self.assertEqual((e["brief"], e["src"], e["en"]["brief"], e.get("skip")), ("Полное описание.", "video", "Full.", None))
         self.assertEqual(data[self.archive[2]["id"]], self.data[self.archive[2]["id"]])
         self.assertTrue(briefs.finished(data[self.archive[0]["id"]], "both"))
+
+    def test_a_rewritten_retelling_keeps_what_transcribe_counted(self):
+        k = self.archive[2]["id"]  # no transcript: a new prompt version writes its retelling again
+        marks = {"vf": 2, "vr": ["a-lite", "b-lite"]}
+        for lines, want in (("His lines about the sound. " * 10, "short"), ("", None)):  # retold, or nothing to retell
+            self.data[k] = {**self.data[k], "p": 2, **marks}
+            (self.dir / "briefs.json").write_text(json.dumps(self.data))
+            with mock.patch.object(briefs, "short_lines", return_value=lines):
+                summ, data = self.go(LUNA)
+            self.assertEqual(data[k].get("src"), want)
+            self.assertEqual({f: data[k].get(f) for f in marks}, marks)  # or the video would be watched again
 
     def test_a_failure_keeps_the_retelling_and_who(self):
         _, data = self.go(None)
