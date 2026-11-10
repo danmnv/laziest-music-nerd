@@ -72,6 +72,12 @@ def short_lines(text, note):
 HEAD, TAIL = 20000, 10000  # a long transcript to the model: its start and its end, where the conclusion is
 
 
+def video_marks(old):
+    """What lmn/transcribe.py and the transcript pass counted on this review (failures, models that refused its video):
+    a rewrite of the entry keeps them, or a video given up on would be watched again."""
+    return {k: old[k] for k in ("vf", "vr", "tf") if k in (old or {})}
+
+
 def transcript(review_id):
     """What Fantano says in the video, written down by Gemini (lmn/transcribe.py), or "". A longer one than the model
     is given (30000 characters, lmn/llm.py) keeps its last part: the conclusion, not only the score, is at the end."""
@@ -335,7 +341,8 @@ def run():
         if short:  # the review is only in the video: Fantano's own lines instead (lang "both" only)
             lines = short_lines(text, notes.get(a["id"])) if lang == "both" else ""
             if len(lines) < MIN_SHORT:  # remembered, so it isn't fetched every run
-                data[a["id"]] = {"skip": "short" if text or lines else "no text", **({"short": "none"} if lang == "both" else {})}
+                data[a["id"]] = {"skip": "short" if text or lines else "no text", **({"short": "none"} if lang == "both" else {}),
+                                 **video_marks(data.get(a["id"]))}
                 continue
             text = lines
         tried += 1
@@ -343,7 +350,8 @@ def run():
         out = llm.summarize(title, text, lang=lang, verdict=verdict(a), tags=tags(a), **({"short": True} if short else {}))
         if out and (out.get("brief") or "").strip():
             old = data.get(a["id"]) or {}
-            data[a["id"]] = {**entry(out, lang), **({"src": "short"} if short else {"src": src} if src else {})}
+            data[a["id"]] = {**entry(out, lang), **({"src": "short"} if short else {"src": src} if src else {}),
+                             **video_marks(old)}
             if lang == "en" and old.get("brief"):  # the old Russian one stays on the site until the translation comes
                 data[a["id"]].update({f: old[f] for f in ("brief", "about", "who") if old.get(f)})
             made += 1
@@ -355,7 +363,8 @@ def run():
         elif out and short:  # the model answered: his lines say nothing about the music. Not an outage either way
             if out.get("who"):  # left as it is, with "who"
                 e = entry(out, lang)
-                data[a["id"]] = {"skip": "short", "short": "none", **{k: e[k] for k in ("who", "en", "m", "p") if e.get(k)}}
+                data[a["id"]] = {"skip": "short", "short": "none", **{k: e[k] for k in ("who", "en", "m", "p") if e.get(k)},
+                                 **video_marks(data.get(a["id"]))}
             else:  # nothing at all ("{}" or an obscure artist): asked again in one more run, then left (FAIL_MAX)
                 data[a["id"]] = {"fail": (data.get(a["id"]) or {}).get("fail", 0) + 1}
             streak = []

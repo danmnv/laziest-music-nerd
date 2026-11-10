@@ -220,6 +220,17 @@ class BriefsFromTranscript(unittest.TestCase):
         self.assertEqual(data[self.archive[2]["id"]], self.data[self.archive[2]["id"]])
         self.assertTrue(briefs.finished(data[self.archive[0]["id"]], "both"))
 
+    def test_a_rewritten_retelling_keeps_what_transcribe_counted(self):
+        k = self.archive[2]["id"]  # no transcript: a new prompt version writes its retelling again
+        marks = {"vf": 2, "vr": ["a-lite", "b-lite"]}
+        for lines, want in (("His lines about the sound. " * 10, "short"), ("", None)):  # retold, or nothing to retell
+            self.data[k] = {**self.data[k], "p": 2, **marks}
+            (self.dir / "briefs.json").write_text(json.dumps(self.data))
+            with mock.patch.object(briefs, "short_lines", return_value=lines):
+                summ, data = self.go(LUNA)
+            self.assertEqual(data[k].get("src"), want)
+            self.assertEqual({f: data[k].get(f) for f in marks}, marks)  # or the video would be watched again
+
     def test_a_failure_keeps_the_retelling_and_who(self):
         _, data = self.go(None)
         self.assertEqual(data[self.archive[0]["id"]]["brief"], "пересказ")
