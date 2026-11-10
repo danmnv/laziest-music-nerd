@@ -151,6 +151,25 @@ def apple_find(artist, album):
     return 0
 
 
+def apple_tracks(url):
+    """The tracklist and cover of an album on Apple Music, by its page's URL (iTunes lookup API, no key): {"tracks":
+    [{"title", "sec"}], "cover": 1000×1000 artwork URL}, or None. Apple lists an album's whole tracklist even before its
+    release (Wolves in the Throne Room «Estuary», 2026-11-10: Deezer had only a 2-track single, MusicBrainz nothing)."""
+    m = re.search(r"/album/(?:[^/]+/)?(\d+)", url or "")
+    if not m:
+        return None
+    try:
+        d = http.get_json(f"https://itunes.apple.com/lookup?id={m.group(1)}&entity=song&limit=200", timeout=15, retries=0)
+    except (http.HttpError, ValueError):
+        return None
+    res = d.get("results") or []
+    songs = sorted((x for x in res if x.get("wrapperType") == "track"), key=lambda x: (x.get("discNumber") or 1, x.get("trackNumber") or 0))
+    art = next((x.get("artworkUrl100") for x in res if x.get("wrapperType") == "collection"), None)
+    tracks = [{"title": x.get("trackName") or "", "sec": round((x.get("trackTimeMillis") or 0) / 1000) or None} for x in songs]
+    out = {"tracks": tracks, "cover": art.replace("100x100bb", "1000x1000bb") if art else None}
+    return out if tracks or out["cover"] else None
+
+
 def apple_album(artist, album):
     """apple_find without the difference between "not there" and "failed": the URL or None."""
     return apple_find(artist, album) or None

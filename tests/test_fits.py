@@ -43,3 +43,29 @@ class AlbumFoundLaterTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+LOOKUP = {"results": [
+    {"wrapperType": "collection", "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/x/100x100bb.jpg"},
+    {"wrapperType": "track", "trackName": "Land of Light", "trackTimeMillis": 300000, "discNumber": 1, "trackNumber": 2},
+    {"wrapperType": "track", "trackName": "Knights of Tiamat", "trackTimeMillis": 420500, "discNumber": 1, "trackNumber": 1}]}
+
+
+class AppleTracksTest(unittest.TestCase):
+    def test_lookup_by_the_pages_id(self):
+        with mock.patch("lmn.http.get_json", return_value=LOOKUP) as g:
+            am = links.apple_tracks("https://music.apple.com/us/album/estuary/6786006978")
+        self.assertIn("lookup?id=6786006978&entity=song", g.call_args[0][0])
+        self.assertEqual(am["tracks"], [{"title": "Knights of Tiamat", "sec": 420}, {"title": "Land of Light", "sec": 300}])
+        self.assertEqual(am["cover"], "https://is1-ssl.mzstatic.com/image/thumb/x/1000x1000bb.jpg")
+        self.assertIsNone(links.apple_tracks("https://music.apple.com/us/search?term=x"))
+
+    def test_archive_miss_gets_apples_tracklist_and_cover(self):
+        with mock.patch("lmn.http.get_json", return_value=LOOKUP), mock.patch("lmn.musicbrainz.find_release_group") as mbf:
+            from lmn import notes
+            out = notes.fallback("Wolves in the Throne Room", "Estuary", {"miss": "2026-11-10"}, ["KNIGHTS OF TIAMAT", "LAND OF LIGHT"],
+                                 "https://music.apple.com/us/album/estuary/6786006978")
+        mbf.assert_not_called()  # both found: MusicBrainz isn't asked
+        self.assertEqual(out["t"], [["Knights of Tiamat", 420], ["Land of Light", 300]])
+        self.assertEqual(out["min"], 12)
+        self.assertTrue(out["cv"].endswith("1000x1000bb.jpg"))

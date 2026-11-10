@@ -82,9 +82,19 @@ def enrich(rev, plaintext, archive, use_ai=True):
     apple = _try("apple music", lambda: links.apple_album(artist, album)) if album else None
     if apple:
         r["links"]["apple"] = apple
+    # Apple's tracklist and cover when Deezer and MusicBrainz have no album (yet): Apple lists it even before release
+    am = _try("apple tracks", lambda: links.apple_tracks(apple)) if apple and not (dz and r.get("tracks")) else None
+    if am and not links.fits(named_tracks(r), am.get("tracks")):
+        print(f"apple: {apple} has {len(am['tracks'])} tracks without Fantano's favourites: left out")
+        am = None
+    if am and am.get("tracks") and not r.get("tracks"):
+        r["tracks"] = am["tracks"]
+        if all(t["sec"] for t in am["tracks"]):
+            r["duration_min"] = round(sum(t["sec"] for t in am["tracks"]) / 60)
 
     r["covers"] = [c for c in [
         dz and dz.get("cover"),
+        am and am.get("cover"),
         rg_cover and mb.cover_url(rg["rg_id"]),
         r.get("thumb"),
     ] if c]
