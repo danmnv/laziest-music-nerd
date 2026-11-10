@@ -10,8 +10,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -20,8 +18,6 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    outputs:
-      go: ${{ steps.decide.outputs.go }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -52,11 +48,11 @@ jobs:
           python-version: "3.12"
       - run: python -m lmn.site
         if: steps.decide.outputs.go == 'true'
-      - name: Копия сайта на Cloudflare Pages
-        # The site's address without the owner's name (2026-11-02). Non-blocking: if it fails, the previous deploy stays up.
+      - name: Сайт на Cloudflare Pages
+        # The site's only home since 2026-11-02 (an address without the owner's name). A failure turns the run red: the
+        # previous deploy stays up, but the site doesn't get the new data.
         id: cf
         if: steps.decide.outputs.go == 'true'
-        continue-on-error: true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -68,23 +64,7 @@ jobs:
           url=$(grep -oE 'https://[a-z0-9-]+\.[a-z0-9-]+\.pages\.dev' cf.log | tail -1 | sed -E 's#^https://[^.]+\.#https://#')
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Сайт на Cloudflare: $url" >> "$GITHUB_STEP_SUMMARY"
-      - name: Старый адрес ведёт на новый
-        # Since 2026-11-02 the site lives on Cloudflare. The GitHub copy keeps old links in Telegram working: every page
-        # sends the reader to the same page there. Even when the Cloudflare step above fails this run, the previous
-        # deploy there is still up, and the Worker only accepts requests from the new address anyway.
-        if: steps.decide.outputs.go == 'true'
-        run: python -m lmn.redirect _site https://laziest-music-nerd.pages.dev
-      - uses: actions/upload-pages-artifact@v4
-        if: steps.decide.outputs.go == 'true'
-        with:
-          path: _site
-  deploy:
-    needs: build
-    if: needs.build.outputs.go == 'true'
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      # The old GitHub Pages address (danmnv.github.io/laziest-music-nerd) is no longer deployed (2026-11-10). Its last
+      # deploy stays up for good: every old page there sends the reader to the same page here (lmn/redirect.py built it).
+      # Nothing reads from it any more, and new pages were never linked there. Redeploying it on every build only failed
+      # whenever GitHub still counted the previous deploy as in progress (often ~20–45 min), turning runs red.
