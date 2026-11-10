@@ -88,7 +88,7 @@ class Build(unittest.TestCase):
             da.return_value = 0
             today = datetime.date(2026, 11, 2)
             self.assertEqual(notes.albums(archive, out, limit=5, today=today), {"b": b, "a": {"miss": "2026-11-02", "fb": 1}})
-            da.assert_called_once_with("A", "X")
+            da.assert_called_once_with("A", "X", named=[])
 
     def test_deezer_album_checks_the_artist_and_keeps_what_the_card_shows(self):
         search = {"data": [{"id": 1, "title": "Kid A", "artist": {"name": "Someone"}},
@@ -162,7 +162,7 @@ class Build(unittest.TestCase):
         hit = {"dz": 5, "t": [["One", 60]]}
         with mock.patch.object(notes, "deezer_album", return_value=hit) as da, mock.patch.object(notes.time, "sleep"):
             self.assertEqual(notes.albums(archive, {"a": 0, "b": 0}, limit=1), {"a": hit, "b": 0})
-            da.assert_called_once_with("A", "X")
+            da.assert_called_once_with("A", "X", named=[])
             da.return_value = None  # the request failed: the old answer stays
             self.assertEqual(notes.albums(archive, {"a": 0}, limit=5), {"a": 0})
             da.reset_mock()

@@ -69,6 +69,17 @@ def send_card(tg, chat_id, r):
 def edit_card(tg, chat_id, r, kb):
     """Edit a posted card in place: the caption of a photo post, or the text of a post that went out without a cover."""
     text = card.caption(r)
+    if r.get("tg_kind") != "text" and r.get("new_cover"):
+        # the post went out with a wrong cover (a single's, links.fits; set by hand in reviews.json): the first of
+        # r["covers"] Telegram takes replaces it, else only the caption changes
+        for url in r.get("covers") or []:
+            try:
+                tg.edit_photo(chat_id, r["tg_channel_msg"], url, text, kb)
+                r.pop("new_cover")
+                return
+            except RuntimeError as ex:
+                print(f"new cover {url[:80]} refused ({str(ex)[:150]}), trying next")
+        r.pop("new_cover")
     if r.get("tg_kind") != "text":
         try:
             tg.edit_caption(chat_id, r["tg_channel_msg"], text, kb)

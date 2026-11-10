@@ -12,6 +12,7 @@ from pathlib import Path
 from . import aoty, aoty_top, card, gemini, ratings, specials, tnd
 from .colors import color, label
 from .musicbrainz import norm
+from .notes import is_miss
 
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 SRC = Path("site_src")
@@ -485,6 +486,8 @@ def build():
         bm = (br or {}).get("moods") if not (a.get("ai") or {}).get("moods") else None  # the bot's mood vote for archive cards
         who = (a.get("ai") or {}).get("who") or (br or {}).get("who")  # the bot's card has «Кто» too (owner, 2026-11-08)
         al = card_album(a, deezer_found(albums.get(a["id"]))) if a["id"] not in enriched else None
+        if not al and a["id"] not in enriched and is_miss(albums.get(a["id"])):
+            al = {"miss": 1}  # looked up and not found (or only a single, links.fits): the bot doesn't search Deezer live
         # the bot's critics line: the channel card's (card.critics_from: 3 outlets, Metacritic, AOTY), the same on both
         cc = [f"{c['o']} {c['s']}" for c in card.critics_from(rt)]
         am = apple.get(a["id"]) if isinstance(apple.get(a["id"]), str) else None

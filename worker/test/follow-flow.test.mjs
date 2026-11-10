@@ -311,6 +311,14 @@ test("one hit is sent as a full card: cover, length, links, marks and follow", a
   assert.match(answers().at(-1).text, /Ты следишь за Radiohead/);
 });
 
+test("an album Actions found no album for (or only a single) is not searched live: no single's cover (2026-11-10)", async () => {
+  rtAl = { miss: 1 };
+  await say(OWNER, "kid a");
+  assert.ok(!fetched.some((u) => u.startsWith("https://api.deezer.com/")));
+  const c = calls.find((x) => x.method === "sendMessage" && /Radiohead — Kid A/.test(x.text));
+  assert.ok(c && !/Треклист/.test(c.text));
+});
+
 test("the album checked from Actions comes before Deezer's live search; a long tracklist links to all of it (owner, 2026-11-08)", async () => {
   rtAl = { cv: "https://caa/kida.jpg", y: "2000", min: 50, t: Array.from({ length: 60 }, (_, i) => [`Track number ${i + 1} with a long title`, 200]) };
   await say(OWNER, "kid a");

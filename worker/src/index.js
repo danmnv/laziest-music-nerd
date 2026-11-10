@@ -1095,7 +1095,9 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   // the album as checked from Actions (data/albums.json via the site's rt/<id>.json: Deezer, else the Cover Art Archive
   // and the music-database table); Deezer's live search only without it: it once found KNEECAP's single «FENIAN» (owner, 2026-11-08)
   const al = rt && rt.al;
-  const dz = (full && full.covers && full.covers.length && full.duration_min) ? null
+  // a card the bot posted: what Actions found, never a live search (it found a 2-track single for Wolves in the Throne
+  // Room «Estuary», 2026-11-10; lmn/links.py fits leaves such a single out); al.miss: Actions found no album either
+  const dz = full ? null
     : al ? { cover: al.cv || null, tracks: al.t ? al.t.length : null, list: (al.t || []).map(([title, sec]) => ({ title, sec: sec || null })),
              minutes: al.min || null, year: al.y || null }
     : await deezerAlbum(r.artist_name, r.album);

@@ -94,7 +94,7 @@ def apple_track(artist, title, sleep=time.sleep):
     return 0
 
 
-def deezer_album(artist, album, sleep=time.sleep):
+def deezer_album(artist, album, sleep=time.sleep, named=None):
     """What the bot's card shows for an archive album, from Deezer: {"dz": album id, "cv": 1000×1000 cover URL, "y":
     release year, "min": minutes, "t": [[title, seconds], ...]}; 0 when Deezer has no such album, None when a request
     failed (asked again next run). The search: links.find_album."""
@@ -117,6 +117,9 @@ def deezer_album(artist, album, sleep=time.sleep):
         print(f"  ! deezer album {artist} - {album}: {e}", file=sys.stderr)
         return None
     tracks = [[t.get("title") or "", int(t.get("duration") or 0)] for t in data]
+    if not links.fits(named, tracks):  # a single under the album's title (links.fits): a miss, the fallback looks further
+        print(f"  deezer album {artist} - {album}: {hit['id']} has {len(tracks)} tracks without Fantano's favourites: not the album")
+        return 0
     out = {"dz": int(hit["id"]), "cv": full.get("cover_xl") or hit.get("cover_xl"), "y": (full.get("release_date") or "")[:4],
            "min": round(int(full.get("duration") or 0) / 60) or None, "t": tracks}
     return {k: v for k, v in out.items() if v}
@@ -125,11 +128,12 @@ def deezer_album(artist, album, sleep=time.sleep):
 FALLBACK = ("cv", "t", "min", "y", "mb")  # what a Deezer miss may still carry (fallback)
 
 
-def fallback(artist, album, known=None):
+def fallback(artist, album, known=None, named=None):
     """For an album Deezer doesn't have (owner, 2026-11-08: leroy «status update music», no cover in the bot): its
     MusicBrainz release group, the front cover from the Cover Art Archive and, when no tracklist is known yet (the AOTY
     table's, lmn/aoty.py tracks), MusicBrainz's. What was found before is kept. {"fb": 1} marks that it was asked."""
-    keep = {k: known[k] for k in FALLBACK if isinstance(known, dict) and known.get(k)}
+    # what an earlier miss found is kept; a Deezer hit found wrong (links.fits) keeps nothing
+    keep = {k: known[k] for k in FALLBACK if isinstance(known, dict) and is_miss(known) and known.get(k)}
     if keep.get("cv") and keep.get("t"):
         return {**keep, "fb": 1}
     rg = musicbrainz.find_release_group(artist, album)
@@ -149,7 +153,7 @@ def fallback(artist, album, known=None):
             print(f"  ! cover art {artist} - {album}: {e}", file=sys.stderr)
     if not keep.get("t"):
         d = musicbrainz.release_details(rg.get("releases") or [])
-        if d.get("tracks"):
+        if d.get("tracks") and links.fits(named, d["tracks"]):
             keep["t"] = [[t["title"] or "", t["sec"] or 0] for t in d["tracks"]]
             keep["min"] = d.get("duration_min")
     return {**{k: v for k, v in keep.items() if v}, "fb": 1}
@@ -179,7 +183,12 @@ def miss_due(known, published, today):
     return days >= (7 if age < 60 else 90)
 
 
-def albums(archive, old, limit=1500, deadline=None, today=None):
+def favourites(nts, i):
+    """The tracks Fantano named for review i, from data/notes.json (links.fits)."""
+    return [f["t"] for f in ((nts or {}).get(i) or {}).get("fav") or [] if isinstance(f, dict) and f.get("t")]
+
+
+def albums(archive, old, limit=1500, deadline=None, today=None, nts=None):
     """{review id: deezer_album(...) or {"miss": date}} for every archive review; at most limit lookups per run and
     none after deadline (time.monotonic()), the rest next run. Newest reviews first. A miss is asked again when
     miss_due; until then, and when a request fails, the old answer stays."""
@@ -195,10 +204,11 @@ def albums(archive, old, limit=1500, deadline=None, today=None):
             out[a["id"]] = known
         elif n < limit and not (deadline and time.monotonic() > deadline):
             n += 1
-            x = deezer_album(a["artist_name"], a["album"])
+            named = favourites(nts, a["id"])
+            x = deezer_album(a["artist_name"], a["album"], named=named)
             time.sleep(SLEEP)
             if x is not None:
-                out[a["id"]] = x or {"miss": today.isoformat(), **fallback(a["artist_name"], a["album"], known)}
+                out[a["id"]] = x or {"miss": today.isoformat(), **fallback(a["artist_name"], a["album"], known, named)}
             elif known is not None:
                 out[a["id"]] = known
         elif known is not None:
