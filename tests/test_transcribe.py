@@ -54,7 +54,7 @@ class Ask(unittest.TestCase):
     def test_what_is_not_a_transcript(self):
         cases = [(gemini_answer("Too short."), "bad"), (gemini_answer(SPOKEN, "MAX_TOKENS"), "bad"),
                  (gemini_answer(SPOKEN.replace("Anthony Fantano", "a guy").replace("music nerd", "fan")), "bad"),
-                 ({"candidates": []}, "bad"), ({"promptFeedback": {"blockReason": "OTHER"}}, "refused"),
+                 ({"candidates": []}, "bad"), ({"promptFeedback": {"blockReason": "OTHER"}}, "blocked"),
                  ({"promptFeedback": {}}, "bad"), ({"candidates": [{"finishReason": "PROHIBITED_CONTENT"}]}, "refused"),
                  ({"candidates": [{"finishReason": "RECITATION"}]}, "refused"),  # no content at all (2026-11-09)
                  ({"candidates": [{"content": {}, "finishReason": "STOP"}]}, "bad")]
@@ -119,11 +119,32 @@ class Run(unittest.TestCase):
         calls, _ = self.go(lambda n: SPOKEN, env={"VIDEO_LIMIT": "1"})
         self.assertEqual(calls, ["v4"])
 
-    def test_a_refused_video_is_not_asked_again(self):
-        recited = {"candidates": [{"finishReason": "RECITATION"}]}
-        calls, data = self.go(lambda n: recited if n == 1 else "Too short.", env={"VIDEO_LIMIT": "2"})
-        self.assertEqual(data[f"{6:024x}"]["vf"], transcribe.FAIL_MAX)  # refused: its retelling stays
+    def test_a_blocked_video_is_not_asked_again(self):
+        blocked = {"promptFeedback": {"blockReason": "PROHIBITED_CONTENT"}}
+        calls, data = self.go(lambda n: blocked if n == 1 else "Too short.", env={"VIDEO_LIMIT": "2"})
+        self.assertEqual(data[f"{6:024x}"]["vf"], transcribe.FAIL_MAX)  # the video itself: its retelling stays
         self.assertEqual(data[f"{5:024x}"]["vf"], 1)  # a bad answer: one more try another day
+
+    def test_a_recited_video_goes_to_another_model_then_stops(self):
+        recited = {"candidates": [{"finishReason": "RECITATION"}]}
+        models = ("a-lite", "b-lite", "full")
+        one = {"VIDEO_LIMIT": "1"}
+        _, data = self.go(lambda n: recited, env=one, models=models)
+        v6 = data[f"{6:024x}"]
+        self.assertEqual((v6["vr"], v6.get("vf", 0)), (["a-lite"], 0))  # one lite model: not final
+        gemini._unavailable.clear()
+        gemini.requests.clear()
+        asked = []
+        _, data = self.go(lambda n: (asked.append(sorted(gemini._unavailable)), recited)[1], env=one, models=models)
+        self.assertEqual(asked, [["a-lite"]])  # the next day: a-lite is skipped for this video
+        v6 = data[f"{6:024x}"]
+        self.assertEqual((v6["vr"], v6["vf"]), (["a-lite", "b-lite"], transcribe.FAIL_MAX))  # two models: given up
+        self.assertEqual(gemini._unavailable, set())  # the mask is lifted after the request
+
+    def test_a_full_model_refusing_is_final(self):
+        recited = {"candidates": [{"finishReason": "RECITATION"}]}
+        _, data = self.go(lambda n: recited, env={"VIDEO_LIMIT": "1"}, models=("full",))
+        self.assertEqual(data[f"{6:024x}"]["vf"], transcribe.FAIL_MAX)
 
     def test_keeps_the_days_share_of_video(self):
         with mock.patch.object(transcribe, "VIDEO_MINUTES", 20):

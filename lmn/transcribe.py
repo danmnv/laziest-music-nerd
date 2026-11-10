@@ -30,9 +30,10 @@ CHARS_A_MINUTE = 400  # he speaks ~150 words a minute (~800 characters): less is
 HOST = re.compile(r"fantano|needle ?drop|music nerd", re.I)
 FAIL_MAX = 2  # runs in which the model answered with no usable transcript for this video: then it keeps its retelling
 GIVE_UP = 3  # no answer at all this many times in a row: the key, the quota or the service is wrong today
-# Refusals that come back the same for the same video, on every model tried (2026-11-09/10: Moor Mother refused on all
-# 4 models; Bleachers, Kim Gordon, Moor Mother stopped for RECITATION again on a second day and on a second model).
-# Such a video gets no second day: asking again only spends the day's share that new videos could use.
+# A video the request itself is refused for (promptFeedback.blockReason: about the input, 2026-11-09/10 Moor Mother on
+# all 4 models) is not asked again. An answer stopped for one of REFUSED is one model's refusal (Bleachers, Kim Gordon:
+# RECITATION on both lite models, other models untested): the video is asked of another model on a later day ("vr":
+# the models that refused it), and given up after two models, or one that is not a lite model, have refused.
 REFUSED = {"RECITATION", "PROHIBITED_CONTENT", "SAFETY", "BLOCKLIST", "SPII", "IMAGE_SAFETY"}
 
 PROMPT = """Transcribe everything the host says in this video review, word for word, in English, as plain text.
@@ -90,8 +91,9 @@ def plausible(text, mins=None):
 
 
 def ask(a, api_key, mins=None):
-    """("ok", text, model) | ("bad", None, model): the model answered, but no whole transcript | ("refused", None, model):
-    refused this video, and would again (REFUSED) | ("none", None, None)."""
+    """("ok", text, model) | ("bad", None, model): the model answered, but no whole transcript | ("blocked", None, model):
+    the request was refused (the video itself) | ("refused", None, model): this model stopped its answer (REFUSED) |
+    ("none", None, None)."""
     body = {"contents": [{"parts": [{"fileData": {"fileUri": f"https://www.youtube.com/watch?v={a['video_id']}"}},
                                     {"text": PROMPT.format(title=f"{a['artist_name']} - {a['album']}")}]}],
             "generationConfig": {"temperature": 0.1, "maxOutputTokens": 24000, "mediaResolution": "MEDIA_RESOLUTION_LOW"}}
@@ -102,7 +104,7 @@ def ask(a, api_key, mins=None):
     if not cands:  # the request itself was refused: why, so a run's log tells
         fb = (raw.get("promptFeedback") if isinstance(raw, dict) else None) or {}
         print(f"gemini {model}: no answer, refused: {fb.get('blockReason')} {fb.get('blockReasonMessage') or ''}".rstrip())
-        return ("refused" if fb.get("blockReason") else "bad"), None, model
+        return ("blocked" if fb.get("blockReason") else "bad"), None, model
     cand = cands[0] if isinstance(cands[0], dict) else {}
     parts = (cand.get("content") or {}).get("parts") or []
     text = "".join(p.get("text", "") for p in parts if isinstance(p, dict)).strip()
@@ -160,7 +162,16 @@ def run():
         if all(m in gemini._unavailable for m in gemini.MODELS):
             print("every model's share for today is used up")
             break
-        got, text, model = ask(a, api_key, mins)
+        v = data.get(a["id"]) or {}
+        tried = set(v.get("vr", []))  # models that refused this video: another one is asked
+        if all(m in gemini._unavailable or m in tried for m in gemini.MODELS):
+            continue  # the models it can still go to are used up today
+        masked = tried - gemini._unavailable
+        gemini._unavailable.update(masked)
+        try:
+            got, text, model = ask(a, api_key, mins)
+        finally:
+            gemini._unavailable.difference_update(masked)
         for m, k in gemini.requests.items():  # every request counts, a retry or a timed-out one too
             if k >= PER_MODEL:
                 gemini._unavailable.add(m)  # its rest of the day is for new reviews
@@ -178,8 +189,13 @@ def run():
             made += 1
             print(f"  + {a['artist_name']} - {a['album']} ({mins:.0f} min, {len(text)} characters, {model})")
         else:
-            vf = FAIL_MAX if got == "refused" else data[a["id"]].get("vf", 0) + 1  # refused: not asked again
-            data[a["id"]] = {**data[a["id"]], "vf": vf}
+            if got == "refused":
+                vr = sorted(tried | {model})
+                final = len(vr) >= 2 or "lite" not in model  # two models, or a full one: the video stays retold
+                v = {**v, "vr": vr, **({"vf": FAIL_MAX} if final else {})}
+            else:  # blocked: not asked again; bad: one more day
+                v = {**v, "vf": FAIL_MAX if got == "blocked" else v.get("vf", 0) + 1}
+            data[a["id"]] = v
             briefs.save(bpath, data)
             failed += 1
             print(f"  - {a['artist_name']} - {a['album']}: no usable transcript ({got}, {model})")
