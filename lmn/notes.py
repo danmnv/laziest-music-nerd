@@ -128,7 +128,7 @@ def deezer_album(artist, album, sleep=time.sleep, named=None):
 FALLBACK = ("cv", "t", "min", "y", "mb")  # what a Deezer miss may still carry (fallback)
 
 
-def fallback(artist, album, known=None, named=None):
+def fallback(artist, album, known=None, named=None, apple=None):
     """For an album Deezer doesn't have (owner, 2026-11-08: leroy «status update music», no cover in the bot): its
     MusicBrainz release group, the front cover from the Cover Art Archive and, when no tracklist is known yet (the AOTY
     table's, lmn/aoty.py tracks), MusicBrainz's. What was found before is kept. {"fb": 1} marks that it was asked."""
@@ -136,6 +136,17 @@ def fallback(artist, album, known=None, named=None):
     keep = {k: known[k] for k in FALLBACK if isinstance(known, dict) and is_miss(known) and known.get(k)}
     if keep.get("cv") and keep.get("t"):
         return {**keep, "fb": 1}
+    # the album on Apple Music (data/apple.json): its tracklist and cover, exact by the page's id (links.apple_tracks)
+    am = links.apple_tracks(apple) if apple else None
+    if am and links.fits(named, am.get("tracks")):
+        if am.get("tracks") and not keep.get("t"):
+            keep["t"] = [[t["title"], t["sec"] or 0] for t in am["tracks"]]
+            if all(t["sec"] for t in am["tracks"]):
+                keep["min"] = round(sum(t["sec"] for t in am["tracks"]) / 60)
+        if am.get("cover") and not keep.get("cv"):
+            keep["cv"] = am["cover"]
+        if keep.get("cv") and keep.get("t"):
+            return {**keep, "fb": 1}
     rg = musicbrainz.find_release_group(artist, album)
     if not rg:
         return {**keep, "fb": 1}
@@ -188,7 +199,7 @@ def favourites(nts, i):
     return [f["t"] for f in ((nts or {}).get(i) or {}).get("fav") or [] if isinstance(f, dict) and f.get("t")]
 
 
-def albums(archive, old, limit=1500, deadline=None, today=None, nts=None):
+def albums(archive, old, limit=1500, deadline=None, today=None, nts=None, apple=None):
     """{review id: deezer_album(...) or {"miss": date}} for every archive review; at most limit lookups per run and
     none after deadline (time.monotonic()), the rest next run. Newest reviews first. A miss is asked again when
     miss_due; until then, and when a request fails, the old answer stays."""
@@ -205,10 +216,12 @@ def albums(archive, old, limit=1500, deadline=None, today=None, nts=None):
         elif n < limit and not (deadline and time.monotonic() > deadline):
             n += 1
             named = favourites(nts, a["id"])
+            page = (apple or {}).get(a["id"])  # data/apple.json: the URL, or a miss
+            page = page if isinstance(page, str) else None
             x = deezer_album(a["artist_name"], a["album"], named=named)
             time.sleep(SLEEP)
             if x is not None:
-                out[a["id"]] = x or {"miss": today.isoformat(), **fallback(a["artist_name"], a["album"], known, named)}
+                out[a["id"]] = x or {"miss": today.isoformat(), **fallback(a["artist_name"], a["album"], known, named, page)}
             elif known is not None:
                 out[a["id"]] = known
         elif known is not None:

@@ -92,9 +92,9 @@ def fill(r, fresh):
         if v and not ai.get(k):
             ai[k] = v
     if fresh.get("tracks") and not r.get("tracks"):
-        # the album itself found later (a single only before it, links.fits): its cover first; the channel post's
+        # the album itself found later on Deezer or Apple (a single only before it, links.fits): its cover first; the channel post's
         # picture is replaced at the next edit (check.edit_card)
-        new = [c for c in fresh.get("covers") or [] if "dzcdn.net" in c or "deezer" in c]
+        new = [c for c in fresh.get("covers") or [] if "dzcdn.net" in c or "deezer" in c or "mzstatic.com" in c]
         if new and new[0] not in (r.get("covers") or [])[:1]:
             r["covers"] = new[:1] + [c for c in r.get("covers") or [] if c != new[0]]
             if r.get("tg_channel_msg"):
