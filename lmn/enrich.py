@@ -10,6 +10,11 @@ def _try(name, fn, default=None):
         return default
 
 
+def named_tracks(r):
+    """The tracks Fantano names in the video's description: FAV TRACKS and LEAST FAV TRACK."""
+    return (r.get("fav_tracks") or []) + [r.get("least_fav_track") or ""]
+
+
 def enrich(rev, plaintext, archive, use_ai=True):
     r = dict(rev)
     ai = {}
@@ -41,11 +46,16 @@ def enrich(rev, plaintext, archive, use_ai=True):
         r["links"]["youtube_album"] = found["youtube_album"]
     if found.get("release_page"):  # the artist's or label's own page with every service beats album.link
         r["links"]["songlink"] = found["release_page"]
+    rg_cover = bool(rg)
     if rg:
         r["mb_release_group"] = rg["rg_id"]
         det = _try("musicbrainz release", lambda: mb.release_details(rg["releases"]), {})
-        r["duration_min"] = det.get("duration_min")
-        r["tracks"] = det.get("tracks")
+        if links.fits(named_tracks(r), det.get("tracks")):
+            r["duration_min"] = det.get("duration_min")
+            r["tracks"] = det.get("tracks")
+        else:  # MusicBrainz found a single of that name: not its cover either
+            print(f"musicbrainz: {rg['rg_id']} has {len(det['tracks'])} tracks, not the album Fantano reviewed: no cover from it")
+            rg_cover = False
         if det.get("bandcamp"):
             r["links"].setdefault("bandcamp", det["bandcamp"])
         if det.get("smartlink"):
@@ -57,6 +67,10 @@ def enrich(rev, plaintext, archive, use_ai=True):
             r["type"] = {"EP": "ep"}.get(rg.get("type")) or ("live" if "live" in sec else "mixtape" if "mixtape/street" in sec else None)
 
     dz = _try("deezer", lambda: links.deezer_album(artist, album)) if album else None
+    if dz and not links.fits(named_tracks(r), dz.get("tracks")):
+        # another release under the album's title: none of its cover, tracks or link; a later lookup tries again
+        print(f"deezer: {dz['url']} has {len(dz['tracks'])} tracks, not the album Fantano reviewed: left out")
+        dz = None
     if dz:
         r["links"].setdefault("songlink", links.songlink(dz["url"]))
         r["duration_min"] = r.get("duration_min") or dz.get("duration_min")
@@ -71,7 +85,7 @@ def enrich(rev, plaintext, archive, use_ai=True):
 
     r["covers"] = [c for c in [
         dz and dz.get("cover"),
-        rg and mb.cover_url(rg["rg_id"]),
+        rg_cover and mb.cover_url(rg["rg_id"]),
         r.get("thumb"),
     ] if c]
     r["previous"], r["previous_unsure"] = _try("previous reviews", lambda: previous_reviews(r, archive), ([], 0))

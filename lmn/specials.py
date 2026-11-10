@@ -153,7 +153,7 @@ def run():
     start, minutes = time.monotonic(), float(os.environ.get("LOOKUP_MINUTES", "35"))
     apath = DATA / "albums.json"
     al = notes.albums(archive, json.loads(apath.read_text()) if apath.exists() else {}, int(os.environ.get("ALBUMS_LIMIT", "1500")),
-                      start + 60 * minutes / 2)
+                      start + 60 * minutes / 2, nts=old_notes)
     apath.write_text("{\n" + ",\n".join(json.dumps(k) + ": " + json.dumps(al[k], ensure_ascii=False, separators=(",", ":"))
                                           for k in sorted(al)) + "\n}\n")
     nt = notes.build(ups, archive, old_notes, int(os.environ.get("NOTES_DEEZER_LIMIT", "1500")),

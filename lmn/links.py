@@ -65,6 +65,29 @@ def find_album(artist, album, get=None, editions=False, sleep=None):
     return None
 
 
+def _track_key(t):
+    """A track's name without guests, brackets and "Part"/"Pt." ("BURGUNDY FT. VINCE STAPLES" = "Burgundy (feat. Vince
+    Staples)", "KANNON PT. 2" = "Kannon2")."""
+    t = re.sub(r"\s*[(\[].*$", "", t or "")
+    t = re.split(r"(?i)\s+(?:ft\.?|feat\.?|featuring)\s", t)[0]
+    return norm(re.sub(r"(?i)\b(?:part|pt)\b\.?", "", t))
+
+
+def fits(named, tracks):
+    """Whether a tracklist can be the album Fantano reviewed, given the tracks he names (FAV TRACKS, LEAST FAV TRACK).
+    Deezer may have only a single under the album's title, before the album or instead of it (Wolves in the Throne Room
+    «Estuary», 2026-11-10: 2 tracks and the single's cover; 67 archive albums on 2026-11-10, e.g. Paramore «This Is
+    Why», 1 track): a short tracklist (5 or fewer) without most of the named tracks is not the album. A longer one, or
+    too few names, always fits; a remark in place of a track («I don't have one, honestly») is not a name."""
+    keys = {_track_key(t) for t in named or [] if len(t or "") <= 60}
+    keys = {k for k in keys if len(k) > 2}
+    if len(keys) < 2 or not tracks or len(tracks) > 5:
+        return True
+    have = [_track_key(t.get("title") if isinstance(t, dict) else t[0]) for t in tracks]
+    found = sum(1 for k in keys if any(k == h or (len(h) > 3 and (k in h or h in k)) for h in have))
+    return found * 2 >= len(keys)
+
+
 def deezer_album(artist, album):
     try:
         a = find_album(artist, album)

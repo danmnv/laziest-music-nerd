@@ -74,6 +74,11 @@ class Telegram:
                 return None
             raise
 
+    def edit_photo(self, chat_id, message_id, photo, caption, buttons=None):
+        """Replace a photo post's picture (by URL; Telegram fetches it) and its caption."""
+        return self.call("editMessageMedia", chat_id=chat_id, message_id=message_id, reply_markup=_markup(buttons),
+                         media={"type": "photo", "media": photo, "caption": caption, "parse_mode": "HTML"})
+
     def pin(self, chat_id, message_id):
         return self.call("pinChatMessage", chat_id=chat_id, message_id=message_id, disable_notification=True)
 
