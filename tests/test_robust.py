@@ -46,7 +46,7 @@ class TelegramLengthTest(unittest.TestCase):
         self.assertTrue(balanced(c), c)
 
     def test_list_counts_visible_text_not_link_urls(self):
-        url = "https://danmnv.github.io/laziest-music-nerd/r/" + "x" * 150 + ".html"
+        url = "https://laziest-music-nerd.pages.dev/r/" + "x" * 150 + ".html"
         items = [{"id": str(i), "line": f'🟡 7 · <a href="{url}">Artist {i} — Album {i}</a> · art pop · 40 мин'} for i in range(60)]
         text = card.render_list(items)
         self.assertIn("Album 59", text)  # 60 lines of ~50 visible chars fit, though the raw HTML is ~13k chars

@@ -64,7 +64,5 @@ jobs:
           url=$(grep -oE 'https://[a-z0-9-]+\.[a-z0-9-]+\.pages\.dev' cf.log | tail -1 | sed -E 's#^https://[^.]+\.#https://#')
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Сайт на Cloudflare: $url" >> "$GITHUB_STEP_SUMMARY"
-      # The old GitHub Pages address (danmnv.github.io/laziest-music-nerd) is no longer deployed (2026-11-10). Its last
-      # deploy stays up for good: every old page there sends the reader to the same page here (lmn/redirect.py built it).
-      # Nothing reads from it any more, and new pages were never linked there. Redeploying it on every build only failed
-      # whenever GitHub still counted the previous deploy as in progress (often ~20–45 min), turning runs red.
+      # The old GitHub Pages address (on github.io) was unpublished on 2026-11-10: it had the
+      # owner's name in it, and redeploying it failed whenever GitHub still counted the previous deploy as in progress.
