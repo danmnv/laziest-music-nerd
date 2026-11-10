@@ -30,6 +30,10 @@ CHARS_A_MINUTE = 400  # he speaks ~150 words a minute (~800 characters): less is
 HOST = re.compile(r"fantano|needle ?drop|music nerd", re.I)
 FAIL_MAX = 2  # runs in which the model answered with no usable transcript for this video: then it keeps its retelling
 GIVE_UP = 3  # no answer at all this many times in a row: the key, the quota or the service is wrong today
+# Refusals that come back the same for the same video, on every model tried (2026-11-09/10: Moor Mother refused on all
+# 4 models; Bleachers, Kim Gordon, Moor Mother stopped for RECITATION again on a second day and on a second model).
+# Such a video gets no second day: asking again only spends the day's share that new videos could use.
+REFUSED = {"RECITATION", "PROHIBITED_CONTENT", "SAFETY", "BLOCKLIST", "SPII", "IMAGE_SAFETY"}
 
 PROMPT = """Transcribe everything the host says in this video review, word for word, in English, as plain text.
 No timestamps, no speaker labels, no descriptions of sounds or music, no headings, no comments or summary of your own.
@@ -86,7 +90,8 @@ def plausible(text, mins=None):
 
 
 def ask(a, api_key, mins=None):
-    """("ok", text, model) | ("bad", None, model): the model answered, but no whole transcript | ("none", None, None)."""
+    """("ok", text, model) | ("bad", None, model): the model answered, but no whole transcript | ("refused", None, model):
+    refused this video, and would again (REFUSED) | ("none", None, None)."""
     body = {"contents": [{"parts": [{"fileData": {"fileUri": f"https://www.youtube.com/watch?v={a['video_id']}"}},
                                     {"text": PROMPT.format(title=f"{a['artist_name']} - {a['album']}")}]}],
             "generationConfig": {"temperature": 0.1, "maxOutputTokens": 24000, "mediaResolution": "MEDIA_RESOLUTION_LOW"}}
@@ -97,7 +102,7 @@ def ask(a, api_key, mins=None):
     if not cands:  # the request itself was refused: why, so a run's log tells
         fb = (raw.get("promptFeedback") if isinstance(raw, dict) else None) or {}
         print(f"gemini {model}: no answer, refused: {fb.get('blockReason')} {fb.get('blockReasonMessage') or ''}".rstrip())
-        return "bad", None, model
+        return ("refused" if fb.get("blockReason") else "bad"), None, model
     cand = cands[0] if isinstance(cands[0], dict) else {}
     parts = (cand.get("content") or {}).get("parts") or []
     text = "".join(p.get("text", "") for p in parts if isinstance(p, dict)).strip()
@@ -106,7 +111,7 @@ def ask(a, api_key, mins=None):
                    or r.get("probability") in ("MEDIUM", "HIGH")]
         print(f"gemini {model}: stopped ({cand.get('finishReason')}) after {len(text)} characters"
               + (f", flagged: {', '.join(map(str, flagged))}" if flagged else ""))
-        return "bad", None, model
+        return ("refused" if cand.get("finishReason") in REFUSED else "bad"), None, model
     if not plausible(text, mins):
         print(f"gemini {model}: {len(text)} characters for {mins or 0:.0f} min, host named: {bool(HOST.search(text))}")
         if len(text) < 300:  # not a transcript: a refusal or an excuse, worth seeing
@@ -173,10 +178,11 @@ def run():
             made += 1
             print(f"  + {a['artist_name']} - {a['album']} ({mins:.0f} min, {len(text)} characters, {model})")
         else:
-            data[a["id"]] = {**data[a["id"]], "vf": data[a["id"]].get("vf", 0) + 1}
+            vf = FAIL_MAX if got == "refused" else data[a["id"]].get("vf", 0) + 1  # refused: not asked again
+            data[a["id"]] = {**data[a["id"]], "vf": vf}
             briefs.save(bpath, data)
             failed += 1
-            print(f"  - {a['artist_name']} - {a['album']}: no usable transcript ({model})")
+            print(f"  - {a['artist_name']} - {a['album']}: no usable transcript ({got}, {model})")
     print(f"transcripts: made {made}, unusable {failed}, {VIDEO_MINUTES - left:.0f} min of video watched")
 
 

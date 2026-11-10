@@ -54,8 +54,9 @@ class Ask(unittest.TestCase):
     def test_what_is_not_a_transcript(self):
         cases = [(gemini_answer("Too short."), "bad"), (gemini_answer(SPOKEN, "MAX_TOKENS"), "bad"),
                  (gemini_answer(SPOKEN.replace("Anthony Fantano", "a guy").replace("music nerd", "fan")), "bad"),
-                 ({"candidates": []}, "bad"), ({"promptFeedback": {"blockReason": "OTHER"}}, "bad"),
-                 ({"candidates": [{"finishReason": "RECITATION"}]}, "bad"),  # no content at all (2026-11-09)
+                 ({"candidates": []}, "bad"), ({"promptFeedback": {"blockReason": "OTHER"}}, "refused"),
+                 ({"promptFeedback": {}}, "bad"), ({"candidates": [{"finishReason": "PROHIBITED_CONTENT"}]}, "refused"),
+                 ({"candidates": [{"finishReason": "RECITATION"}]}, "refused"),  # no content at all (2026-11-09)
                  ({"candidates": [{"content": {}, "finishReason": "STOP"}]}, "bad")]
         for raw, want in cases:
             with mock.patch.object(gemini, "generate", return_value=("m1", raw)):
@@ -90,6 +91,8 @@ class Run(unittest.TestCase):
             gemini.requests[model] = gemini.requests.get(model, 0) + (2 if a is None else 1)  # no answer: a retry too
             if a is None:
                 return None, None
+            if isinstance(a, dict):  # a raw answer
+                return model, a
             i = vid[1:]
             return model, gemini_answer(a.replace("Artist 1", f"Artist {i}").replace("Album 1", f"Album {i}"))
         lengths = lengths or {f"v{i}": 6 for i in range(1, 7)}
@@ -115,6 +118,12 @@ class Run(unittest.TestCase):
         self.go(lambda n: SPOKEN, env={"VIDEO_LIMIT": "2"})
         calls, _ = self.go(lambda n: SPOKEN, env={"VIDEO_LIMIT": "1"})
         self.assertEqual(calls, ["v4"])
+
+    def test_a_refused_video_is_not_asked_again(self):
+        recited = {"candidates": [{"finishReason": "RECITATION"}]}
+        calls, data = self.go(lambda n: recited if n == 1 else "Too short.", env={"VIDEO_LIMIT": "2"})
+        self.assertEqual(data[f"{6:024x}"]["vf"], transcribe.FAIL_MAX)  # refused: its retelling stays
+        self.assertEqual(data[f"{5:024x}"]["vf"], 1)  # a bad answer: one more try another day
 
     def test_keeps_the_days_share_of_video(self):
         with mock.patch.object(transcribe, "VIDEO_MINUTES", 20):
