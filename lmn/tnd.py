@@ -24,15 +24,18 @@ def content_key():
     return _key[0]
 
 
-def fetch_posts(limit=15, page=1, with_text=False, since=None):
+def fetch_posts(limit=15, page=1, with_text=False, since=None, filter=None):
+    """filter: another Ghost filter in place of "the posts tagged album reviews" (lmn/tnd_missing.py)."""
     params = {
         "key": content_key(), "limit": limit, "page": page, "include": "tags",
-        "filter": "tag:album-reviews" + (f"+published_at:>'{since}'" if since else ""),
+        "filter": filter if filter is not None else "tag:album-reviews" + (f"+published_at:>'{since}'" if since else ""),
         "fields": "id,title,slug,published_at,url,canonical_url,custom_excerpt,feature_image" + (",html" if with_text else ""),
     }
     if with_text:
         params["formats"] = "html,plaintext"
         params["fields"] += ",plaintext"
+    if not params["filter"]:
+        del params["filter"]  # every post
     return http.get_json(f"{API}/posts/?{urllib.parse.urlencode(params)}")
 
 

@@ -1,0 +1,59 @@
+name: Пропущенные обзоры с сайта
+# Обзоры, которые есть на theneedledrop.com, но не попали в архив: сайт хранит их без метки «album reviews»
+# (11.02–11.08.2015: «To Pimp a Butterfly», «Currents» …). Запускается вручную, см. lmn/tnd_missing.py.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry — только показать список в журнале; run — дописать обзоры в архив"
+        default: dry
+        type: choice
+        options: [dry, run]
+      since:
+        description: "С какой даты смотреть посты сайта (ГГГГ-ММ-ДД); пусто — с самого начала"
+        default: ""
+      until:
+        description: "По какую дату (ГГГГ-ММ-ДД); пусто — до сегодня"
+        default: ""
+permissions:
+  contents: read   # commits go to the data repo with DATA_TOKEN; this repo is only read
+concurrency:
+  group: check-reviews   # never at the same time as the hourly check: both write data/archive.json
+jobs:
+  missing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - name: Данные из приватного репозитория
+        # data/*.json live in a private repo (the datasets are not to be downloadable in one click); the code is public
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ vars.DATA_REPO || 'danmnv/laziest-music-nerd-data' }}
+          token: ${{ secrets.DATA_TOKEN }}
+          path: .data
+      - run: ln -sfn .data/data data
+        working-directory: .
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m lmn.tnd_missing
+        env:
+          MODE: ${{ inputs.mode }}
+          SINCE: ${{ inputs.since }}
+          UNTIL: ${{ inputs.until }}
+      - name: Сохранить архив
+        if: ${{ inputs.mode == 'run' }}
+        run: |
+          cd "$GITHUB_WORKSPACE/.data"   # the data repo: commits go there
+          git config user.name "laziest-music-nerd-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/archive.json
+          git diff --cached --quiet && exit 0
+          git commit -q -m "data: пропущенные обзоры с сайта"
+          for i in 1 2 3 4; do  # main may have moved meanwhile (a merged PR): rebase our data commit on top
+            git pull --rebase -q origin main && git push -q origin HEAD:main && exit 0
+            git rebase --abort 2>/dev/null || true
+            sleep $((i * 5))
+          done
+          echo "::error::Не смог сохранить архив в main"; exit 1
