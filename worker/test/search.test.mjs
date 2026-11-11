@@ -96,3 +96,19 @@ test("an album reviewed again is found once, by the later review", () => {
   ];
   assert.deepEqual(searchArchive(arch, "life of pablo").items.map((a) => a.id), ["p2"]);
 });
+
+test("an artist's single-song reviews come after the albums, each part newest first", () => {
+  const K = [
+    { id: "s2", artist_name: "Kendrick Lamar", album: '"HUMBLE."', published: "2017-04-01", score: null, track: true },
+    { id: "a1", artist_name: "Kendrick Lamar", album: "To Pimp a Butterfly", published: "2015-03-19", score: 10 },
+    { id: "s1", artist_name: "Kendrick Lamar", album: '"I"', published: "2014-09-29", score: null, track: true },
+    { id: "a2", artist_name: "Kendrick Lamar", album: "DAMN.", published: "2017-04-18", score: 7 },
+    { id: "a0", artist_name: "Kendrick Lamar", album: "Section.80", published: "2011-07-10", score: 8 },
+    { id: "o1", artist_name: "Jay Rock & Kendrick Lamar", album: "Later Album", published: "2020-01-01", score: 6 },
+  ];
+  assert.deepEqual(artistReviews(K, "a1").items.map((a) => a.id), ["a2", "a1", "a0", "s2", "s1"]);
+  assert.deepEqual(answerSearch(K, "kendrick lamar").items.map((a) => a.id), ["a2", "a1", "a0", "s2", "s1"]);
+  // the artist named exactly still comes before another artist's album
+  assert.deepEqual(searchArchive(K, "kendrick lamar").items.map((a) => a.id), ["a2", "a1", "a0", "s2", "s1", "o1"]);
+  assert.equal(answerSearch(K, "humble").item.id, "s2"); // a song is still found by its name
+});

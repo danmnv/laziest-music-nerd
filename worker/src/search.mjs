@@ -3,7 +3,10 @@ import { nameKey } from "./follow.mjs";
 import { artistKey, albumKey, order } from "./archive.mjs";
 
 // Every word of the query must appear in the artist or album name ("kid a radiohead" finds Radiohead — Kid A).
-// Ranked: the artist named exactly, then artists starting with the query, then the rest; newest first within each.
+// Ranked: the artist named exactly, then artists starting with the query, then the rest; within each the albums
+// newest first, then the single-song reviews (owner, 2026-11-11: four songs stood among Kendrick Lamar's albums).
+const songsLast = (x, y) => (x.track ? 1 : 0) - (y.track ? 1 : 0) || order(String(y.published), String(x.published));
+
 export function searchArchive(archive, query, limit = 8) {
   const words = String(query || "").split(/\s+/).map(nameKey).filter(Boolean);
   if (!words.length) return { total: 0, items: [] };
@@ -16,7 +19,7 @@ export function searchArchive(archive, query, limit = 8) {
     if (!words.every((w) => hay.includes(w))) continue;
     hits.push({ a, rank: artist === whole ? 0 : artist.startsWith(whole) ? 1 : 2 });
   }
-  hits.sort((x, y) => x.rank - y.rank || order(String(y.a.published), String(x.a.published)));
+  hits.sort((x, y) => x.rank - y.rank || songsLast(x.a, y.a));
   return { total: hits.length, items: hits.slice(0, limit).map((h) => h.a) };
 }
 
@@ -54,12 +57,11 @@ export function answerSearch(archive, query, { maxAlbums = 40, fewHits = 8, maxA
   return { kind: "artists", total, artists, groups: groups.size };
 }
 
-// All reviews of the artist of review `id`, newest first.
+// All reviews of the artist of review `id`: the albums newest first, then the single-song reviews.
 export function artistReviews(archive, id, max = 40) {
   const a = archive.find((x) => x.id === id);
   if (!a) return { artist: null, total: 0, items: [] };
   const k = artistKey(a);
-  const items = archive.filter((x) => artistKey(x) === k)
-    .sort((x, y) => order(String(y.published), String(x.published)));
+  const items = archive.filter((x) => artistKey(x) === k).sort(songsLast);
   return { artist: a.artist_name, total: items.length, items: items.slice(0, max) };
 }
