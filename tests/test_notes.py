@@ -253,6 +253,20 @@ class VideoDates(unittest.TestCase):
         self.assertEqual([a["id"] for a in sorted(archive, key=lambda a: a["published"])], ["c", "d", "b", "a", "e"])
         self.assertEqual(notes.use_video_dates(ups, archive, {"a": {"video_id": "va"}}), 0, "a second run changes nothing")
 
+    def test_reviews_the_site_reposted_in_june_2015_take_their_older_video_date(self):
+        archive = [
+            {"id": "tpab", "published": "2015-06-20T21:08:57Z", "video_id": "vt"},  # video 15 March: 97 days earlier
+            {"id": "far", "published": "2015-06-20T21:10:00Z", "video_id": "vf"},   # 300 days: a wrong video
+            {"id": "nts", "published": "2015-06-21T15:00:00Z"},                     # matched by title only: not trusted
+            {"id": "late", "published": "2015-06-20T21:12:00Z", "video_id": "vl"},  # a video after the post: not this rule
+        ]
+        ups = {"vt": "2015-03-15T17:00:00Z", "vf": "2014-08-24T17:00:00Z", "vn": "2015-03-20T17:00:00Z", "vl": "2015-09-20T17:00:00Z"}
+        notes.use_video_dates(ups, archive, {"nts": {"video_id": "vn"}})
+        got = {a["id"]: (a["published"], a.get("tnd_published")) for a in archive}
+        self.assertEqual(got, {"tpab": ("2015-03-15T17:00:00Z", "2015-06-20T21:08:57Z"), "far": ("2015-06-20T21:10:00Z", None),
+                               "nts": ("2015-06-21T15:00:00Z", None), "late": ("2015-06-20T21:12:00Z", None)})
+        self.assertEqual(notes.use_video_dates(ups, archive, {"nts": {"video_id": "vn"}}), 0, "a second run changes nothing")
+
     def test_the_step_after_specials_works_on_the_fresh_archive_file(self):
         import json, tempfile
         from pathlib import Path

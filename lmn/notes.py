@@ -230,6 +230,9 @@ def albums(archive, old, limit=1500, deadline=None, today=None, nts=None, apple=
     return out
 
 
+# theneedledrop.com re-posted its 11 Feb - 11 Aug 2015 reviews on these days (lmn/tnd_missing.py); such a review's
+# own embedded video is up to ~4 months older than the post, and that older date is the right one
+REPOSTED = {"2015-06-20", "2015-06-21"}
 VIDEO_GAP_DAYS = 45  # theneedledrop.com posts a review 1 hour to 23 days after the video (median 38 h, 2026); a wider gap is a wrong match
 
 
@@ -256,8 +259,9 @@ def use_video_dates(uploads, archive, nts):
         site = a.get("tnd_published") or a["published"]
         vid = a.get("video_id") or (nts.get(a["id"]) or {}).get("video_id")
         date = when.get(vid)
-        if date and abs(datetime.datetime.fromisoformat(utc(date)[:-1]) - datetime.datetime.fromisoformat(utc(site)[:-1])) \
-                <= datetime.timedelta(days=VIDEO_GAP_DAYS):
+        gap = date and datetime.datetime.fromisoformat(utc(site)[:-1]) - datetime.datetime.fromisoformat(utc(date)[:-1])
+        if date and (abs(gap) <= datetime.timedelta(days=VIDEO_GAP_DAYS)
+                     or (vid == a.get("video_id") and utc(site)[:10] in REPOSTED and datetime.timedelta(0) < gap <= datetime.timedelta(days=200))):
             a["published"] = utc(date)
             if utc(date) != utc(site):
                 a["tnd_published"] = utc(site)

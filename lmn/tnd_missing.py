@@ -6,9 +6,12 @@ past the site files reviews without that tag: everything from 11 Feb to 11 Aug 2
 said Fantano had not reviewed "To Pimp a Butterfly".
 
 This walks every post that lacks the tag and keeps the ones that are plainly a review: an "Artist - Album" title and
-a verdict among the tags (a score, NOT GOOD, CLASSIC). The site's daily track picks and video posts have no verdict
-tag, so they stay out; so does a single-song review, which can't be told from them. What the archive already has,
-by post id or by artist and album, is left alone.
+a score or NOT GOOD among the tags. The site's daily track picks and video posts have no verdict tag, so they stay
+out. A bare CLASSIC tag stays out too: the first dry run (2026-11-11) found it only on 2011-2013 blog posts (a
+mixtape download, songs), while the real classic reviews carry the "album reviews" tag. A quoted title with NOT
+GOOD is a song ("Father of All..." before the album came out), so it becomes a track. What the archive already
+has, by post id or by artist and album, is left alone. The reviews' YouTube videos are read from the posts' text,
+so the weekly «Особые видео» run can move each one to its video's date (notes.use_video_dates).
 
 Run by hand: Actions → «Пропущенные обзоры с сайта». MODE=dry prints the list; MODE=run also adds the reviews to
 data/archive.json (the next check then rebuilds the bot's archive.min.json and the site). SINCE / UNTIL (YYYY-MM-DD)
@@ -28,6 +31,8 @@ from .musicbrainz import norm
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 TAG = "album-reviews"
 MAX_PAGES = 600  # 60,000 posts: far more than the site has; a walk that long means the paging is broken
+SKIP_SLUGS = {"2012-10-unknown-010"}  # a song called "#010": the site filed it under its "0/10" tag; not a score
+VIDEO_BATCH = 30  # posts asked for by id at once, with their text (the ids go into the URL)
 
 
 def key(a):
@@ -70,17 +75,39 @@ def missing(posts, archive):
         rev = tnd.parse_post(p)
         if not (rev.get("artist_name") and rev.get("album")):
             continue
-        if rev["score"] is None and not rev["not_good"] and not rev["classic"]:
-            continue  # no verdict tag: a track pick, a video, a news post
+        if (rev["score"] is None and not rev["not_good"]) or p.get("slug") in SKIP_SLUGS:
+            continue  # no verdict tag: a track pick, a video, a news post, a blog post tagged "classic"
         n["reviews"] += 1
         if rev["id"] in ids or key(rev) in keys:
             n["known"] += 1
             continue
         ids.add(rev["id"])
         keys.add(key(rev))  # the site posted some reviews twice: the first one counts
-        out.append(tnd.tidy_entry(archive_entry(rev)))
+        a = tnd.tidy_entry(archive_entry(rev))
+        if a["album"][0] in '"“' and a["score"] is None:
+            a["track"] = True  # a song with NOT GOOD; tnd.is_track leaves verdicts out because of quoted album titles
+        out.append(a)
     n["new"] = len(out)
     return out, n
+
+
+def add_videos(entries, fetch=None, log=print):
+    """Each entry's review video from its post's text (the walk reads no text). How many got one."""
+    fetch = fetch or tnd.fetch_posts
+    found = 0
+    for i in range(0, len(entries), VIDEO_BATCH):
+        chunk = entries[i:i + VIDEO_BATCH]
+        try:
+            d = fetch(limit=len(chunk), page=1, with_text=True, filter=f"id:[{','.join(a['id'] for a in chunk)}]")
+        except http.HttpError as e:
+            log(f"post texts not read (HTTP {e.status}): {len(chunk)} reviews keep the site's date")
+            continue
+        vids = {p["id"]: tnd.parse_post(p).get("video_id") for p in d.get("posts", [])}
+        for a in chunk:
+            if vids.get(a["id"]):
+                a["video_id"] = vids[a["id"]]
+                found += 1
+    return found
 
 
 def badge(a):
@@ -93,10 +120,12 @@ def main():
     archive = json.loads(path.read_text())
     new, n = missing(walk(os.environ.get("SINCE") or None, os.environ.get("UNTIL") or None), archive)
     print(f"posts without the tag: {n['posts']}; reviews among them: {n['reviews']}; already in the archive: {n['known']}; missing: {n['new']}")
+    print(f"videos found in the posts: {add_videos(new)} of {len(new)}")
     by_year = Counter(a["published"][:4] for a in new)
     print("missing by year: " + ", ".join(f"{y}: {by_year[y]}" for y in sorted(by_year)))
     for a in sorted(new, key=lambda a: a["published"]):
-        print(f"  {a['published'][:10]}  {badge(a):8}  {a['artist_name']} — {a['album']}")
+        print(f"  {a['published'][:10]}  {badge(a):8}  {a['artist_name']} — {a['album']}"
+              f"{'  (song)' if a.get('track') else ''}{'' if a.get('video_id') else '  (no video)'}")
     if mode != "run":
         print("dry run: nothing written")
         return
