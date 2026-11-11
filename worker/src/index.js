@@ -632,10 +632,20 @@ async function openCard(env, uid, open) {
 // The bot's data files (data/*.json) live in a private GitHub repo since 2026-11-03 (the datasets are not to be
 // downloadable in one click; the code stays public). DATA_URL is that repo's raw address of reviews.json, and the
 // DATA_TOKEN secret (a read-only GitHub token) opens it. Without the token: a public address, as before.
-function dataFile(env, name, cacheTtl) {
+// etag: the ETag of the copy this instance already holds; GitHub then answers 304 with no body while the file is the same.
+function dataFile(env, name, cacheTtl, etag) {
   const url = name === "reviews.json" ? env.DATA_URL : env.DATA_URL.replace("reviews.json", name);
-  const headers = env.DATA_TOKEN ? { Authorization: `token ${env.DATA_TOKEN}`, "User-Agent": "laziest-music-nerd" } : undefined;
-  return fetch(url, { headers, cf: { cacheTtl } });
+  const headers = { ...(env.DATA_TOKEN ? { Authorization: `token ${env.DATA_TOKEN}`, "User-Agent": "laziest-music-nerd" } : {}),
+                    ...(etag ? { "If-None-Match": etag } : {}) };
+  return fetch(url, { headers: Object.keys(headers).length ? headers : undefined, cf: { cacheTtl } });
+}
+
+// Whether the answer is the file this instance already holds under that ETag (304, or 200 with the same ETag: then
+// the body is left unread).
+function sameFile(r, etag) {
+  if (!etag || !(r.status === 304 || (r.ok && r.headers.get("etag") === etag))) return false;
+  if (r.body) r.body.cancel().catch(() => {});
+  return true;
 }
 
 async function listItems(env) {
@@ -646,9 +656,17 @@ async function listItems(env) {
   return r.ok ? (await r.json()).items : [];
 }
 
+// The cards the bot posted (reviews.json, 150 KB). Asked for on every use, so a new card is seen as soon as before, but
+// parsed again only when the file has changed: an unchanged one costs a 304 instead of a download and a parse.
+let reviewsKept = null; // { tag, list }
 async function reviews(env) {
-  const r = await dataFile(env, "reviews.json", 300);
-  return r.ok ? r.json() : [];
+  const r = await dataFile(env, "reviews.json", 300, reviewsKept && reviewsKept.tag);
+  if (reviewsKept && sameFile(r, reviewsKept.tag)) return reviewsKept.list;
+  if (!r.ok) return [];
+  const list = await r.json();
+  const tag = r.headers.get("etag");
+  reviewsKept = tag ? { tag, list } : null;
+  return list;
 }
 
 // Length as Telegram counts it for the 4096 limit: visible text after HTML parsing (tags and link URLs don't count),
@@ -733,18 +751,18 @@ let archiveCache = null; // kept while this Worker instance lives, so a search d
 // opens the first post through alias, and moveDupMarks moves what people saved under it). Read from the compact copy
 // made for the Worker (archive.min.json, archive.mjs: about half the CPU of reading archive.json); archive.json itself
 // when that copy is missing or isn't in a format this code knows. Kept in memory for 10 minutes; after that the file
-// is asked for again, and when it is still the same file (GitHub's ETag) the copy in memory stays: nothing is parsed.
+// is asked for again with its ETag, and while GitHub says it is the same file (304) the copy in memory stays: nothing
+// is downloaded or parsed.
 async function archive(env) {
   if (archiveCache && Date.now() - archiveCache.at < 600e3) return archiveCache.data;
   let got = null, tag = null;
-  const packed = await dataFile(env, "archive.min.json", 3600);
+  const packed = await dataFile(env, "archive.min.json", 3600, archiveCache && archiveCache.tag);
+  if (archiveCache && sameFile(packed, archiveCache.tag)) {
+    archiveCache.at = Date.now();
+    return archiveCache.data;
+  }
   if (packed.ok) {
     tag = packed.headers.get("etag");
-    if (tag && archiveCache && archiveCache.tag === tag) {
-      if (packed.body) packed.body.cancel().catch(() => {});
-      archiveCache.at = Date.now();
-      return archiveCache.data;
-    }
     got = unpack(await packed.json().catch(() => null));
   }
   if (!got) {
