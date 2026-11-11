@@ -4,6 +4,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import worker from "../src/index.js";
+import { pack } from "../src/archive.mjs";
+
+const PACKED = process.env.PACKED === "1";
 
 const OWNER = 1, OTHER = 2;
 const ARCHIVE = [
@@ -65,6 +68,9 @@ beforeEach(() => {
     if (String(url).endsWith("state.json")) return new Response(JSON.stringify({ channel_pinned_id: 2 }));
     if (String(url).endsWith("list.json")) return new Response(JSON.stringify({ items: [] }));
     if (String(url).endsWith("reviews.json")) return new Response(JSON.stringify([{ id: "old1", artist_name: "Shame", artist: { mbid: "S" } }, { id: "rk", artist_name: "Radiohead", artist: { mbid: "R" } }]));
+    // PACKED=1 runs every test here on the Worker's compact copy of the archive (archive.mjs), as in production;
+    // without it the copy is missing and the Worker reads archive.json itself
+    if (String(url).endsWith("archive.min.json")) return PACKED ? new Response(JSON.stringify(pack(ARCHIVE))) : new Response("not found", { status: 404 });
     if (String(url).endsWith("archive.json")) return new Response(JSON.stringify(ARCHIVE));
     if (String(url) === "https://site/rt/k.json") {
       return new Response(JSON.stringify({ crit: ["Metacritic 91", "Pitchfork 10/10"], sales: ["US #1", "UK #1"], wp_url: "https://en.wikipedia.org/wiki/Kid_A", video_id: "kidavideo01", bc: "https://radiohead.bandcamp.com/album/kid-a",

@@ -35,6 +35,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v5   # for the Worker's compact copy of the archive in the save step
+        with:
+          node-version: 22
       - name: Проверить TND и отправить карточки
         timeout-minutes: 40   # Gemini may take up to 20 min on a video (gemini.VIDEO_BUDGET_SEC), started up to 12 min in; leaves time for the save step below even if this one hangs
         run: python -m lmn.check
@@ -58,11 +61,23 @@ jobs:
           cd "$GITHUB_WORKSPACE/.data"   # the data repo: commits go there
           git config user.name "laziest-music-nerd-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # The bot reads data/archive.min.json, a compact copy of archive.json (worker/src/archive.mjs: reading the
+          # whole archive.json costs the Worker several times its 10 ms of CPU). Made here on every run, so it follows
+          # archive.json within an hour whichever workflow changed it. If it can't be made, the old copy is taken out
+          # of the repo (the bot then reads archive.json itself: slower, but not an old archive), the data is saved all the
+          # same and the run ends red.
+          packed=ok
+          node "$GITHUB_WORKSPACE/worker/tools/pack-archive.mjs" data/archive.json data/archive.min.json || packed=bad
+          [ "$packed" = ok ] || git rm -q -f --ignore-unmatch data/archive.min.json
+          finish() {
+            [ "$packed" = ok ] && exit 0
+            echo "::error::Не собралась data/archive.min.json: бот читает archive.json (медленнее). Чинить worker/tools/pack-archive.mjs"; exit 1
+          }
           git add data/
-          git diff --cached --quiet && exit 0
+          git diff --cached --quiet && finish
           git commit -q -m "data: новые обзоры"
           for i in 1 2 3 4; do  # main may have moved meanwhile (a merged PR): rebase our data commit on top
-            git pull --rebase -q origin main && git push -q origin HEAD:main && exit 0
+            git pull --rebase -q origin main && git push -q origin HEAD:main && finish
             git rebase --abort 2>/dev/null || true
             sleep $((i * 5))
           done

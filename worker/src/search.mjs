@@ -1,5 +1,6 @@
 // Search Fantano's reviews (archive.json) by artist and album, for the private chat with the bot.
 import { nameKey } from "./follow.mjs";
+import { artistKey, albumKey, order } from "./archive.mjs";
 
 // Every word of the query must appear in the artist or album name ("kid a radiohead" finds Radiohead — Kid A).
 // Ranked: the artist named exactly, then artists starting with the query, then the rest; newest first within each.
@@ -11,11 +12,11 @@ export function searchArchive(archive, query, limit = 8) {
   for (const a of archive) {
     if (!a.artist_name && !a.album) continue;
     if (a.redo) continue; // reviewed again later: the search shows the later review, whose card names this one
-    const artist = nameKey(a.artist_name), hay = artist + "|" + nameKey(a.album);
+    const artist = artistKey(a), hay = artist + "|" + albumKey(a);
     if (!words.every((w) => hay.includes(w))) continue;
     hits.push({ a, rank: artist === whole ? 0 : artist.startsWith(whole) ? 1 : 2 });
   }
-  hits.sort((x, y) => x.rank - y.rank || String(y.a.published).localeCompare(String(x.a.published)));
+  hits.sort((x, y) => x.rank - y.rank || order(String(y.a.published), String(x.a.published)));
   return { total: hits.length, items: hits.slice(0, limit).map((h) => h.a) };
 }
 
@@ -38,7 +39,7 @@ export function answerSearch(archive, query, { maxAlbums = 40, fewHits = 8, maxA
   if (total === 1) return { kind: "card", item: items[0] };
   const groups = new Map();
   for (const a of items) {
-    const k = nameKey(a.artist_name);
+    const k = artistKey(a);
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(a);
   }
@@ -57,8 +58,8 @@ export function answerSearch(archive, query, { maxAlbums = 40, fewHits = 8, maxA
 export function artistReviews(archive, id, max = 40) {
   const a = archive.find((x) => x.id === id);
   if (!a) return { artist: null, total: 0, items: [] };
-  const k = nameKey(a.artist_name);
-  const items = archive.filter((x) => nameKey(x.artist_name) === k)
-    .sort((x, y) => String(y.published).localeCompare(String(x.published)));
+  const k = artistKey(a);
+  const items = archive.filter((x) => artistKey(x) === k)
+    .sort((x, y) => order(String(y.published), String(x.published)));
   return { artist: a.artist_name, total: items.length, items: items.slice(0, max) };
 }
