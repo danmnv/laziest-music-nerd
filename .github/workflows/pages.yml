@@ -4,16 +4,18 @@ on:
     branches: [main]
     paths: [site_src/**, lmn/**, .github/workflows/pages.yml]
   workflow_run:
-    workflows: ["Проверка новых обзоров", "Оценки критиков из Википедии", "Досье артистов", "Особые видео Фантано", "Брифы для архива", "Ссылки на Apple Music", "Деплой Cloudflare Worker"]
+    # the daily and weekly jobs. Not «Проверка новых обзоров»: it runs about 25 times a day and starts this workflow
+    # itself (workflow_dispatch from its save step), only when it saved something
+    workflows: ["Оценки критиков из Википедии", "Досье артистов", "Особые видео Фантано", "Брифы для архива", "Ссылки на Apple Music", "Деплой Cloudflare Worker"]
     types: [completed]
-  workflow_dispatch:
+  workflow_dispatch:   # by hand, and from check.yml after a check that saved something
 
 permissions:
   contents: read
 
 concurrency:
   group: pages
-  cancel-in-progress: false   # a run after a check that changed nothing ends in seconds; it must not cancel a real build
+  cancel-in-progress: false   # a run after a job that changed nothing ends in seconds; it must not cancel a real build
 
 jobs:
   build:
@@ -33,12 +35,12 @@ jobs:
         working-directory: .
       - name: Есть ли что публиковать
         id: decide
-        # After an hourly check, rebuild only if it committed something: the data repo got a commit after that run started.
+        # After a daily or weekly job, rebuild only if it committed something: the data repo got a commit after that run started.
         run: |
           last=$(git -C .data log -1 --format=%ct)
           started=$(date -d "${{ github.event.workflow_run.run_started_at }}" +%s 2>/dev/null || echo 0)
           if [ "${{ github.event_name }}" = "workflow_run" ] && [ "$last" -lt "$started" ]; then
-            echo "go=false" >> "$GITHUB_OUTPUT"; echo "Проверка ничего не изменила, сайт тот же"
+            echo "go=false" >> "$GITHUB_OUTPUT"; echo "Данные не изменились, сайт тот же"
           else
             echo "go=true" >> "$GITHUB_OUTPUT"
           fi

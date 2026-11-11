@@ -2,13 +2,14 @@
 // (owner, 2026-11-01). Pure functions over archive.json and the person's marks; the Telegram side is in index.js.
 import { genresOf } from "./genres.mjs";
 import { badge } from "./search.mjs";
+import { order } from "./archive.mjs";
 
 export const PAGE = 15; // a page of the list: short enough to read on a phone, "Дальше" for the rest
 export const OLD_DAYS = 365; // a starting point older than this is confirmed first: the list would be long
 export const QFROM_MINUTES = 10; // «после какого альбома?» waits this long for its answer, then typing is a search again
 
 const time = (a) => Date.parse(a.published) || 0;
-const byTime = (x, y) => time(x) - time(y) || String(x.id).localeCompare(String(y.id));
+const byTime = (x, y) => time(x) - time(y) || order(String(x.id), String(y.id));
 
 // The last review heard: of the reviews marked «✓ Слушал» or «✗ Не моё» (both mean listened to), the one published
 // last, not the one marked last. A 2015 album opened at random after the 2025 ones doesn't move the start back.

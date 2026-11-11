@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read   # commits go to the data repo with DATA_TOKEN; this repo is only read
+  actions: write   # to start «Сайт» after a check that saved something (the save step); nothing else
 
 concurrency:
   group: check-reviews
@@ -23,6 +24,8 @@ jobs:
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false   # this repo is only read; its token (it may start workflows) is given to the save step alone
       - name: Данные из приватного репозитория
         # data/*.json live in a private repo (the datasets are not to be downloadable in one click); the code is public
         uses: actions/checkout@v5
@@ -35,6 +38,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v5   # for the Worker's compact copy of the archive in the save step
+        with:
+          node-version: 22
       - name: Проверить TND и отправить карточки
         timeout-minutes: 40   # Gemini may take up to 20 min on a video (gemini.VIDEO_BUDGET_SEC), started up to 12 min in; leaves time for the save step below even if this one hangs
         run: python -m lmn.check
@@ -54,15 +60,39 @@ jobs:
         # always(): cards already posted must be saved even if the check failed or hit its timeout later,
         # otherwise the next hour would post them again.
         if: ${{ always() && (inputs.mode || 'run') == 'run' }}
+        env:
+          GH_TOKEN: ${{ github.token }}   # for site() below
         run: |
           cd "$GITHUB_WORKSPACE/.data"   # the data repo: commits go there
           git config user.name "laziest-music-nerd-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # The bot reads data/archive.min.json, a compact copy of archive.json (worker/src/archive.mjs: reading the
+          # whole archive.json costs the Worker several times its 10 ms of CPU). Made here on every run, so it follows
+          # archive.json within an hour whichever workflow changed it. If it can't be made, the old copy is taken out
+          # of the repo (the bot then reads archive.json itself: slower, but not an old archive), the data is saved all the
+          # same and the run ends red.
+          problems=0
+          if ! node "$GITHUB_WORKSPACE/worker/tools/pack-archive.mjs" data/archive.json data/archive.min.json; then
+            problems=1
+            git rm -q -f --ignore-unmatch data/archive.min.json
+            echo "::error::Не собралась data/archive.min.json: бот читает archive.json (медленнее). Чинить worker/tools/pack-archive.mjs"
+          fi
+          # The site is rebuilt only after a check that saved something: «Сайт» is started from here. It used to start
+          # after every check (workflow_run) and, some 25 times a day, cloned both repos to find nothing new.
+          site() {
+            for n in 1 2 3; do
+              gh workflow run pages.yml -R "$GITHUB_REPOSITORY" --ref main && return 0
+              sleep 5
+            done
+            problems=1
+            echo "::error::Данные сохранены, но «Сайт» не запустился: запусти его вручную (Actions → Сайт → Run workflow)"
+          }
+          finish() { exit $problems; }
           git add data/
-          git diff --cached --quiet && exit 0
+          git diff --cached --quiet && finish
           git commit -q -m "data: новые обзоры"
           for i in 1 2 3 4; do  # main may have moved meanwhile (a merged PR): rebase our data commit on top
-            git pull --rebase -q origin main && git push -q origin HEAD:main && exit 0
+            git pull --rebase -q origin main && git push -q origin HEAD:main && { site; finish; }
             git rebase --abort 2>/dev/null || true
             sleep $((i * 5))
           done

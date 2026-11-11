@@ -6,7 +6,8 @@ import { isDigestSunday } from "./digest.mjs";
 import { nameKey, followMatches } from "./follow.mjs";
 import { answerSearch, artistReviews, badge } from "./search.mjs";
 import { criticsText } from "./critics.mjs";
-import { dupAliases, remapStatements } from "./dups.mjs";
+import { remapStatements } from "./dups.mjs";
+import { unpack, plain, artistKey, order, sharedTags } from "./archive.mjs";
 import { wikiCritics } from "./wiki.mjs";
 import { startLink, openFromStart } from "./links.mjs";
 import { PAGE, OLD_DAYS, QFROM_MINUTES, lastHeard, after, before, nextAfter, laterReviews, daysOld, line as queueLine } from "./queue.mjs";
@@ -604,7 +605,7 @@ async function publicStats(env) {
     // per vibe: settled by a majority or not, and the bar's length rounded to a tenth; no counts
     const list = Object.entries(ms).filter(([, x]) => x.y || x.n)
       .map(([m, x]) => ({ m, ok: x.y > x.n, bar: Math.round((10 * x.y) / top) * 10 }))
-      .sort((a, b) => b.ok - a.ok || b.bar - a.bar || a.m.localeCompare(b.m));
+      .sort((a, b) => b.ok - a.ok || b.bar - a.bar || order(a.m, b.m));
     if (list.length) moods[rid] = { many: people[rid] >= PUBLIC_MANY, list };
   }
   return { avg, moods };
@@ -631,10 +632,20 @@ async function openCard(env, uid, open) {
 // The bot's data files (data/*.json) live in a private GitHub repo since 2026-11-03 (the datasets are not to be
 // downloadable in one click; the code stays public). DATA_URL is that repo's raw address of reviews.json, and the
 // DATA_TOKEN secret (a read-only GitHub token) opens it. Without the token: a public address, as before.
-function dataFile(env, name, cacheTtl) {
+// etag: the ETag of the copy this instance already holds; GitHub then answers 304 with no body while the file is the same.
+function dataFile(env, name, cacheTtl, etag) {
   const url = name === "reviews.json" ? env.DATA_URL : env.DATA_URL.replace("reviews.json", name);
-  const headers = env.DATA_TOKEN ? { Authorization: `token ${env.DATA_TOKEN}`, "User-Agent": "laziest-music-nerd" } : undefined;
-  return fetch(url, { headers, cf: { cacheTtl } });
+  const headers = { ...(env.DATA_TOKEN ? { Authorization: `token ${env.DATA_TOKEN}`, "User-Agent": "laziest-music-nerd" } : {}),
+                    ...(etag ? { "If-None-Match": etag } : {}) };
+  return fetch(url, { headers: Object.keys(headers).length ? headers : undefined, cf: { cacheTtl } });
+}
+
+// Whether the answer is the file this instance already holds under that ETag (304, or 200 with the same ETag: then
+// the body is left unread).
+function sameFile(r, etag) {
+  if (!etag || !(r.status === 304 || (r.ok && r.headers.get("etag") === etag))) return false;
+  if (r.body) r.body.cancel().catch(() => {});
+  return true;
 }
 
 async function listItems(env) {
@@ -645,9 +656,17 @@ async function listItems(env) {
   return r.ok ? (await r.json()).items : [];
 }
 
+// The cards the bot posted (reviews.json, 150 KB). Asked for on every use, so a new card is seen as soon as before, but
+// parsed again only when the file has changed: an unchanged one costs a 304 instead of a download and a parse.
+let reviewsKept = null; // { tag, list }
 async function reviews(env) {
-  const r = await dataFile(env, "reviews.json", 300);
-  return r.ok ? r.json() : [];
+  const r = await dataFile(env, "reviews.json", 300, reviewsKept && reviewsKept.tag);
+  if (reviewsKept && sameFile(r, reviewsKept.tag)) return reviewsKept.list;
+  if (!r.ok) return [];
+  const list = await r.json();
+  const tag = r.headers.get("etag");
+  reviewsKept = tag ? { tag, list } : null;
+  return list;
 }
 
 // Length as Telegram counts it for the 4096 limit: visible text after HTML parsing (tags and link URLs don't count),
@@ -726,16 +745,33 @@ async function refreshOwnerLists(env) {
 
 // ---------- archive: random pick, similar albums, mood "другое" ----------
 
-let archiveCache = null; // kept while this Worker instance lives, so a search doesn't parse 1.4 MB every time
+let archiveCache = null; // kept while this Worker instance lives, so a search doesn't read the archive every time
 
+// Every review, without the ones theneedledrop.com posted twice (lmn/rereviews.py marks the second post; its id still
+// opens the first post through alias, and moveDupMarks moves what people saved under it). Read from the compact copy
+// made for the Worker (archive.min.json, archive.mjs: about half the CPU of reading archive.json); archive.json itself
+// when that copy is missing or isn't in a format this code knows. Kept in memory for 10 minutes; after that the file
+// is asked for again with its ETag, and while GitHub says it is the same file (304) the copy in memory stays: nothing
+// is downloaded or parsed.
 async function archive(env) {
   if (archiveCache && Date.now() - archiveCache.at < 600e3) return archiveCache.data;
-  const r = await dataFile(env, "archive.json", 3600);
-  if (!r.ok) return archiveCache ? archiveCache.data : [];
-  // a review theneedledrop.com posted twice is left out everywhere (lmn/rereviews.py marks the second post); its id
-  // still opens the first post (an old button), and moveDupMarks moves what people saved under it
-  const raw = await r.json();
-  archiveCache = { at: Date.now(), data: raw.filter((a) => !a.dup_of), alias: dupAliases(raw) };
+  let got = null, tag = null;
+  const packed = await dataFile(env, "archive.min.json", 3600, archiveCache && archiveCache.tag);
+  if (archiveCache && sameFile(packed, archiveCache.tag)) {
+    archiveCache.at = Date.now();
+    return archiveCache.data;
+  }
+  if (packed.ok) {
+    tag = packed.headers.get("etag");
+    got = unpack(await packed.json().catch(() => null));
+  }
+  if (!got) {
+    tag = null;
+    const r = await dataFile(env, "archive.json", 3600);
+    if (!r.ok) return archiveCache ? archiveCache.data : [];
+    got = plain(await r.json());
+  }
+  archiveCache = { at: Date.now(), tag, ...got };
   return archiveCache.data;
 }
 
@@ -889,12 +925,12 @@ async function otherAlbums(env, arch, artistName) {
     groups.push(...(d["release-groups"] || []));
     if (groups.length >= (d["release-group-count"] || 0) || !(d["release-groups"] || []).length) break;
   }
-  const reviewed = new Set(arch.filter((a) => nameKey(a.artist_name) === k).map((a) => nameKey(untitled(a.album))));
+  const reviewed = new Set(arch.filter((a) => artistKey(a) === k).map((a) => nameKey(untitled(a.album))));
   const seen = new Set();
   const main = [], eps = [], extra = [];
   const years = {}; // the release year of each reviewed album, for the artist's whole list
   const list = groups.filter((x) => x["first-release-date"])
-    .sort((a, b) => String(a["first-release-date"]).localeCompare(String(b["first-release-date"]))); // oldest first: a later live album or compilation with the same title loses
+    .sort((a, b) => order(String(a["first-release-date"]), String(b["first-release-date"]))); // oldest first: a later live album or compilation with the same title loses
   for (const x of list) {
     const key = nameKey(untitled(x.title));
     if (key && reviewed.has(key) && !years[key]) years[key] = x["first-release-date"].slice(0, 4);
@@ -915,12 +951,12 @@ async function deezerOtherAlbums(arch, artistName) {
   const art = (s.data || []).find((x) => nameKey(x.name) === k);
   if (!art) return null;
   const d = await deezerJson(`artist/${art.id}/albums?limit=100`);
-  const reviewed = new Set(arch.filter((a) => nameKey(a.artist_name) === k).map((a) => nameKey(untitled(a.album))));
+  const reviewed = new Set(arch.filter((a) => artistKey(a) === k).map((a) => nameKey(untitled(a.album))));
   const seen = new Set();
   const out = [];
   const years = {};
   const list = (d.data || []).filter((x) => x.record_type === "album")
-    .sort((a, b) => String(a.release_date).localeCompare(String(b.release_date))); // oldest first: the original edition wins
+    .sort((a, b) => order(String(a.release_date), String(b.release_date))); // oldest first: the original edition wins
   for (const x of list) {
     const key = nameKey(untitled(x.title));
     if (key && reviewed.has(key) && !years[key]) years[key] = String(x.release_date || "").slice(0, 4);
@@ -937,7 +973,7 @@ async function deezerOtherAlbums(arch, artistName) {
 // anchor it to.
 async function sendOtherAlbums(env, uid, arch, artist, extraOnly, key = null) {
   const k = nameKey(artist);
-  const anchor = arch.find((a) => nameKey(a.artist_name) === k);
+  const anchor = arch.find((a) => artistKey(a) === k);
   const res = (await otherAlbums(env, arch, artist)) || (extraOnly ? null : await deezerOtherAlbums(arch, artist));
   if (extraOnly) {
     if (!res || !res.extra.length) return tg(env, "sendMessage", { chat_id: uid, text: `У ${artist} больше ничего нет.` });
@@ -946,12 +982,12 @@ async function sendOtherAlbums(env, uid, arch, artist, extraOnly, key = null) {
   }
   // the reviews (not the earlier of two reviews of one album, not single songs), at the album's release year when the
   // discography knows it, else the review's year
-  const reviewed = arch.filter((a) => nameKey(a.artist_name) === k && !a.redo && !a.track).map((a) => {
+  const reviewed = arch.filter((a) => artistKey(a) === k && !a.redo && !a.track).map((a) => {
     const rel = res && res.years && (res.years[nameKey(untitled(a.album))] || res.years[nameKey(untitled(a.album).replace(/\s*[([]?\b(redux|revisited|re-?review)\b[)\]]?\s*$/i, ""))]);
     return { a, year: rel || String(a.published).slice(0, 4), reviewYear: !rel };
   });
   const all = [...reviewed, ...((res && res.main) || []).map((x) => ({ x, year: x.year || "" }))]
-    .sort((p, q) => String(q.year).localeCompare(String(p.year)));
+    .sort((p, q) => order(String(q.year), String(p.year)));
   if (!all.length) return tg(env, "sendMessage", { chat_id: uid, text: `Не нашёл дискографию ${artist}.` });
   const shown = all.slice(0, 40);
   const rows = shown.map((it) => [it.a
@@ -1030,7 +1066,7 @@ async function sendUnreviewed(env, uid, x) {
 function reviewedIn(list, artist, title) {
   const k = nameKey(artist);
   const t = nameKey(untitled(title));
-  return t ? list.find((a) => nameKey(a.artist_name) === k && nameKey(untitled(a.album)) === t) : null;
+  return t ? list.find((a) => artistKey(a) === k && nameKey(untitled(a.album)) === t) : null;
 }
 
 // «Наверстать» cards (opened from that list): each mark takes this card away and brings the next one. «✓ Слушал» isn't
@@ -1087,7 +1123,7 @@ async function unreviewedCard(env, x, arch) {
   const head = (x.intro ? x.intro + "\n\n" : "") +
     `<b>${esc(x.artist)} — ${esc(x.title)}</b>${year ? ` (${year})` : ""}\n${status}${facts ? " · " + esc(facts) : ""}${criticsText(rt) ? "\n" + criticsText(rt) : ""}`;
   const q = encodeURIComponent(`${x.artist} ${x.title}`);
-  const known = arch.find((a) => nameKey(a.artist_name) === k); // any review of the artist: follow and their list work through it
+  const known = arch.find((a) => artistKey(a) === k); // any review of the artist: follow and their list work through it
   const linkLine = linkItems([
     ...listenLinks(q, null, apple, bandcampLink({ bandcamp: top.bc }, x.artist, x.title), top.sc),
     ["AOTY", `https://www.albumoftheyear.org/search/?q=${q}`],
@@ -1152,8 +1188,9 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   const minutes = (full && full.duration_min) || (dz && dz.minutes);
   // The release year; Deezer may only have a later reissue, so its year counts only if it isn't after the review.
   const reviewYear = String(r.published).slice(0, 4);
-  const ofArtist = (await archive(env)).filter((x) => nameKey(x.artist_name) === nameKey(r.artist_name))
-    .sort((x, y) => String(x.published).localeCompare(String(y.published)));
+  const rk = nameKey(r.artist_name);
+  const ofArtist = (await archive(env)).filter((x) => artistKey(x) === rk)
+    .sort((x, y) => order(String(x.published), String(y.published)));
   const nth = ofArtist.findIndex((x) => x.id === r.id) + 1;
   const year = (full && full.year) || (dz && dz.year && dz.year <= reviewYear ? dz.year : null);
   const facts = [
@@ -1522,11 +1559,11 @@ async function maybeSuggestSimilar(env, uid, rid) {
   const g = new Set(genresOf(base).map((x) => x.toLowerCase()));
   const marked = g.size ? await userMarks(env, uid) : {};
   // a rare tag in common says more than a common one: "shoegaze" counts for more than "rock" (weight log(N / reviews with it))
-  const df = {};
-  if (g.size) for (const a of arch) for (const x of a.genres || []) { const k = x.toLowerCase(); if (g.has(k)) df[k] = (df[k] || 0) + 1; }
+  // how many reviews have each of this album's tags (df), and which reviews share any (archive.mjs)
+  const { df, shared } = sharedTags(archiveCache && archiveCache.data === arch ? archiveCache : plain(arch), g);
   const weight = (k) => Math.log(arch.length / (df[k] || 1));
-  const scored = arch.filter((a) => g.size && good(a) && a.id !== rid && !marked[a.id])
-    .map((a) => ({ a, n: (a.genres || []).reduce((sum, x) => sum + (g.has(x.toLowerCase()) ? weight(x.toLowerCase()) : 0), 0), r: Math.random() }))
+  const scored = shared.filter(([a]) => good(a) && a.id !== rid && !marked[a.id])
+    .map(([a, mine]) => ({ a, n: mine.reduce((sum, k) => sum + weight(k), 0), r: Math.random() }))
     .filter((x) => x.n > 0)
     .sort((x, y) => y.n - x.n || x.r - y.r); // the most in common first, a random pick among equals
   const chosen = scored.slice(0, SIMILAR_N).map((x) => x.a);
@@ -1774,8 +1811,8 @@ async function checkArtists(env, when, budget) {
         budget.left -= 2;
         lists = [...(await reviews(env)), ...(await archive(env))];
       }
-      const theirs = lists.filter((a) => nameKey(a.artist_name) === w.name_key && a.album)
-        .sort((a, b) => String(b.published).localeCompare(String(a.published)));
+      const theirs = lists.filter((a) => artistKey(a) === w.name_key && a.album)
+        .sort((a, b) => order(String(b.published), String(a.published)));
       for (const a of theirs.slice(0, 2)) {
         budget.left -= 3;
         const hit = await deezerAlbum(a.artist_name, untitled(a.album));
