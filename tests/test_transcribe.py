@@ -125,21 +125,30 @@ class Run(unittest.TestCase):
         self.assertEqual(data[f"{6:024x}"]["vf"], transcribe.FAIL_MAX)  # the video itself: its retelling stays
         self.assertEqual(data[f"{5:024x}"]["vf"], 1)  # a bad answer: one more try another day
 
-    def test_a_recited_video_goes_to_another_model_then_stops(self):
+    def test_a_recited_video_is_retold_on_the_next_run(self):
         recited = {"candidates": [{"finishReason": "RECITATION"}]}
         models = ("a-lite", "b-lite", "full")
         one = {"VIDEO_LIMIT": "1"}
         _, data = self.go(lambda n: recited, env=one, models=models)
         v6 = data[f"{6:024x}"]
-        self.assertEqual((v6["vr"], v6.get("vf", 0)), (["a-lite"], 0))  # one lite model: not final
+        self.assertEqual((v6["vr"], v6["vf"]), (["a-lite"], transcribe.FAIL_MAX))  # not word for word again
         gemini._unavailable.clear()
         gemini.requests.clear()
         asked = []
-        _, data = self.go(lambda n: (asked.append(sorted(gemini._unavailable)), recited)[1], env=one, models=models)
-        self.assertEqual(asked, [["a-lite"]])  # the next day: a-lite is skipped for this video
-        v6 = data[f"{6:024x}"]
-        self.assertEqual((v6["vr"], v6["vf"]), (["a-lite", "b-lite"], transcribe.FAIL_MAX))  # two models: given up
-        self.assertEqual(gemini._unavailable, set())  # the mask is lifted after the request
+        told = "He says the record sounds heavy. " * 40
+        calls, data = self.go(lambda n: (asked.append(sorted(gemini._unavailable)), told)[1], env=one, models=models)
+        self.assertEqual((calls, asked), (["v6"], [[]]))  # a-lite too: the retelling is another request
+        self.assertTrue(self.saved(6).startswith(transcribe.RETOLD))
+        self.assertEqual(gemini._unavailable, set())
+
+    def test_retell_off(self):
+        recited = {"candidates": [{"finishReason": "RECITATION"}]}
+        self.go(lambda n: recited, env={"VIDEO_LIMIT": "1"})
+        gemini._unavailable.clear()
+        gemini.requests.clear()
+        with mock.patch.object(transcribe, "RETELL", False):
+            calls, _ = self.go(lambda n: SPOKEN, env={"VIDEO_LIMIT": "1"})
+        self.assertEqual(calls, ["v5"])  # v6 is left with its old retelling
 
     def test_a_full_model_refusing_is_final(self):
         recited = {"candidates": [{"finishReason": "RECITATION"}]}
@@ -198,7 +207,7 @@ LUNA = {"brief": "Полное описание.", "about": "Длинно.", "wh
 
 
 class Retell(unittest.TestCase):
-    """RETELL: a video every model refused (RECITATION) is asked once more, for a retelling, not word for word."""
+    """RETELL (on by default): a video a model refused (RECITATION) is asked again for a retelling, not word for word."""
     a = {**arch(1, "2012-01-01T00:00:00Z"), "video_id": "abc", "tracks": ["Crown of Horns"]}
     TOLD = "He says the record sounds heavy and praises Crown of Horns. " * 20
 
@@ -227,7 +236,8 @@ class Retell(unittest.TestCase):
                 archive[3]["id"]: {"src": "short"}}
         d = Path(tempfile.mkdtemp())
         with mock.patch.object(transcribe, "DATA", d):
-            self.assertEqual([a["id"] for a in transcribe.todo(archive, data, set())], [archive[3]["id"]])
+            with mock.patch.object(transcribe, "RETELL", False):
+                self.assertEqual([a["id"] for a in transcribe.todo(archive, data, set())], [archive[3]["id"]])
             with mock.patch.object(transcribe, "RETELL", True):
                 got = transcribe.todo(archive, data, set())
         self.assertEqual([(a["id"], a.get("retell")) for a in got], [(archive[3]["id"], None), (archive[0]["id"], True)])

@@ -31,13 +31,14 @@ HOST = re.compile(r"fantano|needle ?drop|music nerd", re.I)
 FAIL_MAX = 2  # runs in which the model answered with no usable transcript for this video: then it keeps its retelling
 GIVE_UP = 3  # no answer at all this many times in a row: the key, the quota or the service is wrong today
 # A video the request itself is refused for (promptFeedback.blockReason: about the input, 2026-11-09/10 Moor Mother on
-# all 4 models) is not asked again. An answer stopped for one of REFUSED is one model's refusal (Bleachers, Kim Gordon:
-# RECITATION on both lite models, other models untested): the video is asked of another model on a later day ("vr":
-# the models that refused it), and given up after two models, or one that is not a lite model, have refused.
+# all 4 models) is not asked again. An answer stopped for one of REFUSED (RECITATION nearly always) is not asked word for
+# word again either ("vr": the model, "vf": FAIL_MAX): another model rescued only 3 of 18 such videos (2026-11-10/12),
+# so it goes to the retelling (RETELL) instead.
 # RECITATION is Google's filter on the answer (text too close to one it knows), and a word-for-word transcript is just
-# that. RETELL=1 (owner, 2026-11-12; off until a probe shows it gets through): a video every model refused is asked
-# once more for a close retelling of what he says instead ("vt": the runs that got none), not word for word.
-RETELL = os.environ.get("TRANSCRIBE_RETELL", "").lower() in ("1", "true")
+# that. A video a model refused is asked, on a later run, for a close retelling of what he says instead, not word for
+# word ("vt": the runs that got none). Probe 2026-11-12 on three refused videos: 9 of 9 answers were retellings, the
+# same details and score from every model; on by default since (owner, 2026-11-13). TRANSCRIBE_RETELL=false: off.
+RETELL = os.environ.get("TRANSCRIBE_RETELL", "").lower() not in ("0", "false")
 RETOLD = "[A retelling of the review, not word for word]"  # the file's first line: lmn/briefs.py reads it as a transcript
 RETELL_MIN = 800  # characters: a retelling of a 5-minute review is ~2000
 REFUSED = {"RECITATION", "PROHIBITED_CONTENT", "SAFETY", "BLOCKLIST", "SPII", "IMAGE_SAFETY"}
@@ -226,9 +227,7 @@ def run():
             if retell:  # blocked: not asked again; else one more run
                 v = {**v, "vt": FAIL_MAX if got == "blocked" else v.get("vt", 0) + 1}
             elif got == "refused":
-                vr = sorted(tried | {model})
-                final = len(vr) >= 2 or "lite" not in model  # two models, or a full one: the video stays retold
-                v = {**v, "vr": vr, **({"vf": FAIL_MAX} if final else {})}
+                v = {**v, "vr": sorted(tried | {model}), "vf": FAIL_MAX}  # next: a retelling (RETELL)
             else:  # blocked: not asked again; bad: one more day
                 v = {**v, "vf": FAIL_MAX if got == "blocked" else v.get("vf", 0) + 1}
             data[a["id"]] = v

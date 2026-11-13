@@ -19,7 +19,7 @@ on:
       retell:
         description: "Пересказ вместо дословной записи для видео, от которых модели отказались (с probe: пересказ этих обзоров, ничего не сохраняет)"
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read   # commits go to the data repo with DATA_TOKEN; this repo is only read
@@ -59,7 +59,7 @@ jobs:
           VIDEO_PER_MODEL: "12"   # requests a day on each model: the rest is for new reviews
           TRANSCRIBE_COMPARE: ${{ inputs.compare }}
           TRANSCRIBE_PROBE: ${{ inputs.probe }}
-          TRANSCRIBE_RETELL: ${{ inputs.retell }}   # off on the schedule until a probe's retellings are read (12.11.2026)
+          TRANSCRIBE_RETELL: ${{ inputs.retell }}   # empty on the schedule = on (13.11.2026); "false" from a manual run = off
           PYTHONUNBUFFERED: "1"
       - name: Сохранить
         if: ${{ always() && !inputs.compare && !inputs.probe }}
