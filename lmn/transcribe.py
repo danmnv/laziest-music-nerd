@@ -31,16 +31,31 @@ HOST = re.compile(r"fantano|needle ?drop|music nerd", re.I)
 FAIL_MAX = 2  # runs in which the model answered with no usable transcript for this video: then it keeps its retelling
 GIVE_UP = 3  # no answer at all this many times in a row: the key, the quota or the service is wrong today
 # A video the request itself is refused for (promptFeedback.blockReason: about the input, 2026-11-09/10 Moor Mother on
-# all 4 models) is not asked again. An answer stopped for one of REFUSED is one model's refusal (Bleachers, Kim Gordon:
-# RECITATION on both lite models, other models untested): the video is asked of another model on a later day ("vr":
-# the models that refused it), and given up after two models, or one that is not a lite model, have refused.
+# all 4 models) is not asked again. An answer stopped for one of REFUSED (RECITATION nearly always) is not asked word for
+# word again either ("vr": the model, "vf": FAIL_MAX): another model rescued only 3 of 18 such videos (2026-11-10/12),
+# so it goes to the retelling (RETELL) instead.
+# RECITATION is Google's filter on the answer (text too close to one it knows), and a word-for-word transcript is just
+# that. A video a model refused is asked, on a later run, for a close retelling of what he says instead, not word for
+# word ("vt": the runs that got none). Probe 2026-11-12 on three refused videos: 9 of 9 answers were retellings, the
+# same details and score from every model; on by default since (owner, 2026-11-13). TRANSCRIBE_RETELL=false: off.
+RETELL = os.environ.get("TRANSCRIBE_RETELL", "").lower() not in ("0", "false")
+RETOLD = "[A retelling of the review, not word for word]"  # the file's first line: lmn/briefs.py reads it as a transcript
+RETELL_MIN = 800  # characters: a retelling of a 5-minute review is ~2000
 REFUSED = {"RECITATION", "PROHIBITED_CONTENT", "SAFETY", "BLOCKLIST", "SPII", "IMAGE_SAFETY"}
 
 PROMPT = """Transcribe everything the host says in this video review, word for word, in English, as plain text.
 No timestamps, no speaker labels, no descriptions of sounds or music, no headings, no comments or summary of your own.
 Leave out music clips. Write album, song and artist names as he says them. Start a new paragraph when he moves on to
 another part of the review. If you cannot hear the video, answer with nothing at all: never invent a transcript.
-The video: "{title}"."""
+The video: "{title}".{tracks}"""
+
+PROMPT_RETELL = """Retell in English, in your own words and in detail, what the host says in this video review, in the order
+he says it: how the record sounds (production, vocals, mood), every song he names and what he says about it, what he
+praises, what he criticises, and his conclusion. Do not quote him and do not transcribe him word for word. No headings,
+no lists, no timestamps, no opinions of your own, nothing he does not say. Leave out music clips. If you cannot hear
+the video, answer with nothing at all: never invent a retelling.
+The video: "{title}".{tracks}"""
+TRACKS = "\nThe release's track titles, for spelling them when he names one: {}."
 
 
 def path(review_id):
@@ -59,14 +74,19 @@ def todo(archive, data, done):
     """Archive reviews with only a retelling of Fantano's lines (or none), no transcript yet and a known video, newest
     first."""
     notes = _load("notes.json", {})
+    albums = _load("albums.json", {})
     out = []
     for a in archive:
         v = data.get(a["id"]) or {}
-        if a["id"] in done or not (v.get("src") == "short" or v.get("short") == "none") or v.get("vf", 0) >= FAIL_MAX:
+        if a["id"] in done or not (v.get("src") == "short" or v.get("short") == "none"):
             continue
+        retell = v.get("vf", 0) >= FAIL_MAX
+        if retell and not (RETELL and v.get("vr") and v.get("vt", 0) < FAIL_MAX):  # only what models refused (RECITATION
+            continue  # and the like), not a request refused for the video itself (blocked: no "vr")
         vid = a.get("video_id") or (notes.get(a["id"]) or {}).get("video_id")
         if vid:
-            out.append({**tnd.tidy_entry(dict(a)), "video_id": vid})
+            out.append({**tnd.tidy_entry(dict(a)), "video_id": vid, **({"retell": True} if retell else {}),
+                        "tracks": briefs.tracklist(albums, a["id"])})
     return sorted(out, key=lambda a: a["published"], reverse=True)
 
 
@@ -90,12 +110,20 @@ def plausible(text, mins=None):
     return len(text) >= max(MIN_CHARS, CHARS_A_MINUTE * (mins or 0)) and bool(HOST.search(text))
 
 
-def ask(a, api_key, mins=None):
+def plausible_retelling(text):
+    """A retelling: long enough to hold the review, and not a refusal or an excuse. Whether it is made up from the
+    title can't be told from the text: a probe's retellings are read by a person first (RETELL is off until then)."""
+    return len(text) >= RETELL_MIN and not re.match(r"(i'?m sorry|i cannot|i can't|unfortunately)", text, re.I)
+
+
+def ask(a, api_key, mins=None, retell=False):
     """("ok", text, model) | ("bad", None, model): the model answered, but no whole transcript | ("blocked", None, model):
     the request was refused (the video itself) | ("refused", None, model): this model stopped its answer (REFUSED) |
     ("none", None, None)."""
     body = {"contents": [{"parts": [{"fileData": {"fileUri": f"https://www.youtube.com/watch?v={a['video_id']}"}},
-                                    {"text": PROMPT.format(title=f"{a['artist_name']} - {a['album']}")}]}],
+                                    {"text": (PROMPT_RETELL if retell else PROMPT).format(
+                                        title=f"{a['artist_name']} - {a['album']}",
+                                        tracks=TRACKS.format("; ".join(a["tracks"])) if a.get("tracks") else "")}]}],
             "generationConfig": {"temperature": 0.1, "maxOutputTokens": 24000, "mediaResolution": "MEDIA_RESOLUTION_LOW"}}
     model, raw = gemini.generate(body, api_key, budget=gemini.VIDEO_BUDGET_SEC, call_timeout=gemini.VIDEO_CALL_TIMEOUT)
     if raw is None:
@@ -114,6 +142,11 @@ def ask(a, api_key, mins=None):
         print(f"gemini {model}: stopped ({cand.get('finishReason')}) after {len(text)} characters"
               + (f", flagged: {', '.join(map(str, flagged))}" if flagged else ""))
         return ("refused" if cand.get("finishReason") in REFUSED else "bad"), None, model
+    if retell:
+        if not plausible_retelling(text):
+            print(f"gemini {model}: a retelling of {len(text)} characters: {text[:200]!r}")
+            return "bad", None, model
+        return "ok", f"{RETOLD}\n\n{text}", model
     if not plausible(text, mins):
         print(f"gemini {model}: {len(text)} characters for {mins or 0:.0f} min, host named: {bool(HOST.search(text))}")
         if len(text) < 300:  # not a transcript: a refusal or an excuse, worth seeing
@@ -163,13 +196,14 @@ def run():
             print("every model's share for today is used up")
             break
         v = data.get(a["id"]) or {}
-        tried = set(v.get("vr", []))  # models that refused this video: another one is asked
+        retell = bool(a.get("retell"))
+        tried = set() if retell else set(v.get("vr", []))  # models that refused this video: another one is asked
         if all(m in gemini._unavailable or m in tried for m in gemini.MODELS):
             continue  # the models it can still go to are used up today
         masked = tried - gemini._unavailable
         gemini._unavailable.update(masked)
         try:
-            got, text, model = ask(a, api_key, mins)
+            got, text, model = ask(a, api_key, mins, retell=retell)
         finally:
             gemini._unavailable.difference_update(masked)
         for m, k in gemini.requests.items():  # every request counts, a retry or a timed-out one too
@@ -187,18 +221,19 @@ def run():
             path(a["id"]).parent.mkdir(parents=True, exist_ok=True)
             path(a["id"]).write_text(text + "\n")
             made += 1
-            print(f"  + {a['artist_name']} - {a['album']} ({mins:.0f} min, {len(text)} characters, {model})")
+            print(f"  + {a['artist_name']} - {a['album']} ({mins:.0f} min, {len(text)} characters, {model}"
+                  + (", retold)" if retell else ")"))
         else:
-            if got == "refused":
-                vr = sorted(tried | {model})
-                final = len(vr) >= 2 or "lite" not in model  # two models, or a full one: the video stays retold
-                v = {**v, "vr": vr, **({"vf": FAIL_MAX} if final else {})}
+            if retell:  # blocked: not asked again; else one more run
+                v = {**v, "vt": FAIL_MAX if got == "blocked" else v.get("vt", 0) + 1}
+            elif got == "refused":
+                v = {**v, "vr": sorted(tried | {model}), "vf": FAIL_MAX}  # next: a retelling (RETELL)
             else:  # blocked: not asked again; bad: one more day
                 v = {**v, "vf": FAIL_MAX if got == "blocked" else v.get("vf", 0) + 1}
             data[a["id"]] = v
             briefs.save(bpath, data)
             failed += 1
-            print(f"  - {a['artist_name']} - {a['album']}: no usable transcript ({got}, {model})")
+            print(f"  - {a['artist_name']} - {a['album']}: no usable {'retelling' if retell else 'transcript'} ({got}, {model})")
     print(f"transcripts: made {made}, unusable {failed}, {VIDEO_MINUTES - left:.0f} min of video watched")
 
 
@@ -235,6 +270,8 @@ def probe(api_key, ids):
     data = _load("briefs.json", {})
     items = [a for a in todo(_load("archive.json", []), {k: {**data.get(k, {}), "vf": 0} for k in ids}, set())
              if a["id"] in ids]
+    if RETELL:
+        print("probe: asking for a retelling, not a transcript")
     for k in set(ids) - {a["id"] for a in items}:
         print(f"{k}: not a review with only a retelling and a known video, skipped")
     lengths = minutes([a["video_id"] for a in items]) if items else {}
@@ -253,12 +290,16 @@ def probe(api_key, ids):
             keep = set(gemini._unavailable)
             gemini._unavailable.update(x for x in gemini.MODELS if x != m)  # this model only
             try:
-                got, text, model = ask(a, api_key, mins)
+                got, text, model = ask(a, api_key, mins, retell=RETELL)
             finally:
                 gemini._unavailable.clear()
                 gemini._unavailable.update(keep)
             left -= mins
-            print(f"  {m}: {got}" + (f", {len(text)} characters: {text[:200]!r}" if text else ""))
+            print(f"  {m}: {got}" + (f", {len(text)} characters:" if text else ""))
+            if text and RETELL:  # the whole retelling: a person reads it before RETELL is turned on for the daily run
+                print(text)
+            elif text:
+                print(f"    {text[:200]!r}")
 
 if __name__ == "__main__":
     run()

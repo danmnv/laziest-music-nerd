@@ -125,21 +125,30 @@ class Run(unittest.TestCase):
         self.assertEqual(data[f"{6:024x}"]["vf"], transcribe.FAIL_MAX)  # the video itself: its retelling stays
         self.assertEqual(data[f"{5:024x}"]["vf"], 1)  # a bad answer: one more try another day
 
-    def test_a_recited_video_goes_to_another_model_then_stops(self):
+    def test_a_recited_video_is_retold_on_the_next_run(self):
         recited = {"candidates": [{"finishReason": "RECITATION"}]}
         models = ("a-lite", "b-lite", "full")
         one = {"VIDEO_LIMIT": "1"}
         _, data = self.go(lambda n: recited, env=one, models=models)
         v6 = data[f"{6:024x}"]
-        self.assertEqual((v6["vr"], v6.get("vf", 0)), (["a-lite"], 0))  # one lite model: not final
+        self.assertEqual((v6["vr"], v6["vf"]), (["a-lite"], transcribe.FAIL_MAX))  # not word for word again
         gemini._unavailable.clear()
         gemini.requests.clear()
         asked = []
-        _, data = self.go(lambda n: (asked.append(sorted(gemini._unavailable)), recited)[1], env=one, models=models)
-        self.assertEqual(asked, [["a-lite"]])  # the next day: a-lite is skipped for this video
-        v6 = data[f"{6:024x}"]
-        self.assertEqual((v6["vr"], v6["vf"]), (["a-lite", "b-lite"], transcribe.FAIL_MAX))  # two models: given up
-        self.assertEqual(gemini._unavailable, set())  # the mask is lifted after the request
+        told = "He says the record sounds heavy. " * 40
+        calls, data = self.go(lambda n: (asked.append(sorted(gemini._unavailable)), told)[1], env=one, models=models)
+        self.assertEqual((calls, asked), (["v6"], [[]]))  # a-lite too: the retelling is another request
+        self.assertTrue(self.saved(6).startswith(transcribe.RETOLD))
+        self.assertEqual(gemini._unavailable, set())
+
+    def test_retell_off(self):
+        recited = {"candidates": [{"finishReason": "RECITATION"}]}
+        self.go(lambda n: recited, env={"VIDEO_LIMIT": "1"})
+        gemini._unavailable.clear()
+        gemini.requests.clear()
+        with mock.patch.object(transcribe, "RETELL", False):
+            calls, _ = self.go(lambda n: SPOKEN, env={"VIDEO_LIMIT": "1"})
+        self.assertEqual(calls, ["v5"])  # v6 is left with its old retelling
 
     def test_a_full_model_refusing_is_final(self):
         recited = {"candidates": [{"finishReason": "RECITATION"}]}
@@ -171,6 +180,20 @@ class Run(unittest.TestCase):
             calls, _ = self.go(lambda n: None if n == 1 else SPOKEN)
         self.assertEqual(len(calls), 2)
 
+    def test_retell_asks_every_model_and_counts_its_own_failures(self):
+        k = self.archive[5]["id"]
+        self.data = {k: {**self.data[k], "vf": 2, "vr": ["m1", "m2"]}}
+        (self.dir / "briefs.json").write_text(json.dumps(self.data))
+        recited = {"candidates": [{"finishReason": "RECITATION"}]}
+        with mock.patch.object(transcribe, "RETELL", True):
+            calls, data = self.go(lambda n: recited)
+            self.assertEqual((calls, data[k]["vt"]), (["v6"], 1))  # m1 is asked though it refused the transcript
+            gemini._unavailable.clear()
+            gemini.requests.clear()
+            calls, data = self.go(lambda n: "He says it sounds great. " * 50)
+        self.assertEqual(calls, ["v6"])
+        self.assertTrue(self.saved(6).startswith(transcribe.RETOLD))
+
     def test_unusable_answer_counts_no_answer_stops(self):
         calls, data = self.go(lambda n: "Too short." if n == 1 else None)
         self.assertEqual(len(calls), 1 + transcribe.GIVE_UP)
@@ -181,6 +204,43 @@ class Run(unittest.TestCase):
 
 LUNA = {"brief": "Полное описание.", "about": "Длинно.", "who": "Группа; дебютный альбом.", "moods": [],
         "en": {"brief": "Full.", "about": "Long.", "who": "Band; debut album."}}
+
+
+class Retell(unittest.TestCase):
+    """RETELL (on by default): a video a model refused (RECITATION) is asked again for a retelling, not word for word."""
+    a = {**arch(1, "2012-01-01T00:00:00Z"), "video_id": "abc", "tracks": ["Crown of Horns"]}
+    TOLD = "He says the record sounds heavy and praises Crown of Horns. " * 20
+
+    def test_the_tracklist_is_in_both_prompts(self):
+        for retell, word in ((False, "word for word, in English"), (True, "Do not quote him")):
+            with mock.patch.object(gemini, "generate", return_value=("m1", gemini_answer(self.TOLD))) as gen:
+                transcribe.ask(self.a, "k", retell=retell)
+            text = gen.call_args.args[0]["contents"][0]["parts"][1]["text"]
+            self.assertIn(word, text)
+            self.assertIn("track titles, for spelling them when he names one: Crown of Horns.", text)
+
+    def test_a_retelling_is_marked_and_needs_no_host_name(self):
+        with mock.patch.object(gemini, "generate", return_value=("m1", gemini_answer(self.TOLD))):
+            got, text, _ = transcribe.ask(self.a, "k", retell=True)
+        self.assertEqual(got, "ok")
+        self.assertTrue(text.startswith(transcribe.RETOLD + "\n\n"))
+        for bad in ("Short.", "I'm sorry, I can't watch this video. " * 30):
+            with mock.patch.object(gemini, "generate", return_value=("m1", gemini_answer(bad))):
+                self.assertEqual(transcribe.ask(self.a, "k", retell=True)[0], "bad")
+
+    def test_only_refused_videos_and_only_when_on(self):
+        archive = [arch(i, f"20{10 + i:02d}-01-01T00:00:00Z") for i in range(1, 5)]
+        data = {archive[0]["id"]: {"src": "short", "vf": 2, "vr": ["a-lite", "b-lite"]},  # refused: retold
+                archive[1]["id"]: {"src": "short", "vf": 2},  # the request blocked: never
+                archive[2]["id"]: {"src": "short", "vf": 2, "vr": ["full"], "vt": 2},  # retelling given up
+                archive[3]["id"]: {"src": "short"}}
+        d = Path(tempfile.mkdtemp())
+        with mock.patch.object(transcribe, "DATA", d):
+            with mock.patch.object(transcribe, "RETELL", False):
+                self.assertEqual([a["id"] for a in transcribe.todo(archive, data, set())], [archive[3]["id"]])
+            with mock.patch.object(transcribe, "RETELL", True):
+                got = transcribe.todo(archive, data, set())
+        self.assertEqual([(a["id"], a.get("retell")) for a in got], [(archive[3]["id"], None), (archive[0]["id"], True)])
 
 
 class BriefsFromTranscript(unittest.TestCase):
@@ -256,6 +316,35 @@ class BriefsFromTranscript(unittest.TestCase):
         with mock.patch.object(briefs, "DATA", self.dir):
             t = briefs.transcript(f"{1:024x}")
         self.assertTrue(t.startswith("start ") and t.endswith(" the conclusion") and len(t) <= 30010)
+
+    def test_tracklist_goes_with_the_transcript_and_old_ones_are_written_again(self):
+        k0, k1 = self.archive[0]["id"], self.archive[1]["id"]
+        self.data[k1] = {"brief": "old", "src": "video", "p": 3}  # written before the tracklist was given
+        (self.dir / "briefs.json").write_text(json.dumps(self.data))
+        (self.dir / "albums.json").write_text(json.dumps({k0: {"dz": 1, "t": [["Kronmec", 277], ["Wendorlan (Original Mix)", 1]]},
+                                                          k1: {"dz": 2, "t": [["Holorform", 284]]}}))
+        summ, data = self.go(LUNA)
+        self.assertEqual([c.kwargs.get("tracks") for c in summ.call_args_list], [["Holorform"], ["Kronmec", "Wendorlan"]])
+        self.assertEqual((data[k0]["tl"], data[k1]["tl"], data[k1]["brief"]), (1, 1, "Полное описание."))
+        summ, _ = self.go(LUNA)
+        self.assertEqual(len(summ.call_args_list), 0)  # once each
+
+    def test_without_a_tracklist_one_from_a_transcript_stays(self):
+        k1 = self.archive[1]["id"]
+        self.data[k1] = {"brief": "old", "src": "video", "p": 3}
+        (self.dir / "briefs.json").write_text(json.dumps(self.data))
+        summ, data = self.go(LUNA)
+        self.assertEqual(len(summ.call_args_list), 1)  # only the first one, still a retelling
+        self.assertEqual(data[k1]["brief"], "old")
+        self.assertNotIn("tl", data[self.archive[0]["id"]])
+
+    def test_the_tracklist_is_in_lunas_prompt(self):
+        with mock.patch.dict(os.environ, {"SELECTEL_API_KEY": "k"}), \
+                mock.patch.object(llm.http, "get_json", return_value=None) as post, \
+                mock.patch("builtins.print"), mock.patch.object(llm.time, "sleep"):
+            llm.ask("selectel", "A - B", "text " * 200, model="m", lang="both", tracks=["Kronmec", "Holorform"])
+        prompt = post.call_args.kwargs["json_body"]["messages"][0]["content"]
+        self.assertIn("Треклист релиза: Kronmec; Holorform.", prompt)
 
     def test_briefs_never_rewrites_one_from_a_transcript(self):
         self.assertTrue(briefs.finished({"brief": "x", "en": {"brief": "y"}, "tr": "m", "p": 1, "src": "video"}, "both"))

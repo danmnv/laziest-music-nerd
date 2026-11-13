@@ -49,7 +49,7 @@ def models(name):
     return [m for m in [first, *EXTRA.get(name, [])] if m and (name, m) not in _spent]
 
 
-def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotonic, lang="ru", verdict="", tags=(), short=False):
+def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotonic, lang="ru", verdict="", tags=(), short=False, tracks=()):
     name, url, var, default, gap, max_text = next(p for p in PROVIDERS if p[0] == provider)
     key = (os.environ.get(var) or "").strip()
     if not key or not text:
@@ -59,6 +59,10 @@ def ask(provider, title, text, model=None, sleep=time.sleep, clock=time.monotoni
         return None
     moods = json.dumps(gemini.AI_MOODS, ensure_ascii=False)
     tag_line = f"Теги: {', '.join(tags)}.\n" if tags else ""
+    if tracks:  # the text is Gemini's transcript of the video: it mishears song titles (lmn/briefs.py tracklist)
+        tag_line += (f"Треклист релиза: {'; '.join(tracks)}. Текст ниже записан на слух, и названия треков в нём могут "
+                     "быть искажены: пиши их только так, как в треклисте; трек, которого в треклисте не находишь, не "
+                     "называй.\n")
     if short:  # only Fantano's short lines, not a review text: retold, nothing added (gemini.PROMPT_SHORT_RU)
         prompt = gemini.PROMPT_SHORT_RU.format(title=title, text=text[:max_text], verdict=verdict, tags=tag_line,
                                                en=gemini.EN_SHORT if lang == "both" else "")

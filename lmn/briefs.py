@@ -72,6 +72,19 @@ def short_lines(text, note):
 HEAD, TAIL = 20000, 10000  # a long transcript to the model: its start and its end, where the conclusion is
 
 
+JUNK = re.compile(r"\s*(?:[(\[]\s*(?:original mix|bonus track|explicit|remaster(?:ed)?[^)\]]*)\s*[)\]]"
+                  r"|-\s*remaster(?:ed)?.*)$", re.I)
+
+
+def tracklist(albums, review_id):
+    """The album's track titles (data/albums.json: Deezer, else a fallback), without labels such as "(Original Mix)",
+    or []. Given with a transcript, so a song Gemini misheard ("Cronmack" for Squarepusher's "Kronmec", "Crown of
+    Thorns" for Judas Priest's "Crown of Horns", 2026-11-12) is written as the album has it."""
+    v = albums.get(review_id)
+    t = v.get("t") if isinstance(v, dict) else None
+    return [JUNK.sub("", x[0]).strip() for x in t or [] if x and x[0]]
+
+
 def video_marks(old):
     """What lmn/transcribe.py and the transcript pass counted on this review (failures, models that refused its video):
     a rewrite of the entry keeps them, or a video given up on would be watched again."""
@@ -313,8 +326,12 @@ def run():
     # a retelling of his one line whose video now has a transcript: written again from it (owner, 2026-11-08)
     tdir = DATA / "transcripts"
     heard = {p.stem for p in tdir.glob("*.txt")} if lang == "both" and tdir.is_dir() else set()
+    apath = DATA / "albums.json"
+    albums = json.loads(apath.read_text()) if heard and apath.exists() else {}
+    # written from a transcript before the tracklist was given with it ("tl"): once more, with it (owner, 2026-11-12)
     todo = targets(archive, reviews, {k for k, v in data.items() if finished(v, lang)
-                                      and not (k in heard and v.get("src") != "video" and v.get("tf", 0) < FAIL_MAX)})
+                                      and not (k in heard and v.get("tf", 0) < FAIL_MAX and (
+                                          v.get("src") != "video" or (not v.get("tl") and tracklist(albums, k))))})
     print(f"briefs ({lang}): {sum(1 for v in data.values() if v.get('brief'))} done, {len(untranslated(data))} to translate, "
           f"{len(todo)} to write, this run up to {limit}")
     made = failed = tried = 0
@@ -334,9 +351,9 @@ def run():
         if not llm.available(lang):  # no key, or every provider gave up: the setup's fault, not this review's
             print("::warning::no model available (keys missing, wrong or out of quota), stopping")
             break
-        src = None
+        src, tracks = None, []
         if len(text) < MIN_TEXT and a["id"] in heard:  # only a video, but Gemini wrote down what he says in it
-            text, src = transcript(a["id"]), "video"
+            text, src, tracks = transcript(a["id"]), "video", tracklist(albums, a["id"])
         short = len(text) < MIN_TEXT
         if short:  # the review is only in the video: Fantano's own lines instead (lang "both" only)
             lines = short_lines(text, notes.get(a["id"])) if lang == "both" else ""
@@ -347,11 +364,12 @@ def run():
             text = lines
         tried += 1
         title = f"{a['artist_name']} - {a['album']}"
-        out = llm.summarize(title, text, lang=lang, verdict=verdict(a), tags=tags(a), **({"short": True} if short else {}))
+        out = llm.summarize(title, text, lang=lang, verdict=verdict(a), tags=tags(a), **({"short": True} if short else {}),
+                            **({"tracks": tracks} if tracks else {}))
         if out and (out.get("brief") or "").strip():
             old = data.get(a["id"]) or {}
             data[a["id"]] = {**entry(out, lang), **({"src": "short"} if short else {"src": src} if src else {}),
-                             **video_marks(old)}
+                             **({"tl": 1} if tracks else {}), **video_marks(old)}
             if lang == "en" and old.get("brief"):  # the old Russian one stays on the site until the translation comes
                 data[a["id"]].update({f: old[f] for f in ("brief", "about", "who") if old.get(f)})
             made += 1
