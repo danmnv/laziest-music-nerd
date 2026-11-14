@@ -167,6 +167,8 @@ def run():
         return
     if os.environ.get("TRANSCRIBE_COMPARE"):
         return compare(api_key, int(os.environ["TRANSCRIBE_COMPARE"]))
+    if os.environ.get("TRANSCRIBE_CARDS"):
+        return cards(api_key, os.environ["TRANSCRIBE_CARDS"].strip())
     if os.environ.get("TRANSCRIBE_PROBE"):
         return probe(api_key, re.findall(r"[0-9a-f]{24}", os.environ["TRANSCRIBE_PROBE"]))
     archive = _load("archive.json", [])
@@ -256,6 +258,29 @@ def compare(api_key, n):
               f"{ratio:.0%} the same words in the same order")
         print("  Gemini:", text[:600].replace("\n", " "))
         print("  site:  ", site[:600].replace("\n", " "))
+
+
+def cards(api_key, model, n=3):
+    """The newest n new reviews' card texts written again by another model, the same way lmn/enrich.py writes them,
+    next to what the card has now (owner, 2026-11-14: gemini-4-hydrogen against gemini-3.8-flash). Saves nothing."""
+    from . import enrich
+    gemini.MODELS[:] = [model]
+    for r in sorted(_load("reviews.json", []), key=lambda r: r.get("published", ""))[-n:]:
+        old = r.get("ai") or {}
+        print(f"\n=== {r['title']} ({r.get('video_id')})")
+        print(f"--- now ({old.get('m')}, {old.get('src')}, {old.get('sec')} s)")
+        for k in ("brief", "about", "who", "moods"):
+            print(f"{k}: {old.get(k)}")
+        if old.get("src") == "text":
+            text = tnd.fetch_texts([r["id"]]).get(r["id"]) or ""
+            new = gemini.summarize(r["title"], text, api_key=api_key, tags=r.get("genres") or ())
+        else:
+            new = gemini.summarize(r["title"], video_id=r["video_id"], notes=enrich.video_notes(r), api_key=api_key,
+                                   tags=r.get("genres") or ())
+        new = new or {}
+        print(f"--- {model} ({new.get('src')}, {new.get('sec')} s)")
+        for k in ("brief", "about", "who", "moods"):
+            print(f"{k}: {new.get(k)}")
 
 
 PROBE_MAX = 3  # reviews a probe: each one is watched by every model, from the same daily share as new reviews
