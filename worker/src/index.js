@@ -413,6 +413,9 @@ async function onCallback(q, env) {
   } else if (parts[0] === "lp") { // a page of «♥ Понравившееся»
     await answerNow();
     await sendLiked(env, uid, Number(parts[1]) || 0, q.message && q.message.message_id);
+  } else if (parts[0] === "lc") { // «🗑 Очистить список» under «♥ Понравившееся»: lc asks, lc:y:<ms> clears, lc:n keeps
+    await answerNow();
+    await clearLiked(env, uid, parts[1], Number(parts[2]) || 0, q.message && q.message.message_id);
   } else if (parts[0] === "lk") { // «♡ Понравилось»: on and off; a separate mark that «Слушал» doesn't overwrite
     const on = !(await isLiked(env, uid, parts[1]));
     await setLike(env, uid, parts[1], on);
@@ -1923,8 +1926,32 @@ async function sendLiked(env, uid, offset = 0, edit) {
   const nav = [];
   if (offset) nav.push({ text: "◂ Назад", callback_data: `lp:${Math.max(0, offset - PAGE)}` });
   if (more) nav.push({ text: "Дальше ▸", callback_data: `lp:${offset + PAGE}` });
+  const rows = nav.length ? [nav] : [];
+  rows.push([{ text: "🗑 Очистить список", callback_data: "lc" }]);
   return tg(env, edit ? "editMessageText" : "sendMessage", { chat_id: uid, ...(edit ? { message_id: edit } : {}), text, parse_mode: "HTML",
-    link_preview_options: { is_disabled: true }, reply_markup: { inline_keyboard: nav.length ? [nav] : [] } });
+    link_preview_options: { is_disabled: true }, reply_markup: { inline_keyboard: rows } });
+}
+
+// «🗑 Очистить список» (owner, 2026-11-14: «простой способ очистить список понравившегося одной кнопкой, когда я себе
+// купил эти альбомы»): the list's message turns into a question; «Да» takes every like out, «Нет» brings the list back.
+// The likes can't be brought back, hence the question. Only likes made before the question go: one added from another
+// card while it was open stays. Other marks («Слушал», «Послушать потом») stay as they are.
+async function clearLiked(env, uid, step, asked, msgId) {
+  const reply = (text, rows = []) => tg(env, msgId ? "editMessageText" : "sendMessage", { chat_id: uid, ...(msgId ? { message_id: msgId } : {}),
+    text, reply_markup: { inline_keyboard: rows } });
+  if (step === "n") return sendLiked(env, uid, 0, msgId);
+  if (step === "y" && asked) {
+    const res = await env.DB.prepare("DELETE FROM likes WHERE user_id=? AND liked_at <= ?").bind(uid, new Date(asked).toISOString()).run();
+    const n = (res && res.meta && res.meta.changes) || 0;
+    return reply(n ? `Готово: убрал из «${LIKED_BUTTON.slice(2)}» ${n} ${plural(n, "альбом", "альбома", "альбомов")}. Остальные отметки не тронуты.`
+      : "Список уже был пуст.");
+  }
+  const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM likes WHERE user_id=?").bind(uid).first();
+  const n = (row && row.n) || 0;
+  if (!n) return reply("Список «Понравившееся» и так пуст.");
+  return reply(`Убрать все ${n} ${plural(n, "альбом", "альбома", "альбомов")} из «${LIKED_BUTTON.slice(2)}»? Вернуть их потом можно только заново, ` +
+    "нажимая «♡ Понравилось» под каждым. Отметки «Слушал» и «Послушать потом» останутся.",
+    [[{ text: `Да, очистить (${n})`, callback_data: `lc:y:${Date.now()}` }, { text: "Нет, оставить", callback_data: "lc:n" }]]);
 }
 
 // ---------- reminders (daily cron) ----------
