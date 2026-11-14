@@ -187,6 +187,15 @@ class OldTitleTest(unittest.TestCase):
         a = tnd.tidy_entry({"album": '"Discoverer" ‡ REVIEW', "score": None})
         self.assertEqual(a, {"album": '"Discoverer"', "score": None, "track": True})
 
+    def test_april_fools_post_is_the_review_it_really_is(self):
+        # "Death Grips - Art Sec. KO" (2021-04-01) reviews AJR's OK ORCHESTRA; a later genre fill stays
+        raw = {"id": "6684c32c49ea2a054e09265e", "artist_name": "Death Grips", "album": "Art Sec. KO", "score": None,
+               "not_good": True, "genres": ["ajr", "april fools", "ok orchestra", "shitpost"]}
+        a = tnd.tidy_entry(dict(raw))
+        self.assertEqual((a["artist_name"], a["album"], a["genres"], a["not_good"]), ("AJR", "OK ORCHESTRA", [], True))
+        a["genres"] = ["pop"]
+        self.assertEqual(tnd.tidy_entry(a)["genres"], ["pop"])
+
 
 class CardExtrasTest(unittest.TestCase):
     R = {"id": "v", "artist_name": "Rachel Chinouriri", "album": "I think I spoke too soon", "score": 7, "genres": ["synthpop"],

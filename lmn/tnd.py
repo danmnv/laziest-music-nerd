@@ -106,8 +106,21 @@ def is_track(album, score=None, not_good=False, classic=False):
     return bool(album) and album[0] in '"“' and score is None and not not_good and not classic
 
 
+# TND posts whose title names another album than the one the video reviews, by post id: {id: the right fields}.
+# Applied while the entry still carries the post's own artist, so a later fill (genres, say) is never overwritten.
+# - 2021-04-01, an April Fools post: "Death Grips - Art Sec. KO" (Death Grips have no such album) is the review of
+#   AJR's OK ORCHESTRA, as the post's tags say (ajr, ok orchestra, april fools, shitpost). The owner, 2026-11-14:
+#   it sat in Death Grips' «💿 Альбомы артиста». The tags were its only genres: dropped, they aren't genres.
+RETITLED = {
+    "6684c32c49ea2a054e09265e": {"wrong_artist": "Death Grips", "artist_name": "AJR", "album": "OK ORCHESTRA", "genres": []},
+}
+
+
 def tidy_entry(a):
     """Clean an archive entry in place (idempotent); 'track' is only written when true."""
+    fix = RETITLED.get(a.get("id"))
+    if fix and a.get("artist_name") == fix["wrong_artist"]:
+        a.update({k: v for k, v in fix.items() if k != "wrong_artist"})
     a["album"] = tidy_album(a.get("album"))
     if is_track(a.get("album"), a.get("score"), a.get("not_good"), a.get("classic")):
         a["track"] = True
