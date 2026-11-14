@@ -51,9 +51,11 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}   # only the videos' lengths
-          # every free model but gemini-3.8-flash, the one new reviews start with (lmn/gemini.py): its quota stays theirs.
+          # every free model but gemini-3.8-flash, the one new reviews start with (lmn/gemini.py): its quota stays theirs. Not gemini-3.7-flash:
+          # since 08.10.2026 Google sends its requests to gemini-3.8-flash, the new reviews' model (found 14.11.2026).
+          # gemini-4-hydrogen: out 12.11.2026, free tier with limits not published.
           # A model this key can't use answers 404 and is skipped for the run (gemini-2.5-flash-lite: closed to new users, 09.11.2026).
-          GEMINI_MODEL: gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.5-flash,gemini-3.7-flash
+          GEMINI_MODEL: gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.6-flash,gemini-4-hydrogen
           VIDEO_LIMIT: ${{ inputs.limit }}
           VIDEO_MINUTES: "420"   # of the free tier's 8 hours of video a day: an hour is left for new reviews
           VIDEO_PER_MODEL: "12"   # requests a day on each model: the rest is for new reviews

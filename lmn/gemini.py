@@ -9,8 +9,10 @@ from . import http
 # The free tier has a daily request limit per model ("GenerateRequestsPerDayPerProjectPerModel-FreeTier", seen
 # 2026-10-31), so when one model's day is used up the next one in this list is tried. Any of them writes the brief well.
 # gemini-2.5-flash is not here: it is closed to new API keys (HTTP 404 "no longer available to new users").
+# gemini-3.7-flash is not here either: deprecated 2026-10-08, its requests go to gemini-3.8-flash (Google's changelog),
+# so as a fallback it was the same model again; gemini-3.5-flash is answered by gemini-3.6-flash since then.
 MODELS = [m.strip() for m in (os.environ.get("GEMINI_MODEL") or
-                              "gemini-3.8-flash,gemini-3.7-flash,gemini-3.5-flash,gemini-3.5-flash-lite").split(",") if m.strip()]
+                              "gemini-3.8-flash,gemini-3.6-flash,gemini-3.5-flash-lite").split(",") if m.strip()]
 MODEL = MODELS[0]
 BUDGET_SEC = 300      # per review, all models and retries together, so a slow day can't eat the hourly run
 CALL_TIMEOUT = 150
@@ -186,7 +188,9 @@ def generate(body, api_key, budget=BUDGET_SEC, sleep=time.sleep, clock=time.mono
                 out = http.get_json(url, json_body=body, method="POST", headers={"x-goog-api-key": api_key},
                                     timeout=min(call_timeout, left), retries=0)
                 last_sec = round(clock() - t0)
-                print(f"gemini {model}: answered in {last_sec} s")
+                served = out.get("modelVersion") if isinstance(out, dict) else None
+                print(f"gemini {model}: answered in {last_sec} s"  # a retired model is answered by another one
+                      + (f" (by {served})" if served and not str(served).startswith(model) else ""))
                 return model, out
             except http.HttpError as e:
                 print(f"gemini {model}: HTTP {e.status} {_reason(e.body)} after {round(clock() - t0)} s")
