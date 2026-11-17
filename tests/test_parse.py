@@ -3,6 +3,7 @@ from unittest import mock
 from datetime import datetime, timezone
 
 from lmn import card, tnd
+from lmn.enrich import archive_entry
 
 
 def post(title, tags, text="", canonical="https://www.youtube.com/watch?v=UzvthnAU6nc", pid="6ae16e7060a520b7b082e3e1"):
@@ -22,6 +23,12 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(r["video_id"], "UzvthnAU6nc")
         for link in ("https://www.youtube.com/live/UzvthnAU6nc?si=x", "https://youtube.com/shorts/UzvthnAU6nc"):
             self.assertEqual(tnd.parse_post(post("A - B", ["Album Reviews"], canonical=link))["video_id"], "UzvthnAU6nc")
+
+    def test_fresh_archive_entry_uses_the_album_actually_reviewed(self):
+        raw = post("Death Grips - Art Sec. KO", ["ajr", "april fools", "ok orchestra", "shitpost"],
+                   pid="6684c32c49ea2a054e09265e")
+        entry = archive_entry(tnd.parse_post(raw))
+        self.assertEqual((entry["artist_name"], entry["album"], entry["genres"]), ("AJR", "OK ORCHESTRA", []))
 
     def test_not_good(self):
         r = tnd.parse_post(post("Kid Rock's Halfway 2 Jesus is NOT GOOD", ["Album Reviews", "Edited by Isaiah", "kid rock", "not good"]))
@@ -186,6 +193,15 @@ class OldTitleTest(unittest.TestCase):
         self.assertTrue(p["track"])
         a = tnd.tidy_entry({"album": '"Discoverer" ‡ REVIEW', "score": None})
         self.assertEqual(a, {"album": '"Discoverer"', "score": None, "track": True})
+
+    def test_april_fools_post_is_the_review_it_really_is(self):
+        # "Death Grips - Art Sec. KO" (2021-04-01) reviews AJR's OK ORCHESTRA; a later genre fill stays
+        raw = {"id": "6684c32c49ea2a054e09265e", "artist_name": "Death Grips", "album": "Art Sec. KO", "score": None,
+               "not_good": True, "genres": ["ajr", "april fools", "ok orchestra", "shitpost"]}
+        a = tnd.tidy_entry(dict(raw))
+        self.assertEqual((a["artist_name"], a["album"], a["genres"], a["not_good"]), ("AJR", "OK ORCHESTRA", [], True))
+        a["genres"] = ["pop"]
+        self.assertEqual(tnd.tidy_entry(a)["genres"], ["pop"])
 
 
 class CardExtrasTest(unittest.TestCase):

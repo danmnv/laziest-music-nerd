@@ -20,6 +20,14 @@ CREATE TABLE IF NOT EXISTS likes (       -- «♡ Понравилось»: its 
   liked_at TEXT NOT NULL,
   PRIMARY KEY (user_id, review_id)
 );
+-- One pending clear confirmation per user. Deleting an individual like also removes it from the confirmation.
+CREATE TABLE IF NOT EXISTS likes_clear (
+  user_id INTEGER NOT NULL,
+  review_id TEXT NOT NULL,
+  token TEXT NOT NULL,
+  PRIMARY KEY (user_id, review_id),
+  FOREIGN KEY (user_id, review_id) REFERENCES likes(user_id, review_id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS mood_votes (
   user_id INTEGER NOT NULL,
   review_id TEXT NOT NULL,

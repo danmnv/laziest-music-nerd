@@ -413,6 +413,9 @@ async function onCallback(q, env) {
   } else if (parts[0] === "lp") { // a page of «♥ Понравившееся»
     await answerNow();
     await sendLiked(env, uid, Number(parts[1]) || 0, q.message && q.message.message_id);
+  } else if (parts[0] === "lc") { // «🗑 Очистить список» under «♥ Понравившееся»
+    await answerNow();
+    await clearLiked(env, uid, parts[1], parts[2], q.message && q.message.message_id);
   } else if (parts[0] === "lk") { // «♡ Понравилось»: on and off; a separate mark that «Слушал» doesn't overwrite
     const on = !(await isLiked(env, uid, parts[1]));
     await setLike(env, uid, parts[1], on);
@@ -716,7 +719,7 @@ async function askForget(env, uid) {
 
 // Every row about one person. A table with a user_id column that is added later must be added here too
 // (worker/test/forget.test.mjs checks schema.sql for that).
-const USER_TABLES = ["marks", "likes", "follows", "follow_sent", "users"];
+const USER_TABLES = ["marks", "likes_clear", "likes", "follows", "follow_sent", "users"];
 // Kept without the person (the owner, 2026-11-02): their votes move to a random negative ID that no Telegram account
 // has, one per forgotten person, so an album's "at least 3 people" still counts them once.
 const ANON_TABLES = ["mood_votes"];
@@ -1923,8 +1926,42 @@ async function sendLiked(env, uid, offset = 0, edit) {
   const nav = [];
   if (offset) nav.push({ text: "◂ Назад", callback_data: `lp:${Math.max(0, offset - PAGE)}` });
   if (more) nav.push({ text: "Дальше ▸", callback_data: `lp:${offset + PAGE}` });
+  const rows = nav.length ? [nav] : [];
+  rows.push([{ text: "🗑 Очистить список", callback_data: "lc" }]);
   return tg(env, edit ? "editMessageText" : "sendMessage", { chat_id: uid, ...(edit ? { message_id: edit } : {}), text, parse_mode: "HTML",
-    link_preview_options: { is_disabled: true }, reply_markup: { inline_keyboard: nav.length ? [nav] : [] } });
+    link_preview_options: { is_disabled: true }, reply_markup: { inline_keyboard: rows } });
+}
+
+// The question counts the likes copied by one INSERT … SELECT. Removing a like also removes its copy via
+// ON DELETE CASCADE, so even an album unliked and liked again while the question is open is kept.
+async function clearLiked(env, uid, step, token, msgId) {
+  const reply = (text, rows = []) => tg(env, msgId ? "editMessageText" : "sendMessage", { chat_id: uid, ...(msgId ? { message_id: msgId } : {}),
+    text, reply_markup: { inline_keyboard: rows } });
+  if (step === "n" && token) {
+    await env.DB.prepare("DELETE FROM likes_clear WHERE user_id=? AND token=?").bind(uid, token).run();
+    return sendLiked(env, uid, 0, msgId);
+  }
+  if (step === "y" && token) {
+    const { results } = await env.DB.prepare(`DELETE FROM likes WHERE user_id=? AND review_id IN (
+      SELECT review_id FROM likes_clear WHERE user_id=? AND token=?
+    ) RETURNING 1`).bind(uid, uid, token).all();
+    const n = results.length;
+    return reply(n ? `Готово: убрал из «${LIKED_BUTTON.slice(2)}» ${n} ${plural(n, "альбом", "альбома", "альбомов")}. Остальные отметки не тронуты.`
+      : "Этот запрос уже закрыт. Открой «Понравившееся», чтобы посмотреть список.");
+  }
+  if (step) return reply("Открой «Понравившееся» и попробуй снова.");
+
+  const next = crypto.randomUUID();
+  const [, saved] = await env.DB.batch([
+    env.DB.prepare("DELETE FROM likes_clear WHERE user_id=?").bind(uid),
+    env.DB.prepare(`INSERT INTO likes_clear (user_id, review_id, token)
+      SELECT user_id, review_id, ? FROM likes WHERE user_id=?`).bind(next, uid),
+  ]);
+  const n = saved.meta.changes;
+  if (!n) return reply("Список «Понравившееся» и так пуст.");
+  return reply(`Убрать все ${n} ${plural(n, "альбом", "альбома", "альбомов")} из «${LIKED_BUTTON.slice(2)}»? Вернуть их потом можно только заново, ` +
+    "нажимая «♡ Понравилось» под каждым. Отметки «Слушал» и «Послушать потом» останутся.",
+    [[{ text: `Да, очистить (${n})`, callback_data: `lc:y:${next}` }, { text: "Нет, оставить", callback_data: `lc:n:${next}` }]]);
 }
 
 // ---------- reminders (daily cron) ----------
