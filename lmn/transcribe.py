@@ -6,22 +6,29 @@ Fantano says in the video, and GPT-6 Luna (lmn/briefs.py, the daily «Брифы
 from that text, as it did for the reviews with a text on the site. The transcripts stay in the private data repo
 (data/transcripts/<review id>.txt), so a later change of the description's rules needs no video again.
 
-The free tier's limits (seen 2026-11-08): no more than 8 hours of YouTube video a day for the whole project, and a daily
-request limit per model. New reviews (lmn/check.py, every half hour) watch videos too, and they come first: this job
-takes at most VIDEO_MINUTES of video and PER_MODEL requests on each model a day, never the model new reviews start with
-(transcribe.yml), and stops for the day when every model's share is used. Any model writes a transcript well.
+The free tier allows 8 hours of YouTube video a day. In Actions this job uses the archive's Gemini project,
+separate from the new-review pipeline. Retries and model fallbacks count against the same per-run limits.
 """
 import difflib
 import json
 import os
 import re
+import time
+from functools import partial
 from pathlib import Path
 
 from . import briefs, gemini, tnd
 
 DATA = Path(os.environ.get("DATA_DIR", "data"))
-VIDEO_MINUTES = int(os.environ.get("VIDEO_MINUTES") or 420)  # of the 8 hours a day: the rest is for new reviews
-PER_MODEL = int(os.environ.get("VIDEO_PER_MODEL") or 12)  # requests a day on each model: the rest is for new reviews
+VIDEO_MINUTES = int(os.environ.get("VIDEO_MINUTES") or 360)
+PER_MODEL = int(os.environ.get("VIDEO_PER_MODEL") or 12)
+PER_LITE_MODEL = int(os.environ["VIDEO_PER_LITE_MODEL"]) if os.environ.get("VIDEO_PER_LITE_MODEL") else None
+RETELL_MODEL = os.environ.get("TRANSCRIBE_RETELL_MODEL") or ""
+PER_RETELL_MODEL = int(os.environ.get("VIDEO_PER_RETELL_MODEL") or 4)
+RUN_MINUTES = 90
+REQUEST_GAP_SEC = 30
+ARCHIVE_CALL_TIMEOUT = 180
+ARCHIVE_REVIEW_BUDGET = 360
 MAX_VIDEO_MIN = 30  # a longer one (a few old ones are an hour) costs a day's share: left alone
 MIN_CHARS = 1000  # a shorter answer is not a whole review (a 4-minute one is ~3000 characters)
 CHARS_A_MINUTE = 400  # he speaks ~150 words a minute (~800 characters): less is cut short or a summary
@@ -116,7 +123,40 @@ def plausible_retelling(text):
     return len(text) >= RETELL_MIN and not re.match(r"(i'?m sorry|i cannot|i can't|unfortunately)", text, re.I)
 
 
-def ask(a, api_key, mins=None, retell=False):
+class RunBudget:
+    def __init__(self):
+        self.minutes_left = VIDEO_MINUTES
+        self.deadline = time.monotonic() + 60 * RUN_MINUTES
+        self.next_request = 0
+
+    def model_spent(self, model):
+        if model == RETELL_MODEL:
+            limit = PER_RETELL_MODEL
+        elif PER_LITE_MODEL is not None and model.endswith("-flash-lite"):
+            limit = PER_LITE_MODEL
+        else:
+            limit = PER_MODEL
+        return gemini.requests.get(model, 0) >= limit
+
+    def reserve(self, minutes, model, deadline):
+        if self.minutes_left < minutes or self.model_spent(model):
+            return False
+        now = time.monotonic()
+        delay = max(0, self.next_request - now)
+        latest = min(deadline, self.deadline) - gemini.MIN_REQUEST_SEC
+        if now + delay >= latest:
+            return False
+        if delay:
+            time.sleep(delay)
+        now = time.monotonic()
+        if now >= latest:
+            return False
+        self.next_request = now + REQUEST_GAP_SEC
+        self.minutes_left -= minutes
+        return True
+
+
+def ask(a, api_key, mins=None, retell=False, run_budget=None, model_order=None):
     """("ok", text, model) | ("bad", None, model): the model answered, but no whole transcript | ("blocked", None, model):
     the request was refused (the video itself) | ("refused", None, model): this model stopped its answer (REFUSED) |
     ("none", None, None)."""
@@ -125,7 +165,16 @@ def ask(a, api_key, mins=None, retell=False):
                                         title=f"{a['artist_name']} - {a['album']}",
                                         tracks=TRACKS.format("; ".join(a["tracks"])) if a.get("tracks") else "")}]}],
             "generationConfig": {"temperature": 0.1, "maxOutputTokens": 24000, "mediaResolution": "MEDIA_RESOLUTION_LOW"}}
-    model, raw = gemini.generate(body, api_key, budget=gemini.VIDEO_BUDGET_SEC, call_timeout=gemini.VIDEO_CALL_TIMEOUT)
+    if run_budget is None:
+        model, raw = gemini.generate(body, api_key, budget=gemini.VIDEO_BUDGET_SEC, call_timeout=gemini.VIDEO_CALL_TIMEOUT)
+    else:
+        model, raw = gemini.generate(
+            body, api_key,
+            budget=min(ARCHIVE_REVIEW_BUDGET, run_budget.deadline - time.monotonic()),
+            call_timeout=ARCHIVE_CALL_TIMEOUT,
+            before_request=partial(run_budget.reserve, mins),
+            model_order=model_order,
+        )
     if raw is None:
         return "none", None, None
     cands = raw.get("candidates") if isinstance(raw, dict) else None
@@ -167,6 +216,8 @@ def run():
         return
     if os.environ.get("TRANSCRIBE_COMPARE"):
         return compare(api_key, int(os.environ["TRANSCRIBE_COMPARE"]))
+    if os.environ.get("TRANSCRIBE_CARDS"):
+        return cards(api_key, os.environ["TRANSCRIBE_CARDS"].strip())
     if os.environ.get("TRANSCRIBE_PROBE"):
         return probe(api_key, re.findall(r"[0-9a-f]{24}", os.environ["TRANSCRIBE_PROBE"]))
     archive = _load("archive.json", [])
@@ -174,11 +225,18 @@ def run():
     data = _load("briefs.json", {})
     limit = int(os.environ.get("VIDEO_LIMIT") or 0)
     items = todo(archive, data, have())
-    print(f"transcripts: {len(have())} done, {len(items)} to write; today up to {VIDEO_MINUTES} min of video, "
-          f"{PER_MODEL} requests a model" + (f", {limit} reviews" if limit else ""))
-    left, made, failed, streak, lengths = VIDEO_MINUTES, 0, 0, 0, {}
+    lite_limit = PER_MODEL if PER_LITE_MODEL is None else PER_LITE_MODEL
+    retell_limit = f", {PER_RETELL_MODEL} for {RETELL_MODEL} (retellings)" if RETELL_MODEL else ""
+    print(f"transcripts: {len(have())} done, {len(items)} to write; up to {VIDEO_MINUTES} min of video "
+          f"over {RUN_MINUTES} min, {lite_limit} requests per Flash Lite, {PER_MODEL} per other model"
+          + retell_limit + (f", {limit} reviews" if limit else ""))
+    run_budget = RunBudget()
+    made, failed, streak, lengths = 0, 0, 0, {}
     for n, a in enumerate(items):
         if limit and made + failed >= limit:
+            break
+        if time.monotonic() + gemini.MIN_REQUEST_SEC >= run_budget.deadline:
+            print("transcripts: time is up for this run")
             break
         if n % 50 == 0:  # the next 50 videos' lengths, in one request
             try:
@@ -189,27 +247,22 @@ def run():
         mins = lengths.get(a["video_id"])
         if mins is None or mins > MAX_VIDEO_MIN:
             continue  # gone, private, or too long: its retelling stays
-        if mins > left:
-            print(f"today's {VIDEO_MINUTES} min of video used up")
+        if mins > run_budget.minutes_left:
+            print(f"the next video would exceed the {VIDEO_MINUTES} min allowance")
             break
-        if all(m in gemini._unavailable for m in gemini.MODELS):
-            print("every model's share for today is used up")
+        available = [m for m in gemini.MODELS if m not in gemini._unavailable and not run_budget.model_spent(m)]
+        if not available:
+            print("every model's share for this run is used up")
             break
         v = data.get(a["id"]) or {}
         retell = bool(a.get("retell"))
-        tried = set() if retell else set(v.get("vr", []))  # models that refused this video: another one is asked
-        if all(m in gemini._unavailable or m in tried for m in gemini.MODELS):
-            continue  # the models it can still go to are used up today
-        masked = tried - gemini._unavailable
-        gemini._unavailable.update(masked)
-        try:
-            got, text, model = ask(a, api_key, mins, retell=retell)
-        finally:
-            gemini._unavailable.difference_update(masked)
-        for m, k in gemini.requests.items():  # every request counts, a retry or a timed-out one too
-            if k >= PER_MODEL:
-                gemini._unavailable.add(m)  # its rest of the day is for new reviews
-        left -= mins  # the video may have been watched even with no answer: it counts against the day either way
+        tried = set() if retell else set(v.get("vr", []))
+        model_order = [m for m in available if m != RETELL_MODEL and m not in tried]
+        if retell and not v.get("vt") and RETELL_MODEL in available:
+            model_order.insert(0, RETELL_MODEL)  # a retelling retry uses the regular models
+        if not model_order:
+            continue
+        got, text, model = ask(a, api_key, mins, retell=retell, run_budget=run_budget, model_order=model_order)
         if got == "none":
             streak += 1
             if streak >= GIVE_UP:
@@ -234,7 +287,8 @@ def run():
             briefs.save(bpath, data)
             failed += 1
             print(f"  - {a['artist_name']} - {a['album']}: no usable {'retelling' if retell else 'transcript'} ({got}, {model})")
-    print(f"transcripts: made {made}, unusable {failed}, {VIDEO_MINUTES - left:.0f} min of video watched")
+    print(f"transcripts: made {made}, unusable {failed}, "
+          f"{VIDEO_MINUTES - run_budget.minutes_left:.0f} min of video requested, HTTP requests by model: {gemini.requests}")
 
 
 def compare(api_key, n):
@@ -256,6 +310,29 @@ def compare(api_key, n):
               f"{ratio:.0%} the same words in the same order")
         print("  Gemini:", text[:600].replace("\n", " "))
         print("  site:  ", site[:600].replace("\n", " "))
+
+
+def cards(api_key, model, n=3):
+    """The newest n new reviews' card texts written again by another model, the same way lmn/enrich.py writes them,
+    next to what the card has now (owner, 2026-11-14: gemini-4-hydrogen against gemini-3.8-flash). Saves nothing."""
+    from . import enrich
+    gemini.MODELS[:] = [model]
+    for r in sorted(_load("reviews.json", []), key=lambda r: r.get("published", ""))[-n:]:
+        old = r.get("ai") or {}
+        print(f"\n=== {r['title']} ({r.get('video_id')})")
+        print(f"--- now ({old.get('m')}, {old.get('src')}, {old.get('sec')} s)")
+        for k in ("brief", "about", "who", "moods"):
+            print(f"{k}: {old.get(k)}")
+        if old.get("src") == "text":
+            text = tnd.fetch_texts([r["id"]]).get(r["id"]) or ""
+            new = gemini.summarize(r["title"], text, api_key=api_key, tags=r.get("genres") or ())
+        else:
+            new = gemini.summarize(r["title"], video_id=r["video_id"], notes=enrich.video_notes(r), api_key=api_key,
+                                   tags=r.get("genres") or ())
+        new = new or {}
+        print(f"--- {model} ({new.get('src')}, {new.get('sec')} s)")
+        for k in ("brief", "about", "who", "moods"):
+            print(f"{k}: {new.get(k)}")
 
 
 PROBE_MAX = 3  # reviews a probe: each one is watched by every model, from the same daily share as new reviews

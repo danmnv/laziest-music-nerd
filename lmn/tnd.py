@@ -116,11 +116,16 @@ RETITLED = {
 }
 
 
-def tidy_entry(a):
-    """Clean an archive entry in place (idempotent); 'track' is only written when true."""
+def retitle_entry(a):
     fix = RETITLED.get(a.get("id"))
     if fix and a.get("artist_name") == fix["wrong_artist"]:
         a.update({k: v for k, v in fix.items() if k != "wrong_artist"})
+    return a
+
+
+def tidy_entry(a):
+    """Clean an archive entry in place (idempotent); 'track' is only written when true."""
+    retitle_entry(a)
     a["album"] = tidy_album(a.get("album"))
     if is_track(a.get("album"), a.get("score"), a.get("not_good"), a.get("classic")):
         a["track"] = True
@@ -209,7 +214,7 @@ def parse_post(p):
             video = m.group(1)
             break
     guest = info["guest"] or info["staff"] or "guest reviews" in low
-    return {
+    return retitle_entry({
         "id": p["id"],
         "slug": p["slug"],
         "url": p["url"],
@@ -230,4 +235,4 @@ def parse_post(p):
         "video_id": video,
         "excerpt": htmlmod.unescape(p.get("custom_excerpt") or ""),
         "thumb": p.get("feature_image"),
-    }
+    })

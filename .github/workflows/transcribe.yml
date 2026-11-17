@@ -7,6 +7,10 @@ on:
     - cron: "40 8 * * *"   # каждый день в 8:40 UTC, вскоре после того, как у Gemini обновился дневной лимит (полночь по Калифорнии); «Брифы» в 9:30 ждут конца этого запуска
   workflow_dispatch:
     inputs:
+      key_check:
+        description: "Проверить архивный ключ и доступность моделей без обработки видео"
+        type: boolean
+        default: false
       limit:
         description: "Сколько обзоров за запуск (пусто — сколько позволит дневная доля лимита)"
         default: ""
@@ -15,6 +19,9 @@ on:
         default: ""
       probe:
         description: "Только проверить, что модели отвечают на эти обзоры (id через запятую; ничего не сохраняет)"
+        default: ""
+      cards:
+        description: "Только сравнить карточки трёх последних новых обзоров: эта модель против нынешних (ничего не сохраняет)"
         default: ""
       retell:
         description: "Пересказ вместо дословной записи для видео, от которых модели отказались (с probe: пересказ этих обзоров, ничего не сохраняет)"
@@ -25,11 +32,41 @@ permissions:
   contents: read   # commits go to the data repo with DATA_TOKEN; this repo is only read
 
 concurrency:
-  group: briefs   # writes briefs.json too, and «Брифы для архива» should start after it: one at a time
+  # The metadata check does not access data and can run without taking the archive writers' lock.
+  group: ${{ inputs.key_check && 'archive-gemini-key-check' || 'briefs' }}
   cancel-in-progress: false
 
+env:
+  GEMINI_MODEL: gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.6-flash,gemini-4-hydrogen
+
 jobs:
+  check-key:
+    if: ${{ inputs.key_check }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Проверить доступ к моделям Gemini
+        env:
+          GEMINI_API_KEY: ${{ secrets.ARCHIVE_GEMINI_API_KEY }}
+        run: |
+          python - <<'PYTHON'
+          import os
+          from lmn.doctor import check, gemini_models
+
+          if not os.environ.get("GEMINI_API_KEY", "").strip():
+              raise SystemExit("ARCHIVE_GEMINI_API_KEY is missing")
+          ok = check("archive Gemini models", lambda: gemini_models(require_all=True))
+          raise SystemExit(0 if ok else 1)
+          PYTHON
+
   transcribe:
+    if: ${{ !inputs.key_check }}
     runs-on: ubuntu-latest
     timeout-minutes: 300
     steps:
@@ -49,20 +86,21 @@ jobs:
         timeout-minutes: 280
         run: python -m lmn.transcribe
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.ARCHIVE_GEMINI_API_KEY }}   # a separate Google project from new reviews
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}   # only the videos' lengths
-          # every free model but gemini-3.8-flash, the one new reviews start with (lmn/gemini.py): its quota stays theirs.
-          # A model this key can't use answers 404 and is skipped for the run (gemini-2.5-flash-lite: closed to new users, 09.11.2026).
-          GEMINI_MODEL: gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.5-flash,gemini-3.7-flash
           VIDEO_LIMIT: ${{ inputs.limit }}
-          VIDEO_MINUTES: "420"   # of the free tier's 8 hours of video a day: an hour is left for new reviews
-          VIDEO_PER_MODEL: "12"   # requests a day on each model: the rest is for new reviews
+          VIDEO_MINUTES: "360"   # includes retries; leave room in the archive project for other video jobs
+          VIDEO_PER_LITE_MODEL: "24"
+          VIDEO_PER_MODEL: "8"   # 3.6 Flash has a smaller daily quota than the Lite models
+          TRANSCRIBE_RETELL_MODEL: gemini-4-hydrogen
+          VIDEO_PER_RETELL_MODEL: "4"   # start with a small pilot for retellings after a transcript refusal
           TRANSCRIBE_COMPARE: ${{ inputs.compare }}
           TRANSCRIBE_PROBE: ${{ inputs.probe }}
+          TRANSCRIBE_CARDS: ${{ inputs.cards }}
           TRANSCRIBE_RETELL: ${{ inputs.retell }}   # empty on the schedule = on (13.11.2026); "false" from a manual run = off
           PYTHONUNBUFFERED: "1"
       - name: Сохранить
-        if: ${{ always() && !inputs.compare && !inputs.probe }}
+        if: ${{ always() && !inputs.compare && !inputs.probe && !inputs.cards }}
         run: |
           cd "$GITHUB_WORKSPACE/.data"   # the data repo: commits go there
           git config user.name "laziest-music-nerd-bot"
