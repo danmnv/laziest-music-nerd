@@ -89,3 +89,13 @@ CREATE TABLE IF NOT EXISTS new_releases (  -- albums found by that check; delive
   release_date TEXT,
   found_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS telegram_presses (  -- short-lived receipts for state-changing Telegram buttons
+  update_id TEXT PRIMARY KEY,
+  attempt TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  received_at TEXT NOT NULL,
+  value TEXT,
+  cleared_like INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS telegram_presses_received ON telegram_presses (received_at);
+CREATE INDEX IF NOT EXISTS telegram_presses_user ON telegram_presses (user_id);

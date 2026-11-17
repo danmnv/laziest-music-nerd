@@ -397,7 +397,8 @@ def main():
             print("---- pinned ----\n" + text)
     if tg and not seeding:
         tell_followers(reviews)
-    if (new or seeding or list_changed) and tg:
+    if tg:
+        # Resend the current list even if it did not change, in case the last sync failed.
         url, secret = worker()
         if url:
             try:

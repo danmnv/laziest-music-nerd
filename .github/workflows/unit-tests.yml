@@ -1,0 +1,34 @@
+name: Unit tests
+on: workflow_call
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m unittest discover -s tests -v
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Worker code parses
+        run: node --check worker/src/index.js
+      - name: Worker logic tests
+        run: node --test worker/test/*.test.mjs
+      - name: The same tests on the compact copy of the archive, as the bot reads it
+        run: node --test worker/test/*.test.mjs
+        env:
+          PACKED: "1"

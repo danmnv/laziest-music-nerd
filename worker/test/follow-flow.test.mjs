@@ -18,14 +18,25 @@ let db, calls, env;
 
 function d1(sqlite) {
   return {
-    async batch(statements) { const out = []; for (const st of statements) out.push(await st.run()); return out; },
+    async batch(statements) {
+      sqlite.exec("BEGIN");
+      try {
+        const out = statements.map((st) => st.runSync());
+        sqlite.exec("COMMIT");
+        return out;
+      } catch (e) {
+        sqlite.exec("ROLLBACK");
+        throw e;
+      }
+    },
     prepare(sql) {
       let args = [];
       const st = {
         bind(...a) { args = a; return st; },
         async first() { return sqlite.prepare(sql).get(...args) ?? null; },
         async all() { return { results: sqlite.prepare(sql).all(...args) }; },
-        async run() { return { meta: { changes: sqlite.prepare(sql).run(...args).changes } }; },
+        runSync() { return { meta: { changes: sqlite.prepare(sql).run(...args).changes } }; },
+        async run() { return st.runSync(); },
       };
       return st;
     },
@@ -171,9 +182,10 @@ beforeEach(() => {
 
 async function tgUpdate(update) {
   const waits = [];
-  await worker.fetch(new Request("https://w/tg", { method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": "w" }, body: JSON.stringify(update) }),
+  const res = await worker.fetch(new Request("https://w/tg", { method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": "w" }, body: JSON.stringify(update) }),
     env, { waitUntil: (p) => waits.push(p) });
   await Promise.all(waits);
+  return res;
 }
 const press = (uid, data, message_id = 77) => tgUpdate({ callback_query: { id: "q", from: { id: uid }, data, message: { message_id } } });
 const say = (uid, text) => tgUpdate({ message: { chat: { type: "private" }, from: { id: uid }, text } });
@@ -524,6 +536,35 @@ test("the 21-day reminder covers albums put off from the archive and without a r
   assert.ok(m, "a reminder was sent");
   assert.match(m.text, /<b>Radiohead — The Bends<\/b>/);
   assert.deepEqual(m.reply_markup.inline_keyboard[0], [{ text: "✓ Слушал", callback_data: `m:${BENDS}:done` }, { text: "Открыть", callback_data: `mb:${BENDS}` }]);
+});
+
+function deliveredPress(update_id, data) {
+  return tgUpdate({ update_id, callback_query: { id: String(update_id), from: { id: OWNER }, data } });
+}
+
+test("one Telegram update toggles a like or mark once, even when both deliveries overlap", async () => {
+  const liked = () => db.prepare("SELECT COUNT(*) n FROM likes").get().n;
+  const mark = () => db.prepare("SELECT status FROM marks WHERE review_id='r2'").get()?.status;
+  const responses = await Promise.all([deliveredPress(40, "lk:r2"), deliveredPress(40, "lk:r2")]);
+  assert.deepEqual(responses.map((r) => r.status), [200, 200]);
+  assert.equal(liked(), 1);
+  await deliveredPress(41, "lk:r2");
+  assert.equal(liked(), 0, "a genuine second press still removes the like");
+
+  await deliveredPress(42, "m:r2:later");
+  await deliveredPress(42, "m:r2:later");
+  assert.equal(mark(), "later");
+  await deliveredPress(43, "m:r2:later");
+  assert.equal(mark(), undefined, "a genuine second press still clears the mark");
+});
+
+test("a failed toggle rolls back its Telegram receipt and the retry succeeds", async () => {
+  db.exec("CREATE TRIGGER unavailable BEFORE INSERT ON likes BEGIN SELECT RAISE(ABORT, 'simulated write failure'); END");
+  assert.equal((await deliveredPress(45, "lk:r2")).status, 500);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM telegram_presses").get().n, 0);
+  db.exec("DROP TRIGGER unavailable");
+  assert.equal((await deliveredPress(45, "lk:r2")).status, 200);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM likes").get().n, 1);
 });
 
 const telegramOk = () => Response.json({ ok: true, result: { message_id: 123 } });

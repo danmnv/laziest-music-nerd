@@ -18,12 +18,16 @@ concurrency:
   cancel-in-progress: false   # a run after a job that changed nothing ends in seconds; it must not cancel a real build
 
 jobs:
+  tests:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/unit-tests.yml
   build:
+    needs: tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: main
+          ref: ${{ github.sha }} # same event SHA as the reusable tests
       - name: Данные из приватного репозитория
         # data/*.json live in a private repo (the datasets are not to be downloadable in one click); the code is public
         uses: actions/checkout@v5

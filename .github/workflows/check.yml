@@ -97,3 +97,8 @@ jobs:
             sleep $((i * 5))
           done
           echo "::error::Не смог сохранить базу в main"; exit 1
+      - name: Сообщить об успешном завершении проверки
+        if: ${{ success() && (inputs.mode || 'run') == 'run' }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: python -c 'from lmn.watch import heartbeat; heartbeat(stage="completed")'

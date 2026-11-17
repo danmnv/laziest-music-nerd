@@ -1,36 +1,14 @@
 name: tests
 on:
   push:
-    branches-ignore: [main]
   pull_request:
   workflow_dispatch:  # to run the key check (doctor) by hand, e.g. after a Worker deploy
 jobs:
-  unit:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - run: python -m unittest discover -s tests -v
-  worker:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-      - name: Worker code parses
-        run: node --check worker/src/index.js
-      - name: Worker logic tests
-        run: node --test worker/test/*.test.mjs
-      - name: The same tests on the compact copy of the archive, as the bot reads it
-        run: node --test worker/test/*.test.mjs
-        env:
-          PACKED: "1"
+  checks:
+    uses: ./.github/workflows/unit-tests.yml
   live-dry-run:
     # Runs the real pipeline against live TND/MusicBrainz/Deezer without sending anything to Telegram.
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref != 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

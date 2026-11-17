@@ -2,6 +2,7 @@
 // Handles Telegram button presses and /start, site login (Telegram Login Widget), personal marks,
 // following artists, and a daily cron for "later" reminders. Personal marks are visible only to their owner.
 
+import { applyPress } from "./press.mjs";
 import { isDigestSunday } from "./digest.mjs";
 import { nameKey, followMatches } from "./follow.mjs";
 import { answerSearch, artistReviews, badge } from "./search.mjs";
@@ -91,7 +92,17 @@ export default {
       if (req.method === "OPTIONS") return cors(env, new Response(null, { status: 204 }));
       if (url.pathname === "/tg" && req.method === "POST") {
         if (req.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.WEBHOOK_SECRET) return new Response("forbidden", { status: 403 });
-        ctx.waitUntil(onUpdate(await req.json(), env).catch((e) => console.log("update failed", e.stack)));
+        const update = await req.json();
+        const q = update.callback_query;
+        const [action, rid, status] = (q?.data || "").split(":");
+        if (action === "lk" || action === "m") {
+          if (!rid || (action === "m" && !Object.hasOwn(STATUS_LABEL, status))) return new Response("bad button", { status: 400 });
+          // A failed transaction returns 500 so Telegram can retry. Presentation happens after the commit.
+          const applied = await applyPress(env.DB, update.update_id, q.from.id, rid, action, status, now());
+          if (applied) ctx.waitUntil(onCallback(q, env, applied).catch((e) => console.log("button response failed", e.stack)));
+        } else {
+          ctx.waitUntil(onUpdate(update, env).catch((e) => console.log("update failed", e.stack)));
+        }
         return new Response("ok");
       }
       if (url.pathname === "/auth/telegram" && req.method === "POST") return cors(env, await login(await req.json(), env));
@@ -120,7 +131,10 @@ export default {
         if (req.headers.get("Authorization") !== `Bearer ${env.ACTIONS_SECRET}`) return new Response("forbidden", { status: 403 });
         const body = await req.json().catch(() => ({}));
         // The pinned lists in private chats hold each person's «отложено» now, which a new review doesn't change.
-        if (Array.isArray(body.items)) await setSetting(env, "list_items", JSON.stringify(body.items));
+        if (!Array.isArray(body.items)) return json({ error: "items required" }, 400);
+        await env.DB.prepare("INSERT INTO settings (key,value) VALUES ('list_items',?) " +
+          "ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE settings.value IS NOT excluded.value")
+          .bind(JSON.stringify(body.items)).run();
         return json({ ok: true });
       }
       if (url.pathname === "/api/new-reviews" && req.method === "POST") {
@@ -140,13 +154,18 @@ export default {
         return json({ ok: true, sent, pending });
       }
       if (url.pathname === "/api/heartbeat" && req.method === "POST") {
-        // Called by every check of new reviews (lmn/check.py): the watchdog's "GitHub Actions are alive" (watchdog.mjs)
         if (req.headers.get("Authorization") !== `Bearer ${env.ACTIONS_SECRET}`) return new Response("forbidden", { status: 403 });
-        const alerted = await getSetting(env, "check_alerted");
-        await setSetting(env, "check_seen", now());
-        if (alerted) { // the owner was told about the silence: tell them it's over
-          await setSetting(env, "check_alerted", "");
-          await tellOwner(env, "✅ Проверка новых обзоров снова работает.");
+        const { stage = "started" } = await req.json().catch(() => ({})); // legacy callers only reported a start
+        if (stage === "started") {
+          await setSetting(env, "check_started", now());
+        } else if (stage === "completed") {
+          await setSetting(env, "check_completed", now());
+          if (await getSetting(env, "check_alerted")) {
+            const d = await tellOwner(env, "✅ Проверка новых обзоров снова работает. Последний запуск завершился успешно.");
+            if (d.ok) await setSetting(env, "check_alerted", "");
+          }
+        } else {
+          return json({ error: "unknown stage" }, 400);
         }
         return json({ ok: true });
       }
@@ -190,9 +209,11 @@ export default {
     if (event.cron === "0 7 * * SUN") { if (env.DIGEST === "1") ctx.waitUntil(sendDigest(env)); }
     else if (event.cron === RELEASES_CRON) ctx.waitUntil(watchReleases(env, new Date(event.scheduledTime || Date.now())));
     else ctx.waitUntil((async () => {
-      const budget = { left: DAILY_BUDGET - 4 }; // setCommands: a setting, and when the commands change, Telegram and a setting; the tokens' reminder
+      const budget = { left: DAILY_BUDGET - 5 }; // setCommands: a setting, and when the commands change, Telegram and a setting; the tokens' reminder
       await setCommands(env);
       await remindTokens(env, new Date(event.scheduledTime || Date.now())).catch((e) => console.log("token reminder failed", e.stack));
+      await env.DB.prepare("DELETE FROM telegram_presses WHERE received_at<?")
+        .bind(new Date(Date.now() - 2 * 864e5).toISOString()).run();
       await moveDupMarks(env, budget);
       await sendReminders(env, budget);
       await migrateDmPins(env, budget);
@@ -327,7 +348,7 @@ async function maybeNewMenu(env, uid) {
   await tg(env, "sendMessage", { chat_id: uid, text: `В меню обновление: «Отложенные» теперь «${LATER_BUTTON}» и идут первыми в «${QUEUE_BUTTON}», а в «${LIKED_BUTTON}» собираются альбомы с отметкой «♡ Понравилось».`, reply_markup: MENU });
 }
 
-async function onCallback(q, env) {
+async function onCallback(q, env, applied) {
   const uid = q.from.id;
   const parts = (q.data || "").split(":");
   let answer = "";
@@ -339,12 +360,10 @@ async function onCallback(q, env) {
     await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: answer });
   };
   if (parts[0] === "m") {
-    const [, rid, status] = parts;
-    const cur = await env.DB.prepare("SELECT status FROM marks WHERE user_id=? AND review_id=?").bind(uid, rid).first();
-    const next = cur && cur.status === status ? null : status;
-    await setMark(env, uid, rid, next, undefined);
+    const rid = parts[1];
+    const next = applied.value;
     answer = next ? `Отмечено: ${STATUS_LABEL[next]}` : "Отметка снята";
-    if (next === "nope" && (await setLike(env, uid, rid, false))) {
+    if (applied.cleared_like) {
       answer += ", и убрано из понравившегося";
       await showLike(env, q, rid, false);
     }
@@ -419,10 +438,7 @@ async function onCallback(q, env) {
     await answerNow();
     await clearLiked(env, uid, parts[1], parts[2], q.message && q.message.message_id);
   } else if (parts[0] === "lk") { // «♡ Понравилось»: on and off; a separate mark that «Слушал» doesn't overwrite
-    const on = !(await isLiked(env, uid, parts[1]));
-    await setLike(env, uid, parts[1], on);
-    const cur = await env.DB.prepare("SELECT status FROM marks WHERE user_id=? AND review_id=?").bind(uid, parts[1]).first();
-    if (on && cur && cur.status === "nope") await setMark(env, uid, parts[1], "done", undefined); // liked isn't «не моё»
+    const on = applied.value === "on";
     answer = on ? `♥ В списке «${LIKED_BUTTON.slice(2)}»` : "Убрано из понравившегося";
     await answerNow();
     await showLike(env, q, parts[1], on);
@@ -721,7 +737,7 @@ async function askForget(env, uid) {
 
 // Every row about one person. A table with a user_id column that is added later must be added here too
 // (worker/test/forget.test.mjs checks schema.sql for that).
-const USER_TABLES = ["marks", "likes_clear", "likes", "follows", "follow_sent", "follow_delivery", "users"];
+const USER_TABLES = ["marks", "likes_clear", "likes", "follows", "follow_sent", "follow_delivery", "telegram_presses", "users"];
 // Kept without the person (the owner, 2026-11-02): their votes move to a random negative ID that no Telegram account
 // has, one per forgotten person, so an album's "at least 3 people" still counts them once.
 const ANON_TABLES = ["mood_votes"];
@@ -1764,17 +1780,19 @@ async function tellOwner(env, text) {
   return tg(env, "sendMessage", { chat_id: Number(env.OWNER_ID), text, link_preview_options: { is_disabled: true } });
 }
 
-// No check of new reviews has reported for SILENT_HOURS: the owner is told once, then once a day while it lasts
-// (/api/heartbeat tells them when it's over). At night it waits for the morning, like everything the bot sends.
+// Alert on missing successful checks, even when new runs keep starting. Count from the old heartbeat on upgrade.
 async function watchChecks(env, when, quiet) {
-  const { results } = await env.DB.prepare("SELECT key, value FROM settings WHERE key IN ('check_seen', 'check_alerted')").all();
+  const { results } = await env.DB.prepare("SELECT key, value FROM settings WHERE key IN " +
+    "('check_started', 'check_completed', 'check_seen', 'check_watch_since', 'check_alerted')").all();
   const st = Object.fromEntries(results.map((r) => [r.key, r.value]));
-  if (!st.check_seen) return setSetting(env, "check_seen", when.toISOString()); // the first run after this was deployed: count from now
-  const h = silentFor(st.check_seen, st.check_alerted, when);
+  const last = st.check_completed || st.check_seen || st.check_watch_since;
+  if (!last) return setSetting(env, "check_watch_since", when.toISOString());
+  const h = silentFor(last, st.check_alerted, when);
   if (!h || quiet) return;
-  const where = env.CODE_REPO ? `\n\nПосмотри, идут ли запуски: https://github.com/${env.CODE_REPO}/actions` : "";
-  const d = await tellOwner(env, `⚠️ Проверка новых обзоров молчит уже ${h} ч. Похоже, GitHub Actions не запускаются: ` +
-    `новые карточки не выходят, бэкапы не делаются. Бот и сайт работают на том, что уже есть.${where}`);
+  const recentStart = st.check_started && !silentFor(st.check_started, null, when);
+  const detail = recentStart ? "Запуски есть. Проверь ошибки проверки и сохранения данных." : "Новых запусков не видно.";
+  const where = env.CODE_REPO ? `\n\nЗапуски: https://github.com/${env.CODE_REPO}/actions` : "";
+  const d = await tellOwner(env, `⚠️ Проверка новых обзоров не завершалась успешно уже ${h} ч. ${detail}${where}`);
   if (d.ok) await setSetting(env, "check_alerted", when.toISOString());
 }
 

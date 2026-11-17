@@ -129,6 +129,27 @@ class HourlyRunTest(unittest.TestCase):
         self.assertEqual(told[0], told[1])
         self.assertTrue(json.loads((self.data / "reviews.json").read_text())[-1]["followers_told"])
 
+    def test_unchanged_list_is_synced_again_after_failed_worker_request(self):
+        self.seed()
+        (self.data / "worker_url.txt").write_text("https://w.example\n")
+        pushed = []
+
+        def fake_request(url, **kw):
+            if url.endswith("/api/refresh-lists"):
+                pushed.append(kw["json_body"]["items"])
+                if len(pushed) == 1:
+                    raise check.http.HttpError(503, "down", url)
+            return '{"ok": true}'
+
+        with mock.patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "t"}), mock.patch.object(check.http, "request", fake_request):
+            self.posts.append(tnd_post(10, days_ago=0))
+            self.run_once()
+            before_retry = (self.data / "list.json").read_bytes()
+            self.run_once()
+        self.assertEqual(len(pushed), 2)
+        self.assertEqual(pushed[0], pushed[1])
+        self.assertEqual((self.data / "list.json").read_bytes(), before_retry)
+
     def test_enrich_crash_still_posts_a_bare_card(self):
         self.seed()
         self.posts.append(tnd_post(10, days_ago=0))

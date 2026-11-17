@@ -66,8 +66,8 @@ test("daysLeft counts whole days to the tokens' last day", () => {
 
 test("the first hourly run only starts the count; a check that keeps reporting means no message", async () => {
   await hourly(10, 10);
-  assert.equal(setting("check_seen"), new Date(at(10, 10)).toISOString());
-  assert.equal((await post("/api/heartbeat")).status, 200);
+  assert.equal(setting("check_watch_since"), new Date(at(10, 10)).toISOString());
+  assert.equal((await post("/api/heartbeat", { stage: "completed" })).status, 200);
   await hourly(10, 11);
   await hourly(10, 12);
   assert.equal(sent.length, 0);
@@ -80,19 +80,30 @@ test("checks silent for 3 hours: the owner is told once, again a day later, and 
   await hourly(10, 11); // 3.5 h
   assert.equal(sent.length, 1);
   assert.equal(sent[0].chat_id, OWNER);
-  assert.match(sent[0].text, /молчит уже 3 ч/);
+  assert.match(sent[0].text, /не завершалась успешно уже 3 ч/);
   assert.match(sent[0].text, /github\.com\/o\/code\/actions/);
   await hourly(10, 12);
   await hourly(10, 20);
   assert.equal(sent.length, 1);
   await hourly(11, 12); // a day after the first message
   assert.equal(sent.length, 2);
-  assert.equal((await post("/api/heartbeat")).status, 200);
+  assert.equal((await post("/api/heartbeat", { stage: "started" })).status, 200);
+  assert.ok(setting("check_started"));
+  assert.ok(setting("check_alerted"));
+  assert.equal(sent.length, 2, "a new start does not announce recovery");
+  assert.equal((await post("/api/heartbeat", { stage: "completed" })).status, 200);
   assert.match(sent[2].text, /снова работает/);
   assert.equal(setting("check_alerted"), "");
-  seen("2026-11-11T12:40:00.000Z"); // the heartbeat wrote the real clock's time; the test's clock is its own
+  db.prepare("UPDATE settings SET value=? WHERE key='check_completed'").run("2026-11-11T12:40:00.000Z"); // the heartbeat wrote the real clock's time; the test's clock is its own
   await hourly(11, 13);
   assert.equal(sent.length, 3);
+});
+
+test("new starts cannot hide repeated failures after the last successful check", async () => {
+  db.prepare("INSERT INTO settings VALUES ('check_completed', ?), ('check_started', ?)")
+    .run("2026-11-10T08:00:00.000Z", "2026-11-10T11:15:00.000Z");
+  await hourly(10, 11);
+  assert.match(sent[0].text, /не завершалась успешно уже 3 ч.*Запуски есть/);
 });
 
 test("at night the message waits for the morning (01:00–09:00 Moscow)", async () => {
