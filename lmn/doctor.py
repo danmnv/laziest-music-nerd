@@ -68,12 +68,14 @@ def gemini():
     return f"{model} answered: {d['candidates'][0]['content']['parts'][0]['text'].strip()[:40]}"
 
 
-def gemini_models():
+def gemini_models(*, require_all=False):
     from .gemini import MODELS
     d = http.get_json("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
                       headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"].strip()})
     names = {m["name"].split("/", 1)[1] for m in d.get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])}
     missing = [m for m in MODELS if m not in names]
+    if require_all and missing:
+        raise RuntimeError(f"models not offered to this key: {', '.join(missing)}")
     if len(missing) == len(MODELS):
         raise RuntimeError(f"none of {MODELS} is offered to this key; flash models it has: {sorted(n for n in names if 'flash' in n)}")
     return f"key works; model list: {', '.join(MODELS)}" + (f" (not offered: {', '.join(missing)})" if missing else "")

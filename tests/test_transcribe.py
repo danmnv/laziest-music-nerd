@@ -87,8 +87,11 @@ class Run(unittest.TestCase):
             vid = body["contents"][0]["parts"][0]["fileData"]["fileUri"][-2:]
             calls.append(vid)
             a = answers(len(calls))
-            model = next(m for m in models if m not in gemini._unavailable)
-            gemini.requests[model] = gemini.requests.get(model, 0) + (2 if a is None else 1)  # no answer: a retry too
+            reserve = kw["before_request"]
+            model = next(m for m in kw["model_order"] if reserve(m, float("inf")))
+            gemini.requests[model] = gemini.requests.get(model, 0) + 1
+            if a is None and reserve(model, float("inf")):  # an unsuccessful request may be retried
+                gemini.requests[model] += 1
             if a is None:
                 return None, None
             if isinstance(a, dict):  # a raw answer
@@ -98,6 +101,7 @@ class Run(unittest.TestCase):
         lengths = lengths or {f"v{i}": 6 for i in range(1, 7)}
         with mock.patch.object(transcribe, "DATA", self.dir), mock.patch.object(briefs, "DATA", self.dir), \
                 mock.patch.object(gemini, "MODELS", list(models)), mock.patch.object(gemini, "generate", side_effect=gen), \
+                mock.patch.object(transcribe, "REQUEST_GAP_SEC", 0), \
                 mock.patch.object(transcribe, "minutes", side_effect=lambda ids: {i: lengths[i] for i in ids if i in lengths}), \
                 mock.patch.dict(os.environ, {"GEMINI_API_KEY": "k", **(env or {})}), mock.patch("builtins.print"):
             transcribe.run()
@@ -178,7 +182,7 @@ class Run(unittest.TestCase):
     def test_no_answer_still_counts_its_minutes(self):
         with mock.patch.object(transcribe, "VIDEO_MINUTES", 14):
             calls, _ = self.go(lambda n: None if n == 1 else SPOKEN)
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 1)  # the first video used 12 minutes across two attempts
 
     def test_retell_asks_every_model_and_counts_its_own_failures(self):
         k = self.archive[5]["id"]
@@ -193,6 +197,46 @@ class Run(unittest.TestCase):
             calls, data = self.go(lambda n: "He says it sounds great. " * 50)
         self.assertEqual(calls, ["v6"])
         self.assertTrue(self.saved(6).startswith(transcribe.RETOLD))
+
+    def test_hydrogen_is_reserved_for_first_retellings_and_has_its_own_limit(self):
+        for i in (5, 4, 3):
+            self.data[f"{i:024x}"].update(vf=transcribe.FAIL_MAX, vr=["lite"])
+        self.data[f"{5:024x}"]["vt"] = 1
+        (self.dir / "briefs.json").write_text(json.dumps(self.data))
+        with mock.patch.object(transcribe, "RETELL", True), mock.patch.object(transcribe, "RETELL_MODEL", "hydrogen"), \
+                mock.patch.object(transcribe, "PER_RETELL_MODEL", 1), \
+                mock.patch.object(transcribe, "ask", wraps=transcribe.ask) as ask:
+            self.go(lambda n: SPOKEN, env={"VIDEO_LIMIT": "4"}, models=("lite", "hydrogen"))
+        self.assertEqual([call.kwargs["model_order"] for call in ask.call_args_list],
+                         [["lite"], ["lite"], ["hydrogen", "lite"], ["lite"]])
+
+    def test_archive_paces_fallbacks_and_reserves_their_minutes(self):
+        from functools import partial
+
+        now = [0]
+        calls = []
+        clock = lambda: now[0]
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        def get_json(url, **kw):
+            model = url.split("/models/")[1].split(":")[0]
+            calls.append((model, now[0]))
+            if model.endswith("-flash-lite"):
+                raise gemini.http.HttpError(503, "{}", url)
+            return gemini_answer(SPOKEN)
+
+        models = ["gemini-3.5-flash-lite", "gemini-3.6-flash"]
+        with mock.patch.object(transcribe.time, "monotonic", clock), mock.patch.object(transcribe.time, "sleep", sleep), \
+                mock.patch.object(transcribe, "VIDEO_MINUTES", 14), mock.patch.object(transcribe, "PER_LITE_MODEL", 1), \
+                mock.patch.object(gemini.http, "get_json", side_effect=get_json):
+            budget = transcribe.RunBudget()
+            model, _ = gemini.generate({}, "key", sleep=sleep, clock=clock, model_order=models,
+                                       before_request=partial(budget.reserve, 6))
+        self.assertEqual(model, models[1])
+        self.assertEqual(calls, [(models[0], 0), (models[1], transcribe.REQUEST_GAP_SEC)])
+        self.assertEqual(budget.minutes_left, 2)
 
     def test_unusable_answer_counts_no_answer_stops(self):
         calls, data = self.go(lambda n: "Too short." if n == 1 else None)
