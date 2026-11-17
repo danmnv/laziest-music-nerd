@@ -228,6 +228,83 @@ class HourlyRunWithYouTubeTest(unittest.TestCase):
     def cards(self):
         return [t for t in self.tg.sent if "Последние 30 обзоров" not in t]
 
+    def fresh_upload(self):
+        return dict(video("hmltd000001", "HMLTD - FANGS ALBUM REVIEW", HMLTD, 1),
+                    published=(datetime.now(timezone.utc) - timedelta(hours=1)).isoformat())
+
+    def fresh_site_post(self):
+        return dict(site_post("g1", "HMLTD - FANGS", "hmltd000001"), published_at=datetime.now(timezone.utc).isoformat())
+
+    def test_tnd_outage_keeps_youtube_and_recovery_links_the_same_review(self):
+        check.main()  # healthy empty seed
+        self.uploads = [self.fresh_upload()]
+        with mock.patch.object(tnd, "fetch_posts", side_effect=TimeoutError("TND is down")):
+            check.main()
+            check.main()
+        self.assertEqual(len(self.cards()), 1)
+        self.assertIn("HMLTD — FANGS", self.cards()[0])
+        self.posts = [self.fresh_site_post()]
+        check.main()
+        self.assertEqual(len(self.cards()), 1)
+        saved = json.loads((self.data / "reviews.json").read_text())
+        self.assertEqual([(r["id"], r["tnd_id"]) for r in saved], [("hmltd000001", "g1")])
+
+    def test_youtube_outage_keeps_tnd_and_recovery_does_not_repeat_the_card(self):
+        check.main()
+        self.posts = [self.fresh_site_post()]
+        with mock.patch.object(youtube, "latest_uploads", side_effect=TimeoutError("YouTube is down")):
+            check.main()
+        self.uploads = [self.fresh_upload()]
+        check.main()
+        self.assertEqual(len(self.cards()), 1)
+        self.assertIn("HMLTD — FANGS", self.cards()[0])
+        self.assertEqual(len(json.loads((self.data / "reviews.json").read_text())), 1)
+
+    def test_neither_source_available_fails_without_touching_the_data(self):
+        check.main()
+        before = {p.name: p.read_bytes() for p in self.data.iterdir()}
+        with (mock.patch.object(tnd, "fetch_posts", side_effect=TimeoutError("TND is down")),
+              mock.patch.object(youtube, "latest_uploads", return_value=None) as fetch_youtube):
+            with self.assertRaisesRegex(SystemExit, "no review source"):
+                check.main()
+        fetch_youtube.assert_called_once()
+        self.assertEqual({p.name: p.read_bytes() for p in self.data.iterdir()}, before)
+        self.assertEqual(self.cards(), [])
+
+    def test_healthy_empty_sources_complete_the_initial_seed(self):
+        check.main()
+        self.assertTrue(json.loads((self.data / "state.json").read_text())["seeded"])
+        self.assertEqual(self.cards(), [])
+
+    def test_initial_tnd_outage_seeds_youtube_silently_and_defers_the_full_archive(self):
+        self.uploads = [self.fresh_upload()]
+        with (mock.patch.object(tnd, "fetch_posts", side_effect=TimeoutError("TND is down")),
+              mock.patch.object(tnd, "fetch_all_light", side_effect=TimeoutError("TND is down"))):
+            check.main()
+        self.assertEqual(self.cards(), [])
+        self.assertFalse(json.loads((self.data / "state.json").read_text()).get("seeded"))
+        self.assertEqual([r["id"] for r in json.loads((self.data / "archive.json").read_text())], ["hmltd000001"])
+
+        self.posts = [self.fresh_site_post()]
+        history = [site_post("g0", "Old - One", days_ago=365), *self.posts]
+        with mock.patch.object(tnd, "fetch_all_light", return_value=history) as build:
+            check.main()
+        build.assert_called_once()
+        self.assertEqual(self.cards(), [])
+        self.assertTrue(json.loads((self.data / "state.json").read_text())["seeded"])
+        self.assertEqual({r["id"] for r in json.loads((self.data / "archive.json").read_text())}, {"hmltd000001", "g0"})
+
+    def test_initial_configured_youtube_outage_keeps_seeding_until_recovery(self):
+        self.posts = [site_post("g0", "Old - One")]
+        with (mock.patch.dict("os.environ", {"YOUTUBE_API_KEY": "fake"}),
+              mock.patch.object(youtube, "latest_uploads", return_value=None)):
+            check.main()
+        self.assertFalse(json.loads((self.data / "state.json").read_text()).get("seeded"))
+        self.uploads = [self.fresh_upload()]
+        check.main()
+        self.assertEqual(self.cards(), [])
+        self.assertTrue(json.loads((self.data / "state.json").read_text())["seeded"])
+
     def test_youtube_review_is_posted_once_and_linked_when_the_site_catches_up(self):
         now = datetime.now(timezone.utc)
         self.posts = [site_post("g0", "Old - One", days_ago=3) | {"published_at": (now - timedelta(days=3)).isoformat()}]
