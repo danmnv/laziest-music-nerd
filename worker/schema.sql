@@ -55,10 +55,17 @@ CREATE TABLE IF NOT EXISTS review_artists ( -- the artist of each card, sent by 
   artist_name TEXT NOT NULL,
   mbid TEXT
 );
-CREATE TABLE IF NOT EXISTS follow_sent (  -- who was already told about which review, so a retry never messages twice
+CREATE TABLE IF NOT EXISTS follow_sent (  -- confirmed deliveries and legacy deduplication records
   user_id INTEGER NOT NULL,
   review_id TEXT NOT NULL,
   sent_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, review_id)
+);
+CREATE TABLE IF NOT EXISTS follow_delivery (
+  user_id INTEGER NOT NULL,
+  review_id TEXT NOT NULL,               -- a review ID or "nr:<Deezer album ID>"
+  state TEXT NOT NULL CHECK (state IN ('sending','retry','unknown','skipped')),
+  ready_at INTEGER NOT NULL,             -- ms: retry time, or observation deadline for an in-flight send
   PRIMARY KEY (user_id, review_id)
 );
 CREATE TABLE IF NOT EXISTS unreviewed (   -- albums without Fantano's review that someone opened: names for marks and reminders
@@ -74,7 +81,7 @@ CREATE TABLE IF NOT EXISTS watched_artists ( -- followed artists, checked on Dee
   seen TEXT,                             -- JSON list of Deezer album IDs already known; NULL until the first check
   checked_at TEXT
 );
-CREATE TABLE IF NOT EXISTS new_releases (  -- albums found by that check; who was told is in follow_sent as "nr:<dz_id>"
+CREATE TABLE IF NOT EXISTS new_releases (  -- albums found by that check; delivery tracked in follow_sent and follow_delivery as "nr:<dz_id>"
   dz_id INTEGER PRIMARY KEY,
   name_key TEXT NOT NULL,
   artist_name TEXT NOT NULL,
@@ -82,3 +89,13 @@ CREATE TABLE IF NOT EXISTS new_releases (  -- albums found by that check; who wa
   release_date TEXT,
   found_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS telegram_presses (  -- short-lived receipts for state-changing Telegram buttons
+  update_id TEXT PRIMARY KEY,
+  attempt TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  received_at TEXT NOT NULL,
+  value TEXT,
+  cleared_like INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS telegram_presses_received ON telegram_presses (received_at);
+CREATE INDEX IF NOT EXISTS telegram_presses_user ON telegram_presses (user_id);

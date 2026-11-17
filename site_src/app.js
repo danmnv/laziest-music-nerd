@@ -9,30 +9,61 @@
   async function api(path, opts = {}) {
     if (!L.worker) throw new Error("no worker");
     const r = await fetch(L.worker + path, { ...opts, headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) } });
-    if (r.status === 401) { token = null; try { localStorage.removeItem("lmn_token"); } catch (e) {} }
+    if (r.status === 401 && token) {
+      token = null;
+      marks = {};
+      try { localStorage.removeItem("lmn_token"); } catch (e) {}
+      renderLogin();
+    }
+    if (!r.ok) throw Object.assign(new Error("HTTP " + r.status), { status: r.status });
     return r.json();
   }
 
   // ---- login (Telegram Login Widget) ----
-  window.lmnLogin = async (user) => {
-    const d = await api("/auth/telegram", { method: "POST", body: JSON.stringify(user) });
-    if (d.token) { token = d.token; try { localStorage.setItem("lmn_token", token); } catch (e) {} location.reload(); }
-  };
   const slot = document.getElementById("login");
-  if (L.worker && !token) {
-    const s = document.createElement("script");
-    s.src = "https://telegram.org/js/telegram-widget.js?22";
-    s.async = true;
-    s.dataset.telegramLogin = L.bot; s.dataset.size = "small"; s.dataset.onauth = "lmnLogin(user)"; s.dataset.requestAccess = "write";
-    slot.appendChild(s);
-  } else if (token) {
-    slot.innerHTML = '<a href="#" id="logout" class="muted">выйти</a>';
-    document.getElementById("logout").onclick = (ev) => { ev.preventDefault(); try { localStorage.removeItem("lmn_token"); } catch (e) {} location.reload(); };
+  window.lmnLogin = async (user) => {
+    try {
+      const d = await api("/auth/telegram", { method: "POST", body: JSON.stringify(user) });
+      if (!d.token) throw new Error("no token");
+      token = d.token;
+      try { localStorage.setItem("lmn_token", token); } catch (e) {}
+      location.reload();
+    } catch (e) {
+      renderLogin("Не удалось войти. Попробуй ещё раз.");
+    }
+  };
+  function renderLogin(message) {
+    if (!slot || !L.worker) return;
+    slot.replaceChildren();
+    if (message) {
+      const note = document.createElement("span");
+      note.className = "muted";
+      note.textContent = message + " ";
+      slot.appendChild(note);
+    }
+    if (!token) {
+      const s = document.createElement("script");
+      s.src = "https://telegram.org/js/telegram-widget.js?22";
+      s.async = true;
+      s.dataset.telegramLogin = L.bot;
+      s.dataset.size = "small";
+      s.dataset.onauth = "lmnLogin(user)";
+      s.dataset.requestAccess = "write";
+      slot.appendChild(s);
+    } else {
+      slot.innerHTML = '<a href="#" id="logout" class="muted">выйти</a>';
+      document.getElementById("logout").onclick = (ev) => {
+        ev.preventDefault();
+        try { localStorage.removeItem("lmn_token"); } catch (e) {}
+        location.reload();
+      };
+    }
   }
+  renderLogin();
 
   async function loadMarks() {
     if (!token) return;
-    try { marks = (await api("/api/me/marks")).marks || {}; } catch (e) { marks = {}; }
+    marks = (await api("/api/me/marks")).marks || {};
     document.querySelectorAll("li[data-id]").forEach((li) => { const m = marks[li.dataset.id]; li.querySelector(".st").textContent = m && m.status ? ICON[m.status] : ""; });
   }
 
@@ -90,21 +121,68 @@
       if (a) rel.querySelector(".avg").textContent = `Средняя оценка посетителей: ${a.avg} (${a.many ? "10 оценок и больше" : "меньше 10 оценок"})`;
       showMoodVotes(rel, d.moods && d.moods[id]);
     }).catch(() => {});
-    if (token) loadMarks().then(() => {
-      const m = marks[id] || {};
-      box.hidden = false;
-      box.innerHTML = "<b>Мои отметки</b> <span class='muted'>(видны только тебе)</span><p class='btns'>" +
-        Object.keys(LABEL).map((k) => `<button data-s="${k}" class="${m.status === k ? "btn on" : "btn"}">${ICON[k]} ${LABEL[k]}</button>`).join("") +
-        "</p><label>Моя оценка: <select id='myscore'><option value=''>—</option>" +
-        [...Array(11).keys()].map((n) => `<option ${m.score === n ? "selected" : ""}>${n}</option>`).join("") + "</select></label>";
-      box.querySelectorAll("button").forEach((b) => b.onclick = async () => {
-        const s = (marks[id] || {}).status === b.dataset.s ? null : b.dataset.s;
-        await api("/api/mark", { method: "POST", body: JSON.stringify({ review_id: id, status: s }) });
-        marks[id] = { ...(marks[id] || {}), status: s };
-        box.querySelectorAll("button").forEach((x) => x.className = x.dataset.s === s ? "btn on" : "btn");
-      });
-      box.querySelector("#myscore").onchange = (ev) => api("/api/mark", { method: "POST", body: JSON.stringify({ review_id: id, score: ev.target.value === "" ? null : Number(ev.target.value) }) });
-    });
+    if (token) {
+      const loginAgain = () => {
+        box.hidden = false;
+        box.textContent = "Вход истёк. Войди через Telegram, чтобы менять отметки.";
+      };
+
+      async function showMarks() {
+        try {
+          await loadMarks();
+        } catch (e) {
+          if (e.status === 401) return loginAgain();
+          box.hidden = false;
+          const retry = document.createElement("button");
+          retry.className = "btn";
+          retry.textContent = "Загрузить снова";
+          retry.onclick = showMarks;
+          box.textContent = "Не удалось загрузить отметки. ";
+          box.appendChild(retry);
+          return;
+        }
+
+        const m = marks[id] || {};
+        box.hidden = false;
+        box.innerHTML = "<b>Мои отметки</b> <span class='muted'>(видны только тебе)</span><p class='btns'>" +
+          Object.keys(LABEL).map((k) => `<button data-s="${k}" class="${m.status === k ? "btn on" : "btn"}">${ICON[k]} ${LABEL[k]}</button>`).join("") +
+          "</p><label>Моя оценка: <select id='myscore'><option value=''>—</option>" +
+          [...Array(11).keys()].map((n) => `<option ${m.score === n ? "selected" : ""}>${n}</option>`).join("") +
+          "</select></label> <span class='muted' role='status'></span>";
+        const buttons = [...box.querySelectorAll("button")];
+        const score = box.querySelector("#myscore");
+        const feedback = box.querySelector("[role=status]");
+        const controls = [...buttons, score];
+        let saving = false;
+        const paint = () => {
+          const current = marks[id] || {};
+          buttons.forEach((b) => { b.className = b.dataset.s === current.status ? "btn on" : "btn"; });
+          score.value = current.score ?? "";
+        };
+        const save = async (change) => {
+          if (saving) return;
+          saving = true;
+          controls.forEach((c) => { c.disabled = true; });
+          paint();
+          feedback.textContent = "";
+          try {
+            const d = await api("/api/mark", { method: "POST", body: JSON.stringify({ review_id: id, ...change }) });
+            if (d.ok !== true) throw new Error("mark not confirmed");
+            marks[id] = { ...(marks[id] || {}), ...change };
+          } catch (e) {
+            if (e.status === 401) return loginAgain();
+            feedback.textContent = "Не удалось сохранить. Попробуй ещё раз.";
+          } finally {
+            paint();
+            controls.forEach((c) => { c.disabled = false; });
+            saving = false;
+          }
+        };
+        buttons.forEach((b) => { b.onclick = () => save({ status: marks[id]?.status === b.dataset.s ? null : b.dataset.s }); });
+        score.onchange = () => save({ score: score.value === "" ? null : Number(score.value) });
+      }
+      showMarks();
+    }
   }
 
   // ---- catalog ----
@@ -168,5 +246,5 @@
   [q, fs, fg, fy, fh, fo].forEach((el) => el.addEventListener("input", () => { shown = 50; render(); }));
   more.onclick = () => { shown += 100; render(); };
   window.addEventListener("hashchange", () => { if (location.hash === "#search") q.focus({ preventScroll: true }); });
-  loadMarks().then(render);
+  loadMarks().then(render, render);
 })();

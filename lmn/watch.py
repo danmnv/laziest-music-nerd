@@ -1,7 +1,7 @@
 """What GitHub Actions tell the Worker so that the owner hears about a silent stop (worker/src/watchdog.mjs).
 
-heartbeat(): every check of new reviews says "alive"; when that goes quiet for a few hours (Actions stopped
-altogether, as on 2026-11-08), the Worker messages the owner. alert(kind): a job that can't go on and wouldn't turn
+heartbeat(): the review check reports when it starts and after Actions has saved its data successfully.
+The Worker messages the owner if successful checks stop. alert(kind): a job that can't go on and wouldn't turn
 red asks the Worker to tell the owner one of its fixed texts. Neither ever fails a run: the Worker being down is
 only printed.
 """
@@ -38,8 +38,8 @@ def _post(path, body, data=None):
         return False
 
 
-def heartbeat(data=None):
-    return _post("/api/heartbeat", {"job": "check"}, data)
+def heartbeat(data=None, *, stage="started"):
+    return _post("/api/heartbeat", {"job": "check", "stage": stage}, data)
 
 
 def alert(kind, code=None, data=None):

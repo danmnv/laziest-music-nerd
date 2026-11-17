@@ -30,36 +30,21 @@ jobs:
       WRANGLER: npx --yes wrangler@4.45.0
       DB: laziest-music-nerd
     steps:
+      - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-      - name: Выгрузить базу
+      - name: Выгрузить и проверить базу
+        # Compare the export with counts taken on both sides of the export, without logging them.
         run: |
           set -euo pipefail
           umask 077
-          mkdir -p "$RUNNER_TEMP/b" && cd "$RUNNER_TEMP/b"
-          $WRANGLER d1 export "$DB" --remote --output dump.sql
-          grep -q 'CREATE TABLE.*users' dump.sql || { echo "::error::В выгрузке нет таблицы users"; exit 1; }
-      - name: Проверить, что выгрузка читается
-        # Loads the dump into an empty local SQLite and compares row counts with the live base.
-        # Prints only ok / not ok per table: no IDs, no marks, and no row counts either. The repo is public,
-        # and "users: 5" in a log would tell anyone how many people use the bot (owner, 2026-11-02).
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP/b"
-          sqlite3 check.db < dump.sql
-          bad=0
-          for t in $(sqlite3 check.db "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name"); do
-            local_n=$(sqlite3 check.db "SELECT COUNT(*) FROM \"$t\"")
-            live_n=$($WRANGLER d1 execute "$DB" --remote --json --command "SELECT COUNT(*) AS n FROM \"$t\"" | jq -r '.[0].results[0].n')
-            # The bot keeps writing while we compare, so live may have grown a little; fewer rows in the backup than
-            # a minute later is fine, an empty backup of a non-empty table is not.
-            if [ "$local_n" = 0 ] && [ "$live_n" != 0 ]; then bad=1; echo "$t: в бэкапе пусто, а в базе нет"
-            else echo "$t: ок"; fi
-          done
-          echo "Бэкап проверен: все таблицы на месте" > "$GITHUB_STEP_SUMMARY"
-          [ $bad = 0 ] || { echo "::error::Бэкап неполный"; exit 1; }
-          rm check.db
+          mkdir -p "$RUNNER_TEMP/b"
+          python3 -m lmn.verify_backup capture "$RUNNER_TEMP/b/before.json"
+          $WRANGLER d1 export "$DB" --remote --output "$RUNNER_TEMP/b/dump.sql"
+          python3 -m lmn.verify_backup verify "$RUNNER_TEMP/b/before.json" "$RUNNER_TEMP/b/dump.sql"
+          rm "$RUNNER_TEMP/b/before.json"
+          echo "Выгрузка D1 читается, набор таблиц и число строк проверены" >> "$GITHUB_STEP_SUMMARY"
       - name: Зашифровать
         run: |
           set -euo pipefail

@@ -1,7 +1,4 @@
-// The watchdog (2026-11-10): the owner hears about a silent stop. GitHub Actions run everything on a schedule, and when
-// they stop altogether (the account was blocked on 2026-11-08; schedules didn't come back by themselves afterwards)
-// there is no red run and no e-mail. So every check of new reviews tells the Worker "alive" (/api/heartbeat), and the
-// Worker's hourly cron, which runs at Cloudflare and outlives GitHub, messages the owner when that goes quiet.
+// The hourly Worker cron alerts the owner when GitHub Actions stop completing review checks successfully.
 // Pure helpers; index.js does the requests.
 
 export const SILENT_HOURS = 3; // checks come about once an hour (GitHub drops some scheduled runs); one may take 50 min

@@ -187,8 +187,8 @@ FOLLOW_WINDOW = timedelta(days=3)  # a review older than this is no longer news 
 
 def tell_followers(reviews):
     """Hand the Worker each newly posted card, so it messages the people who follow that artist. Unsent ones (the
-    Worker was down, or it had more followers to tell than one run allows) go again with the next check; the Worker
-    never messages a person twice about one review."""
+    Worker was down, Telegram rejected a send temporarily, or the run used up its budget) go again with the next
+    check. The Worker guards against duplicate sends and leaves ambiguous sends alone."""
     url, secret = worker()
     now = datetime.now(timezone.utc)
     todo = [r for r in reviews if r.get("tg_channel_msg") and not r.get("followers_told")
@@ -224,6 +224,35 @@ def bare(rev):
     return r
 
 
+def fetch_review_sources(seeding):
+    since = (datetime.now(timezone.utc) - timedelta(days=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        response = tnd.fetch_posts(limit=50 if seeding else 15, with_text=True, since=since if seeding else None)
+        posts = sorted(response["posts"], key=lambda p: p["published_at"])
+    except Exception as ex:
+        print(f"::warning::The Needle Drop unavailable ({type(ex).__name__})")
+        posts = None
+
+    # It can take days for the site to publish the post for a video, and some never appear there.
+    try:
+        uploads = youtube.latest_uploads()
+        youtube.report_unrecognised(uploads, verbose=MODE == "dry")
+    except Exception as ex:
+        print(f"::warning::YouTube unavailable ({type(ex).__name__})")
+        uploads = None
+    if posts is None and uploads is None:
+        sys.exit("stopped: no review source available (The Needle Drop and YouTube)")
+    return posts, uploads
+
+
+def complete_archive(archive):
+    """Fill the initial archive when TND is reachable, preserving reviews saved during an outage."""
+    history = [archive_entry(tnd.parse_post(p)) for p in tnd.fetch_all_light()]
+    ids = {a["id"] for a in archive}
+    videos = {a["video_id"] for a in archive if a.get("video_id")}
+    return archive + [a for a in history if a["id"] not in ids and a.get("video_id") not in videos]
+
+
 def main():
     started = time.monotonic()
     if MODE == "run":  # the watchdog: the Worker tells the owner when checks stop coming (lmn/watch.py)
@@ -234,25 +263,38 @@ def main():
     for a in archive:  # old entries were saved before tnd.tidy_album existed
         tnd.tidy_entry(a)
 
-    if not archive:
-        print("building archive index from TND…")
-        archive = [archive_entry(tnd.parse_post(p)) for p in tnd.fetch_all_light()]
-        print(f"archive: {len(archive)} reviews")
+    seeding = not state.get("seeded")
+    posts, uploads = fetch_review_sources(seeding)
+    tnd_available = posts is not None
+    youtube_expected = bool((os.environ.get("YOUTUBE_API_KEY") or "").strip())
+    sources_ready = tnd_available and (uploads is not None or not youtube_expected)
+    posts = posts if tnd_available else []
+
+    if not archive or state.get("archive_bootstrap_pending"):
+        archive_ready = False
+        if tnd_available:
+            try:
+                print("building archive index from TND…")
+                archive = complete_archive(archive)
+                archive_ready = True
+                print(f"archive: {len(archive)} reviews")
+            except Exception as ex:
+                print(f"::warning::The Needle Drop archive unavailable ({type(ex).__name__})")
+        if archive_ready:
+            state.pop("archive_bootstrap_pending", None)
+        elif not state.get("archive_bootstrap_pending"):
+            # The next run must retry the full archive even if this one saves some new reviews.
+            state["archive_bootstrap_pending"] = True
+            if MODE == "run":
+                save("state.json", state)
     arch_ids = {a["id"] for a in archive}
     arch_videos = {a["video_id"] for a in archive if a.get("video_id")}
-
-    seeding = not state.get("seeded")
-    since = (datetime.now(timezone.utc) - timedelta(days=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    posts = tnd.fetch_posts(limit=50 if seeding else 15, with_text=True, since=since if seeding else None)["posts"]
-    posts.sort(key=lambda p: p["published_at"])
-
-    # New reviews are noticed on YouTube: the site posts them a day or more later, and skips some (see youtube.py).
-    uploads = youtube.latest_uploads()
-    youtube.report_unrecognised(uploads, verbose=MODE == "dry")
 
     if MODE == "test":
         # The newest review anywhere, even if it is already in the channel: a card for the owner only, nothing saved.
         everything, _ = youtube.plan(posts, uploads, [], seeding=False)
+        if not everything:
+            sys.exit("test mode: no review to send from the available sources")
         item = everything[-1]
         r = next((x for x in reviews if x["id"] == item["rev"]["id"] or (x.get("video_id") and x.get("video_id") == item["rev"].get("video_id"))), None)
         r = r or enrich(item["rev"], item["text"], archive)
@@ -355,14 +397,16 @@ def main():
             print("---- pinned ----\n" + text)
     if tg and not seeding:
         tell_followers(reviews)
-    if (new or seeding or list_changed) and tg:
+    if tg:
+        # Resend the current list even if it did not change, in case the last sync failed.
         url, secret = worker()
         if url:
             try:
                 http.request(url + "/api/refresh-lists", method="POST", json_body={"items": items}, headers={"Authorization": f"Bearer {secret}"})
             except Exception as ex:
                 print(f"worker refresh failed: {type(ex).__name__}")
-    if complete:  # an unfinished seeding run must not turn the remaining old reviews into channel cards
+    # An unfinished seed must not turn old reviews from a returning source into channel cards.
+    if complete and sources_ready:
         state["seeded"] = True
     save("reviews.json", reviews)
     save("archive.json", archive)

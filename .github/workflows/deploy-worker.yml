@@ -5,14 +5,18 @@ on:
     paths: [worker/**, .github/workflows/deploy-worker.yml]
   workflow_dispatch:
 
+concurrency: deploy-worker
+
 permissions:
   contents: read   # commits go to the data repo with DATA_TOKEN; this repo is only read
 
 jobs:
+  tests:
+    if: ${{ github.ref == 'refs/heads/main' && (vars.CLOUDFLARE_READY == '1' || github.event_name == 'workflow_dispatch') }}
+    uses: ./.github/workflows/unit-tests.yml
   deploy:
+    needs: tests
     runs-on: ubuntu-latest
-    # Skips quietly until the Cloudflare secrets are added.
-    if: ${{ vars.CLOUDFLARE_READY == '1' || github.event_name == 'workflow_dispatch' }}
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -25,6 +29,8 @@ jobs:
         working-directory: worker
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
       - name: Данные из приватного репозитория
         # data/*.json live in a private repo (the datasets are not to be downloadable in one click); the code is public
         uses: actions/checkout@v5
@@ -39,7 +45,7 @@ jobs:
           node-version: 22
       - name: Проверить секреты
         run: |
-          for s in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID TELEGRAM_BOT_TOKEN; do
+          for s in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID TELEGRAM_BOT_TOKEN DATA_READ_TOKEN; do
             [ -n "${!s}" ] || { echo "::error::Нет секрета $s"; exit 1; }
           done
       - name: База D1
@@ -69,6 +75,7 @@ jobs:
       - name: Деплой
         id: deploy
         run: |
+          set -euo pipefail
           derive() { printf '%s' "$TELEGRAM_BOT_TOKEN:$1" | sha256sum | cut -c1-48; }
           $WRANGLER deploy | tee deploy.log
           URL=$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' deploy.log | head -1)
@@ -78,12 +85,13 @@ jobs:
           printf '%s' "$(derive session)" | $WRANGLER secret put SESSION_SECRET
           printf '%s' "$(derive actions)" | $WRANGLER secret put ACTIONS_SECRET
           printf '%s' "${{ steps.owner.outputs.id }}" | $WRANGLER secret put OWNER_ID
-          if [ -n "$DATA_READ_TOKEN" ]; then printf '%s' "$DATA_READ_TOKEN" | $WRANGLER secret put DATA_TOKEN
-          else echo "::warning::Нет секрета DATA_READ_TOKEN: бот не прочитает данные из приватного репозитория"; fi
-          curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+          printf '%s' "$DATA_READ_TOKEN" | $WRANGLER secret put DATA_TOKEN
+          curl --fail-with-body -sS "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
             --data-urlencode "url=$URL/tg" \
             --data-urlencode "secret_token=$(derive webhook)" \
-            --data-urlencode 'allowed_updates=["message","callback_query"]' | jq '{ok, description}'
+            --data-urlencode 'allowed_updates=["message","callback_query"]' | jq -e '.ok == true'
+          curl --fail-with-body -sS "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getWebhookInfo" \
+            | jq -e --arg webhook "$URL/tg" '.ok == true and .result.url == $webhook'
           echo "url=$URL" >> "$GITHUB_OUTPUT"
       - name: Записать адрес Worker
         working-directory: .
