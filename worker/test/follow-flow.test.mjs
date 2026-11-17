@@ -41,8 +41,10 @@ let topU = null; // the site's u/ra.json (the owner's music-database table, lmn/
 let pinnedNow = null; // what getChat says is pinned in a private chat
 let freshAlbums = []; // albums Deezer lists for Radiohead on top of the old ones
 let fetched = []; // every URL the Worker asked outside Telegram
+let sendToTelegram; // optional fake response for sends
 
 beforeEach(() => {
+  sendToTelegram = null;
   mbDown = false;
   longBrief = null;
   rtMoods = null;
@@ -61,7 +63,9 @@ beforeEach(() => {
   globalThis.fetch = async (url, opts) => {
     if (!String(url).startsWith("https://api.telegram.org/")) fetched.push(String(url));
     if (String(url).startsWith("https://api.telegram.org/")) {
-      calls.push({ method: String(url).split("/").pop(), ...JSON.parse(opts.body) });
+      const call = { method: String(url).split("/").pop(), ...JSON.parse(opts.body) };
+      calls.push(call);
+      if (sendToTelegram && ["sendPhoto", "sendMessage"].includes(call.method)) return sendToTelegram(call, opts.signal);
       if (String(url).endsWith("/getChat")) return new Response(JSON.stringify({ ok: true, result: pinnedNow ? { pinned_message: { message_id: pinnedNow } } : {} }));
       return new Response(JSON.stringify({ ok: true, result: { message_id: 500 + calls.length } }));
     }
@@ -522,6 +526,89 @@ test("the 21-day reminder covers albums put off from the archive and without a r
   assert.deepEqual(m.reply_markup.inline_keyboard[0], [{ text: "✓ Слушал", callback_data: `m:${BENDS}:done` }, { text: "Открыть", callback_data: `mb:${BENDS}` }]);
 });
 
+const telegramOk = () => Response.json({ ok: true, result: { message_id: 123 } });
+const telegramError = (code, parameters = {}) => Response.json({ ok: false, error_code: code, parameters }, { status: code });
+
+async function followHmltd() {
+  await newReviews([card("r1")]);
+  await press(OWNER, "f:r1");
+  calls = [];
+}
+
+test("a 429 keeps the review pending until Telegram's retry_after elapses", async (t) => {
+  await followHmltd();
+  let time = Date.now();
+  t.mock.method(Date, "now", () => time);
+  sendToTelegram = () => telegramError(429, { retry_after: 90 });
+  assert.deepEqual(await newReviews([card("r2"), card("r3")]), { ok: true, sent: 0, pending: ["r2", "r3"] });
+  assert.equal(calls.length, 1, "stop the batch on rate limiting");
+
+  sendToTelegram = telegramOk;
+  time += 89_999;
+  assert.deepEqual(await newReviews([card("r2")]), { ok: true, sent: 0, pending: ["r2"] });
+  assert.equal(calls.length, 1);
+  time++;
+  assert.deepEqual(await newReviews([card("r2")]), { ok: true, sent: 1, pending: [] });
+  assert.deepEqual(await newReviews([card("r2")]), { ok: true, sent: 0, pending: [] });
+  assert.equal(calls.length, 2);
+});
+
+test("a Telegram 500 is retried, while a 403 skips the unreachable recipient", async (t) => {
+  await followHmltd();
+  let time = Date.now();
+  t.mock.method(Date, "now", () => time);
+  sendToTelegram = () => telegramError(500);
+  assert.deepEqual(await newReviews([card("r2")]), { ok: true, sent: 0, pending: ["r2"] });
+  time += 60_000;
+  sendToTelegram = () => telegramError(403);
+  assert.deepEqual(await newReviews([card("r2")]), { ok: true, sent: 0, pending: [] });
+  sendToTelegram = telegramOk;
+  assert.equal((await newReviews([card("r2")])).sent, 0);
+  assert.equal(calls.length, 2);
+});
+
+test("overlapping calls send just once and report the in-flight review as pending", async () => {
+  await followHmltd();
+  const started = Promise.withResolvers();
+  const finish = Promise.withResolvers();
+  sendToTelegram = () => { started.resolve(); return finish.promise; };
+
+  const first = newReviews([card("r2")]);
+  await Promise.race([started.promise, first.then(() => assert.fail("the first call never attempted delivery"))]);
+  try {
+    assert.deepEqual(await newReviews([card("r2")]), { ok: true, sent: 0, pending: ["r2"] });
+    assert.equal(calls.length, 1);
+  } finally {
+    finish.resolve(telegramOk());
+  }
+  assert.deepEqual(await first, { ok: true, sent: 1, pending: [] });
+  assert.deepEqual(await newReviews([card("r2")]), { ok: true, sent: 0, pending: [] });
+});
+
+test("a timeout or unreadable response may have delivered the review, so neither is retried", async () => {
+  await followHmltd();
+  sendToTelegram = (call, signal) => {
+    if (call.text.includes("r2")) {
+      assert.ok(signal instanceof AbortSignal);
+      throw new DOMException("send timed out", "TimeoutError");
+    }
+    return new Response("bad gateway", { status: 502 });
+  };
+  assert.deepEqual(await newReviews([card("r2"), card("r3")]), { ok: true, sent: 0, pending: [] });
+  sendToTelegram = telegramOk;
+  assert.deepEqual(await newReviews([card("r2"), card("r3")]), { ok: true, sent: 0, pending: [] });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(db.prepare("SELECT state FROM follow_delivery ORDER BY review_id").all().map((r) => r.state),
+    ["unknown", "unknown"]);
+});
+
+test("legacy deduplication records prevent redelivery after the upgrade", async () => {
+  await followHmltd();
+  db.prepare("INSERT INTO follow_sent VALUES (?, ?, ?)").run(OWNER, "r2", "2026-11-01");
+  assert.deepEqual(await newReviews([card("r2")]), { ok: true, sent: 0, pending: [] });
+  assert.equal(calls.length, 0);
+});
+
 test("many followers are told in portions, each once, and the review stays pending until all have it", async () => {
   await newReviews([card("r1")]);
   for (let uid = 100; uid < 160; uid++) {
@@ -529,12 +616,14 @@ test("many followers are told in portions, each once, and the review stays pendi
     db.prepare("INSERT INTO follows (user_id, name_key, artist_name, mbid, created_at) VALUES (?, 'hmltd', 'HMLTD', 'H', '2026-11-01')").run(uid);
   }
   calls = [];
-  const first = await newReviews([card("r2", "H", 124)]);
-  assert.ok(first.sent > 20 && first.sent < 60, `a portion: ${first.sent}`);
-  assert.deepEqual(first.pending, ["r2"]);
-  const second = await newReviews([card("r2", "H", 124)]);
-  assert.equal(first.sent + second.sent, 60);
-  assert.deepEqual(second.pending, []);
+  let sent = 0;
+  for (let i = 0; i < 6 && sent < 60; i++) {
+    const portion = await newReviews([card("r2", "H", 124)]);
+    assert.ok(portion.sent > 0 && portion.sent < 60, `a portion: ${portion.sent}`);
+    sent += portion.sent;
+    assert.deepEqual(portion.pending, sent === 60 ? [] : ["r2"]);
+  }
+  assert.equal(sent, 60);
   const told = calls.filter((c) => c.method === "sendMessage").map((c) => c.chat_id);
   assert.equal(new Set(told).size, told.length, "nobody is told twice");
 });
@@ -893,6 +982,42 @@ test("a new album of a followed artist comes before Fantano's review, once; the 
   await tick(22);
   await tick(43);
   assert.ok(!calls.some((c) => c.method === "sendPhoto")); // once
+});
+
+test("release notifications wait on a photo 429 and fall back to text for a rejected cover", async (t) => {
+  await press(OWNER, "f:k");
+  const midday = new Date();
+  midday.setUTCHours(12, 0, 0, 0);
+  let time = midday.getTime();
+  t.mock.method(Date, "now", () => time);
+  const tick = async () => {
+    const waits = [];
+    await worker.scheduled({ cron: "30 * * * *", scheduledTime: time }, env, { waitUntil: (p) => waits.push(p) });
+    await Promise.all(waits);
+  };
+  const day = midday.toISOString().slice(0, 10);
+  // Already completed releases must not use up the run's budget before this one.
+  const earlier = new Date(time - 3600_000).toISOString();
+  for (let id = 100; id < 135; id++) {
+    db.prepare("INSERT INTO new_releases VALUES (?, 'radiohead', 'Radiohead', 'Old album', ?, ?)").run(id, day, earlier);
+    db.prepare("INSERT INTO follow_sent VALUES (?, ?, ?)").run(OWNER, `nr:${id}`, earlier);
+  }
+  db.prepare("INSERT INTO new_releases VALUES (30, 'radiohead', 'Radiohead', 'Wall of Eyes', ?, ?)").run(day, midday.toISOString());
+  calls = [];
+  sendToTelegram = () => telegramError(429, { retry_after: 3600 });
+  await tick();
+  assert.deepEqual(calls.map((c) => c.method), ["sendPhoto"]);
+
+  time += 1800_000;
+  await tick();
+  assert.equal(calls.length, 1);
+  time += 1800_000;
+  sendToTelegram = (call) => call.method === "sendPhoto" ? telegramError(400) : telegramOk();
+  await tick();
+  assert.deepEqual(calls.map((c) => c.method), ["sendPhoto", "sendPhoto", "sendMessage"]);
+
+  await tick();
+  assert.equal(calls.length, 3);
 });
 
 test("new albums wait out the quiet hours", async () => {

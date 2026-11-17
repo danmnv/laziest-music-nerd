@@ -187,8 +187,8 @@ FOLLOW_WINDOW = timedelta(days=3)  # a review older than this is no longer news 
 
 def tell_followers(reviews):
     """Hand the Worker each newly posted card, so it messages the people who follow that artist. Unsent ones (the
-    Worker was down, or it had more followers to tell than one run allows) go again with the next check; the Worker
-    never messages a person twice about one review."""
+    Worker was down, Telegram rejected a send temporarily, or the run used up its budget) go again with the next
+    check. The Worker guards against duplicate sends and leaves ambiguous sends alone."""
     url, secret = worker()
     now = datetime.now(timezone.utc)
     todo = [r for r in reviews if r.get("tg_channel_msg") and not r.get("followers_told")

@@ -209,19 +209,21 @@ async function setCommands(env) {
   if (d.ok) await setSetting(env, "commands_v", COMMANDS_V);
 }
 
-async function tg(env, method, params) {
+async function tg(env, method, params, signal) {
   const r = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
+    signal,
   });
   const d = await r.json();
   // A refused custom emoji (the owner's Premium lapsed, or Telegram changed the rule): send it again with ordinary ones
-  if (!d.ok && typeof params.text === "string" && params.text.includes("<tg-emoji")) {
-    console.log(method, "failed with custom emoji, retrying without:", d.description);
-    return tg(env, method, { ...params, text: plainEmoji(params.text) });
+  if (!d.ok && (!signal || (d.ok === false && d.error_code === 400)) &&
+      typeof params.text === "string" && params.text.includes("<tg-emoji")) {
+    if (!signal) console.log(method, "failed with custom emoji, retrying without:", d.description);
+    return tg(env, method, { ...params, text: plainEmoji(params.text) }, signal);
   }
-  if (!d.ok && !String(d.description || "").includes("message is not modified")) console.log(method, "failed:", d.description);
+  if (!signal && !d.ok && !String(d.description || "").includes("message is not modified")) console.log(method, "failed:", d.description);
   return d;
 }
 
@@ -719,7 +721,7 @@ async function askForget(env, uid) {
 
 // Every row about one person. A table with a user_id column that is added later must be added here too
 // (worker/test/forget.test.mjs checks schema.sql for that).
-const USER_TABLES = ["marks", "likes_clear", "likes", "follows", "follow_sent", "users"];
+const USER_TABLES = ["marks", "likes_clear", "likes", "follows", "follow_sent", "follow_delivery", "users"];
 // Kept without the person (the owner, 2026-11-02): their votes move to a random negative ID that no Telegram account
 // has, one per forgotten person, so an album's "at least 3 people" still counts them once.
 const ANON_TABLES = ["mood_votes"];
@@ -1093,12 +1095,12 @@ function artistButton(id) {
   return { text: "💿 Альбомы артиста", callback_data: `da:${id}` };
 }
 
-async function sendCard(env, uid, { text, reply_markup, cover }) {
+async function sendCard(env, uid, { text, reply_markup, cover }, signal) {
   if (cover) {
-    const r = await tg(env, "sendPhoto", { chat_id: uid, photo: cover, caption: text, parse_mode: "HTML", reply_markup });
-    if (r.ok) return r;
+    const r = await tg(env, "sendPhoto", { chat_id: uid, photo: cover, caption: text, parse_mode: "HTML", reply_markup }, signal);
+    if (r.ok || (signal && (r.ok !== false || r.error_code !== 400))) return r;
   }
-  return tg(env, "sendMessage", { chat_id: uid, text, parse_mode: "HTML", reply_markup, link_preview_options: { is_disabled: true } });
+  return tg(env, "sendMessage", { chat_id: uid, text, parse_mode: "HTML", reply_markup, link_preview_options: { is_disabled: true } }, signal);
 }
 
 // The card of an album without Fantano's review. x.fresh: the release date of a just-released album (watchReleases).
@@ -1660,44 +1662,97 @@ async function sendFollows(env, uid, editId) {
 const FOLLOW_BUDGET = 45; // one /api/new-reviews call
 const DAILY_BUDGET = 45; // the daily cron: reminders, then old pinned lists
 
+const SEND_TIMEOUT_MS = 20_000;
+const SEND_OBSERVE_MS = 60_000;
+const RETRY_DELAY_SECONDS = 60;
+
+// Join by the recipient and review, keeping legacy deduplication rows valid.
+const FOLLOW_TARGETS = "SELECT f.id, f.user_id, f.name_key, f.mbid, d.state, d.ready_at FROM follows f " +
+  "LEFT JOIN follow_delivery d ON d.user_id=f.user_id AND d.review_id=? ";
+const NOT_PREVIOUSLY_SENT = " AND NOT EXISTS (SELECT 1 FROM follow_sent s WHERE s.user_id=f.user_id AND s.review_id=?)";
+const deliveryDue = (row) => row.state == null || (row.state === "retry" && row.ready_at <= Date.now());
+const deliveryPending = (row) => row.state == null || row.state === "retry" ||
+  (row.state === "sending" && row.ready_at > Date.now());
+
+// Claim one recipient just before sending. A crashed worker leaves the result unknown after the observation period.
+// Telegram has no send idempotency key, so an ambiguous send is never automatically repeated.
+async function deliverFollow(env, target, rid, budget, sendCost, send) {
+  budget.left -= 1;
+  const claimedUntil = Date.now() + SEND_OBSERVE_MS;
+  const claim = await env.DB.prepare(
+    "INSERT INTO follow_delivery (user_id, review_id, state, ready_at) " +
+    "SELECT f.user_id, ?, 'sending', ? FROM follows f WHERE f.id=? AND f.user_id=?" + NOT_PREVIOUSLY_SENT +
+    " ON CONFLICT(user_id, review_id) DO UPDATE SET state='sending', ready_at=excluded.ready_at " +
+    "WHERE follow_delivery.state='retry' AND follow_delivery.ready_at<=?"
+  ).bind(rid, claimedUntil, target.id, target.user_id, rid, Date.now()).run();
+  if (!claim.meta.changes) return "retry"; // another request owns the attempt, or the follow was removed
+
+  budget.left -= sendCost + 1;
+  let response;
+  try {
+    response = await send(AbortSignal.timeout(SEND_TIMEOUT_MS));
+  } catch {
+    // A timeout, lost connection or unreadable response may follow a successful send.
+  }
+  const owned = "user_id=? AND review_id=? AND state='sending' AND ready_at=?";
+  const key = [target.user_id, rid, claimedUntil];
+  if (response?.ok === true) {
+    // Keep the existing deduplication ledger. Both writes are atomic, even if a retry overlaps.
+    await env.DB.batch([
+      env.DB.prepare("INSERT OR IGNORE INTO follow_sent (user_id, review_id, sent_at) " +
+        "SELECT user_id, review_id, ? FROM follow_delivery WHERE " + owned).bind(now(), ...key),
+      env.DB.prepare("DELETE FROM follow_delivery WHERE " + owned).bind(...key),
+    ]);
+    return "sent";
+  }
+  let state = "unknown";
+  let retryAt = 0;
+  if (response?.ok === false && (response.error_code === 400 || response.error_code === 403)) {
+    state = "skipped"; // invalid message or unreachable recipient
+  } else if (response?.ok === false) {
+    state = "retry";
+    const after = response.parameters?.retry_after;
+    const seconds = Number.isSafeInteger(after) && after > 0 ? after : RETRY_DELAY_SECONDS;
+    retryAt = Date.now() + seconds * 1000;
+    if (response.error_code === 429) budget.throttled = true;
+  }
+  await env.DB.prepare(
+    "UPDATE follow_delivery SET state=?, ready_at=? WHERE " + owned
+  ).bind(state, retryAt, ...key).run();
+  console.log("Follower notification:", state, response?.error_code || "");
+  return state;
+}
+
 // «🔔 Новый обзор» to the people who follow this review's artist, as many as the budget allows.
-// Returns { sent, done }: done = everyone who follows the artist has it now.
 async function tellFollowers(env, r, budget) {
   if (!r || !r.id || !r.artist_name) return { sent: 0, done: true };
-  if (budget.left < 5) return { sent: 0, done: false };
-  budget.left -= 3; // the artist of the review, the follows, those already told
+  if (budget.throttled || budget.left < 2) return { sent: 0, done: false };
+  budget.left -= 2;
   const rid = String(r.id);
   await env.DB.prepare("INSERT INTO review_artists (review_id, artist_name, mbid) VALUES (?,?,?) " +
     "ON CONFLICT(review_id) DO UPDATE SET artist_name=excluded.artist_name, mbid=excluded.mbid").bind(rid, r.artist_name, r.mbid || null).run();
-  const { results } = await env.DB.prepare("SELECT user_id, name_key, mbid FROM follows WHERE name_key=? OR mbid=?")
-    .bind(nameKey(r.artist_name), r.mbid || "").all();
-  const { results: told } = await env.DB.prepare("SELECT user_id FROM follow_sent WHERE review_id=?").bind(rid).all();
-  const done = new Set(told.map((t) => String(t.user_id)));
-  const todo = [];
-  for (const f of results) {
-    if (!followMatches(f, r) || done.has(String(f.user_id))) continue;
-    done.add(String(f.user_id)); // a person may match by both the name and the ID
-    todo.push(f.user_id);
-  }
-  const part = todo.slice(0, Math.max(0, budget.left - 1));
-  if (!part.length) return { sent: 0, done: !todo.length };
-  // the rows first, in one batch: a second call at the same time can't message these people again
-  budget.left -= 1;
-  const rows = await env.DB.batch(part.map((uid) =>
-    env.DB.prepare("INSERT OR IGNORE INTO follow_sent (user_id, review_id, sent_at) VALUES (?,?,?)").bind(uid, rid, now())));
+  const { results } = await env.DB.prepare(FOLLOW_TARGETS + "WHERE (f.name_key=? OR f.mbid=?)" + NOT_PREVIOUSLY_SENT)
+    .bind(rid, nameKey(r.artist_name), r.mbid || "", rid).all();
+  const seen = new Set();
+  const targets = results.filter((f) => followMatches(f, r) && !seen.has(f.user_id) && seen.add(f.user_id));
   const post = r.msg ? `https://t.me/${String(env.CHANNEL).replace(/^@/, "")}/${r.msg}` : null;
   let sent = 0;
-  for (let i = 0; i < part.length; i++) {
-    if (!rows[i] || !rows[i].meta || !rows[i].meta.changes) continue;
-    budget.left -= 1;
-    const d = await tg(env, "sendMessage", {
-      chat_id: part[i], parse_mode: "HTML",
+  let done = true;
+  for (const target of targets) {
+    if (!deliveryPending(target)) continue;
+    if (budget.throttled || budget.left < 3 || !deliveryDue(target)) {
+      done = false;
+      continue;
+    }
+    const state = await deliverFollow(env, target, rid, budget, 1, (signal) => tg(env, "sendMessage", {
+      chat_id: target.user_id, parse_mode: "HTML",
       text: `🔔 Новый обзор: <b>${esc(r.artist_name)} — ${esc(r.album)}</b>${r.score ? ", " + esc(r.score) : ""}`,
       ...(post ? { reply_markup: { inline_keyboard: [[{ text: "Карточка в канале", url: post }]] } } : {}),
-    });
-    if (d.ok) sent++;
+    }, signal));
+    if (state === "sent") sent++;
+    if (state === "retry") done = false;
   }
-  return { sent, done: part.length === todo.length };
+  return { sent, done };
 }
 
 // ---------- the watchdog (hourly and daily cron, watchdog.mjs) ----------
@@ -1748,27 +1803,41 @@ async function watchReleases(env, when) {
   await watchChecks(env, when, quiet).catch((e) => console.log("watchdog failed", e.stack));
   if (!quiet) await tellNewReleases(env, budget); // news found earlier goes first
   await checkArtists(env, when, budget);
-  if (!quiet) await tellNewReleases(env, budget); // then this run's, if requests are left
+  if (!quiet && !budget.throttled) await tellNewReleases(env, budget); // then this run's, if requests are left
 }
 
 async function tellNewReleases(env, budget) {
   const since = new Date(Date.now() - 3 * 864e5).toISOString(); // news older than 3 days isn't news
-  const { results } = await env.DB.prepare("SELECT dz_id, name_key, artist_name, title, release_date FROM new_releases WHERE found_at>=? ORDER BY found_at").bind(since).all();
+  if (budget.left < RELEASE_CARD_COST + 7) return;
+  budget.left -= 1;
+  const { results } = await env.DB.prepare(
+    "SELECT n.dz_id, n.name_key, n.artist_name, n.title, n.release_date FROM new_releases n WHERE n.found_at>=? " +
+    "AND EXISTS (SELECT 1 FROM follows f LEFT JOIN follow_delivery d ON d.user_id=f.user_id AND d.review_id='nr:'||n.dz_id " +
+    "WHERE f.name_key=n.name_key AND (d.state IS NULL OR (d.state='retry' AND d.ready_at<=?)) " +
+    "AND NOT EXISTS (SELECT 1 FROM follow_sent s WHERE s.user_id=f.user_id AND s.review_id='nr:'||n.dz_id)) " +
+    "ORDER BY n.found_at"
+  ).bind(since, Date.now()).all();
   let arch = null;
   let recent = null;
   for (const n of results) {
     const rid = `nr:${n.dz_id}`;
-    const { results: who } = await env.DB.prepare(
-      "SELECT f.user_id FROM follows f WHERE f.name_key=? AND NOT EXISTS (SELECT 1 FROM follow_sent s WHERE s.user_id=f.user_id AND s.review_id=?)")
-      .bind(n.name_key, rid).all();
-    if (!who.length) continue;
-    if (budget.left < RELEASE_CARD_COST + 1) return;
+    if (budget.throttled || budget.left < RELEASE_CARD_COST + 6) return;
+    budget.left -= 1;
+    const { results: who } = await env.DB.prepare(FOLLOW_TARGETS + "WHERE f.name_key=?" + NOT_PREVIOUSLY_SENT)
+      .bind(rid, n.name_key, rid).all();
+    const due = who.filter(deliveryDue);
+    if (!due.length) continue;
     budget.left -= 3; // the album at Deezer, archive.json, reviews.json
     arch = arch || await archive(env);
     recent = recent || await reviews(env);
     // Fantano got there first (a review before the release): the usual «Новый обзор» message covers it
     if (reviewedIn(arch, n.artist_name, n.title) || reviewedIn(recent, n.artist_name, n.title)) {
-      for (const f of who) await env.DB.prepare("INSERT OR IGNORE INTO follow_sent (user_id, review_id, sent_at) VALUES (?,?,?)").bind(f.user_id, rid, now()).run();
+      budget.left -= 1;
+      await env.DB.prepare(
+        "INSERT INTO follow_delivery (user_id, review_id, state, ready_at) " +
+        "SELECT user_id, ?, 'skipped', 0 FROM follows WHERE name_key=? " +
+        "ON CONFLICT(user_id, review_id) DO UPDATE SET state='skipped', ready_at=0 WHERE follow_delivery.state='retry'"
+      ).bind(rid, n.name_key).run();
       continue;
     }
     const d = await deezerJson(`album/${n.dz_id}`);
@@ -1781,18 +1850,11 @@ async function tellNewReleases(env, budget) {
       cover: d.cover_xl || d.cover_big, fresh: n.release_date,
       intro: `🔔 Новый ${ep ? "EP" : "альбом"} артиста, за которым ты следишь`,
     }, arch);
-    // as many followers as the budget allows, their rows in one batch first; the rest get it next hour
-    const part = who.slice(0, Math.floor((budget.left - 1) / 2));
-    if (!part.length) return;
-    budget.left -= 1;
-    const rows = await env.DB.batch(part.map((f) =>
-      env.DB.prepare("INSERT OR IGNORE INTO follow_sent (user_id, review_id, sent_at) VALUES (?,?,?)").bind(f.user_id, rid, now())));
-    for (let i = 0; i < part.length; i++) {
-      if (!rows[i] || !rows[i].meta || !rows[i].meta.changes) continue;
-      budget.left -= 2; // a photo, and a text message if the photo fails
-      await sendCard(env, part[i].user_id, card);
+    for (const target of due) {
+      // Photo, fallback text (including a possible plain-emoji retry), claim and final state.
+      if (budget.throttled || budget.left < 5) return;
+      await deliverFollow(env, target, rid, budget, 3, (signal) => sendCard(env, target.user_id, card, signal));
     }
-    if (part.length < who.length) return;
   }
 }
 

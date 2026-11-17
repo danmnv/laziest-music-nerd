@@ -34,10 +34,11 @@ function seed(uid, pinned) {
   db.prepare("INSERT INTO mood_votes (user_id, review_id, mood, vote) VALUES (?,?,?,?)").run(uid, "k", "ночь", "y");
   db.prepare("INSERT INTO follows (user_id, name_key, artist_name, created_at) VALUES (?,?,?,?)").run(uid, "radiohead", "Radiohead", "2026-11-01");
   db.prepare("INSERT INTO follow_sent (user_id, review_id, sent_at) VALUES (?,?,?)").run(uid, "nr:9", "2026-11-01");
+  db.prepare("INSERT INTO follow_delivery VALUES (?, ?, ?, ?)").run(uid, "k", "retry", 123);
   for (const k of ["menu", "qpos", "qfrom"]) db.prepare("INSERT INTO settings (key, value) VALUES (?,?)").run(`${k}:${uid}`, "1");
 }
 
-const rowsOf = (uid) => Object.fromEntries(["users", "marks", "likes", "likes_clear", "mood_votes", "follows", "follow_sent"]
+const rowsOf = (uid) => Object.fromEntries(["users", "marks", "likes", "likes_clear", "mood_votes", "follows", "follow_sent", "follow_delivery"]
   .map((t) => [t, db.prepare(`SELECT COUNT(*) AS n FROM ${t} WHERE user_id=?`).get(uid).n]));
 const settingsOf = (uid) => db.prepare("SELECT COUNT(*) AS n FROM settings WHERE key LIKE ?").get(`%:${uid}`).n;
 
@@ -68,18 +69,18 @@ test("/forget only asks; nothing is deleted before the button", async () => {
   assert.deepEqual(ask.reply_markup.inline_keyboard[0].map((b) => b.callback_data), ["fg:y", "fg:n"]);
   assert.equal(rowsOf(ME).marks, 1);
   await press("fg:n");
-  assert.deepEqual(rowsOf(ME), { users: 1, marks: 1, likes: 1, likes_clear: 1, mood_votes: 1, follows: 1, follow_sent: 1 });
+  assert.deepEqual(rowsOf(ME), { users: 1, marks: 1, likes: 1, likes_clear: 1, mood_votes: 1, follows: 1, follow_sent: 1, follow_delivery: 1 });
 });
 
 test("«Да, удалить всё» leaves no row about the person and keeps everyone else's", async () => {
   await press("fg:y");
-  assert.deepEqual(rowsOf(ME), { users: 0, marks: 0, likes: 0, likes_clear: 0, mood_votes: 0, follows: 0, follow_sent: 0 });
+  assert.deepEqual(rowsOf(ME), { users: 0, marks: 0, likes: 0, likes_clear: 0, mood_votes: 0, follows: 0, follow_sent: 0, follow_delivery: 0 });
   assert.equal(settingsOf(ME), 0);
   // the vote stays, without the person: a negative ID no Telegram account has (the owner, 2026-11-02)
   const kept = db.prepare("SELECT user_id, review_id, mood, vote FROM mood_votes WHERE user_id < 0").all();
   assert.equal(kept.length, 1);
   assert.deepEqual([kept[0].review_id, kept[0].mood, kept[0].vote], ["k", "ночь", "y"]);
-  assert.deepEqual(rowsOf(OTHER), { users: 1, marks: 1, likes: 1, likes_clear: 1, mood_votes: 1, follows: 1, follow_sent: 1 });
+  assert.deepEqual(rowsOf(OTHER), { users: 1, marks: 1, likes: 1, likes_clear: 1, mood_votes: 1, follows: 1, follow_sent: 1, follow_delivery: 1 });
   assert.equal(settingsOf(OTHER), 3);
   // the old pinned list in the chat goes too, and the menu keyboard is taken away
   assert.ok(calls.some((c) => c.method === "unpinChatMessage" && c.message_id === 33));
