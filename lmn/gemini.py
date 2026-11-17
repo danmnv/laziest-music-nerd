@@ -16,6 +16,7 @@ MODELS = [m.strip() for m in (os.environ.get("GEMINI_MODEL") or
 MODEL = MODELS[0]
 BUDGET_SEC = 300      # per review, all models and retries together, so a slow day can't eat the hourly run
 CALL_TIMEOUT = 150
+MIN_REQUEST_SEC = 15
 # Watching a video is the slow request (~45k tokens): it gets longer (owner, 2026-11-02: a request we stop waiting for
 # is likely still counted against the daily limit, and its answer is lost). 90 s timed out three times on 2026-11-02.
 # The owner (2026-11-02): three times that, "нам особо некуда торопиться". The review's whole budget is 20 min, not 27,
@@ -168,21 +169,27 @@ last_sec = None  # how long the answer that generate() returned took, for the av
 requests = {}  # HTTP requests sent to each model in this process, answered or not: all count against its daily limit
 
 
-def generate(body, api_key, budget=BUDGET_SEC, sleep=time.sleep, clock=time.monotonic, call_timeout=CALL_TIMEOUT):
-    """POST generateContent, walking down MODELS. Returns (model, response) or (None, None)."""
+def generate(body, api_key, budget=BUDGET_SEC, sleep=time.sleep, clock=time.monotonic, call_timeout=CALL_TIMEOUT,
+             before_request=None, model_order=None):
+    """POST generateContent, walking down MODELS. A caller may veto each HTTP attempt."""
     global last_sec
     last_sec = None
     deadline = clock() + budget
-    for model in MODELS:
+    for model in MODELS if model_order is None else model_order:
         if model in _unavailable:
             continue
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         for attempt in range(2):
             left = deadline - clock()
-            if left < 15:
+            if left < MIN_REQUEST_SEC:
                 print("gemini: time budget for this review used up")
                 return None, None
+            if before_request is not None and not before_request(model, deadline):
+                break
             t0 = clock()
+            left = deadline - t0
+            if left < MIN_REQUEST_SEC:
+                return None, None
             requests[model] = requests.get(model, 0) + 1
             try:
                 out = http.get_json(url, json_body=body, method="POST", headers={"x-goog-api-key": api_key},
@@ -202,7 +209,7 @@ def generate(body, api_key, budget=BUDGET_SEC, sleep=time.sleep, clock=time.mono
                 if e.status in (0, 504):  # no answer in time (ours or Google's own deadline): waiting again on the same model
                     break          # (2026-11-02: 3.8 twice and 3.7 timed out, 3.5 was never tried); the next model now
                 wait = 30 if "PerMinute" in e.body else 10
-                if attempt == 0 and deadline - clock() > wait + 15:  # timeout, overload or per-minute limit:
+                if attempt == 0 and deadline - clock() > wait + MIN_REQUEST_SEC:  # timeout, overload or per-minute limit:
                     sleep(wait)                                       # one more try a bit later, then the next model
     print("gemini: no model answered")
     return None, None
