@@ -4,10 +4,11 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
-from lmn import briefs, gemini, llm, transcribe
+from lmn import briefs, gemini, llm, transcribe, transcribe_quota
 
 SPOKEN = ("Hi everyone, Anthony Fantano here, the internet's busiest music nerd, and it's time for a review of the new "
           "Artist 1 album, Album 1. ") * 24
@@ -209,6 +210,24 @@ class Run(unittest.TestCase):
             self.go(lambda n: SPOKEN, env={"VIDEO_LIMIT": "4"}, models=("lite", "hydrogen"))
         self.assertEqual([call.kwargs["model_order"] for call in ask.call_args_list],
                          [["lite"], ["lite"], ["hydrogen", "lite"], ["lite"]])
+
+    def test_late_pass_prioritizes_one_retelling_and_continues_with_lite(self):
+        self.data[self.archive[1]["id"]].update(vf=transcribe.FAIL_MAX, vr=["lite"], vt=1)
+        (self.dir / "briefs.json").write_text(json.dumps(self.data))
+        start = datetime(2026, 11, 19, 7, 7, tzinfo=timezone.utc)
+        quota_path = self.dir / transcribe_quota.FILENAME
+        transcribe_quota.claim(quota_path, "late", "run", 360, {"lite": 24, "hydrogen": 4, "flash": 8},
+                               {"lite": 8, "hydrogen": 1}, start)
+        env = {"TRANSCRIBE_QUOTA_SLOT": "late", "TRANSCRIBE_QUOTA_OWNER": "run", "VIDEO_LIMIT": "2"}
+        with mock.patch.object(transcribe, "datetime") as clock, \
+                mock.patch.object(transcribe, "RETELL", True), mock.patch.object(transcribe, "RETELL_MODEL", "hydrogen"):
+            clock.now.return_value = start
+            calls, _ = self.go(lambda n: SPOKEN, env=env, models=("lite", "flash", "hydrogen"))
+        self.assertEqual(calls, ["v2", "v6"])
+        self.assertTrue(self.saved(2).startswith(transcribe.RETOLD))
+        complete = transcribe_quota.read(quota_path, "2026-11-18")["passes"]["late"]
+        self.assertEqual(complete["requests"], {"hydrogen": 1, "lite": 1})
+        self.assertEqual(complete["minutes"], 12)
 
     def test_archive_paces_fallbacks_and_reserves_their_minutes(self):
         from functools import partial

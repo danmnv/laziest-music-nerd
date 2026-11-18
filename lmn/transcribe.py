@@ -7,17 +7,19 @@ from that text, as it did for the reviews with a text on the site. The transcrip
 (data/transcripts/<review id>.txt), so a later change of the description's rules needs no video again.
 
 The free tier allows 8 hours of YouTube video a day. In Actions this job uses the archive's Gemini project,
-separate from the new-review pipeline. Retries and model fallbacks count against the same per-run limits.
+separate from the new-review pipeline. Scheduled passes share a daily reservation that includes retries and fallbacks.
 """
 import difflib
 import json
 import os
 import re
+import sys
 import time
+from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 
-from . import briefs, gemini, tnd
+from . import briefs, gemini, tnd, transcribe_quota
 
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 VIDEO_MINUTES = int(os.environ.get("VIDEO_MINUTES") or 360)
@@ -124,19 +126,27 @@ def plausible_retelling(text):
 
 
 class RunBudget:
-    def __init__(self):
-        self.minutes_left = VIDEO_MINUTES
-        self.deadline = time.monotonic() + 60 * RUN_MINUTES
+    def __init__(self, reservation=None, seconds_to_reset=None):
+        self.minutes = VIDEO_MINUTES if reservation is None else reservation["minutes"]
+        self.minutes_left = self.minutes
+        self.limits = None if reservation is None else reservation["requests"]
+        seconds = 60 * RUN_MINUTES
+        if seconds_to_reset is not None:
+            seconds = min(seconds, seconds_to_reset)
+        self.deadline = time.monotonic() + seconds
         self.next_request = 0
 
-    def model_spent(self, model):
+    def model_limit(self, model):
+        if self.limits is not None:
+            return self.limits.get(model, 0)
         if model == RETELL_MODEL:
-            limit = PER_RETELL_MODEL
-        elif PER_LITE_MODEL is not None and model.endswith("-flash-lite"):
-            limit = PER_LITE_MODEL
-        else:
-            limit = PER_MODEL
-        return gemini.requests.get(model, 0) >= limit
+            return PER_RETELL_MODEL
+        if PER_LITE_MODEL is not None and model.endswith("-flash-lite"):
+            return PER_LITE_MODEL
+        return PER_MODEL
+
+    def model_spent(self, model):
+        return gemini.requests.get(model, 0) >= self.model_limit(model)
 
     def reserve(self, minutes, model, deadline):
         if self.minutes_left < minutes or self.model_spent(model):
@@ -209,6 +219,17 @@ def _load(name, default):
     return json.loads(p.read_text()) if p.exists() else default
 
 
+def claim_quota():
+    budget = RunBudget()
+    main = {model: budget.model_limit(model) for model in gemini.MODELS}
+    late = {model: 1 if model == RETELL_MODEL else 8
+            for model in main if model == RETELL_MODEL or model.endswith("-flash-lite")}
+    transcribe_quota.claim(
+        DATA / transcribe_quota.FILENAME, os.environ["TRANSCRIBE_QUOTA_SLOT"], os.environ["TRANSCRIBE_QUOTA_OWNER"],
+        budget.minutes, main, late, datetime.now(timezone.utc),
+    )
+
+
 def run():
     api_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
     if not api_key:
@@ -220,17 +241,30 @@ def run():
         return cards(api_key, os.environ["TRANSCRIBE_CARDS"].strip())
     if os.environ.get("TRANSCRIBE_PROBE"):
         return probe(api_key, re.findall(r"[0-9a-f]{24}", os.environ["TRANSCRIBE_PROBE"]))
+    slot = os.environ.get("TRANSCRIBE_QUOTA_SLOT")
+    quota_path = DATA / transcribe_quota.FILENAME
+    if slot:
+        now = datetime.now(timezone.utc)
+        claim = transcribe_quota.reservation(quota_path, slot, os.environ["TRANSCRIBE_QUOTA_OWNER"], now)
+        if claim is None:
+            print("transcripts: no active reservation for this pass")
+            return
+        state, reservation, reset = claim
+        run_budget = RunBudget(reservation, (reset - now).total_seconds())
+    else:
+        run_budget = RunBudget()
     archive = _load("archive.json", [])
     bpath = DATA / "briefs.json"
     data = _load("briefs.json", {})
     limit = int(os.environ.get("VIDEO_LIMIT") or 0)
     items = todo(archive, data, have())
-    lite_limit = PER_MODEL if PER_LITE_MODEL is None else PER_LITE_MODEL
-    retell_limit = f", {PER_RETELL_MODEL} for {RETELL_MODEL} (retellings)" if RETELL_MODEL else ""
-    print(f"transcripts: {len(have())} done, {len(items)} to write; up to {VIDEO_MINUTES} min of video "
-          f"over {RUN_MINUTES} min, {lite_limit} requests per Flash Lite, {PER_MODEL} per other model"
-          + retell_limit + (f", {limit} reviews" if limit else ""))
-    run_budget = RunBudget()
+    if slot == "late" and run_budget.model_limit(RETELL_MODEL):
+        retelling = next((i for i, item in enumerate(items) if item.get("retell")), None)
+        if retelling is not None:
+            items.insert(0, items.pop(retelling))
+    limits = {model: run_budget.model_limit(model) for model in gemini.MODELS}
+    print(f"transcripts: {len(have())} done, {len(items)} to write; up to {run_budget.minutes:g} min of video, "
+          f"HTTP request limits: {limits}" + (f", {limit} reviews" if limit else ""))
     made, failed, streak, lengths = 0, 0, 0, {}
     for n, a in enumerate(items):
         if limit and made + failed >= limit:
@@ -248,7 +282,7 @@ def run():
         if mins is None or mins > MAX_VIDEO_MIN:
             continue  # gone, private, or too long: its retelling stays
         if mins > run_budget.minutes_left:
-            print(f"the next video would exceed the {VIDEO_MINUTES} min allowance")
+            print(f"the next video would exceed the {run_budget.minutes:g} min allowance")
             break
         available = [m for m in gemini.MODELS if m not in gemini._unavailable and not run_budget.model_spent(m)]
         if not available:
@@ -258,8 +292,8 @@ def run():
         retell = bool(a.get("retell"))
         tried = set() if retell else set(v.get("vr", []))
         model_order = [m for m in available if m != RETELL_MODEL and m not in tried]
-        if retell and not v.get("vt") and RETELL_MODEL in available:
-            model_order.insert(0, RETELL_MODEL)  # a retelling retry uses the regular models
+        if retell and (slot == "late" or not v.get("vt")) and RETELL_MODEL in available:
+            model_order.insert(0, RETELL_MODEL)
         if not model_order:
             continue
         got, text, model = ask(a, api_key, mins, retell=retell, run_budget=run_budget, model_order=model_order)
@@ -287,8 +321,11 @@ def run():
             briefs.save(bpath, data)
             failed += 1
             print(f"  - {a['artist_name']} - {a['album']}: no usable {'retelling' if retell else 'transcript'} ({got}, {model})")
+    used = run_budget.minutes - run_budget.minutes_left
+    if slot:
+        transcribe_quota.settle(quota_path, state, reservation, used, gemini.requests)
     print(f"transcripts: made {made}, unusable {failed}, "
-          f"{VIDEO_MINUTES - run_budget.minutes_left:.0f} min of video requested, HTTP requests by model: {gemini.requests}")
+          f"{used:.0f} min of video requested, HTTP requests by model: {gemini.requests}")
 
 
 def compare(api_key, n):
@@ -379,4 +416,7 @@ def probe(api_key, ids):
                 print(f"    {text[:200]!r}")
 
 if __name__ == "__main__":
-    run()
+    if sys.argv[1:] == ["--claim-quota"]:
+        claim_quota()
+    else:
+        run()
