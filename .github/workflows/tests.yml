@@ -32,3 +32,51 @@ jobs:
           DRY_LIMIT: "4"
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           # no GEMINI_API_KEY here on purpose: the free daily quota is for real cards
+
+  backup-preflight:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/fix-d1-backup'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Read-only D1 backup query diagnosis
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER: npx --yes wrangler@4.45.0
+          DB: laziest-music-nerd
+        run: |
+          python3 - <<'PY'
+          import json, re, subprocess
+          from lmn import verify_backup
+          original = subprocess.run
+          def diagnose(*args, **kwargs):
+              print("Running read-only query", flush=True)
+              try:
+                  result = original(*args, **kwargs)
+              except subprocess.CalledProcessError as error:
+                  print("Wrangler exit code:", error.returncode)
+                  raw = (error.stdout or "") + (error.stderr or "")
+                  for marker in ("SQLITE_AUTH", "SQLITE_ERROR", "not authorized", "no such table", "no such function", "Authentication error", "Couldn't find DB", "Unknown argument"):
+                      if marker in raw:
+                          print("Known error category:", marker)
+                  print("Numeric error codes:", re.findall(r'"code"\s*:\s*(\d+)', raw))
+                  raise SystemExit(1)
+              try:
+                  data = json.loads(result.stdout)
+              except ValueError:
+                  print("Wrangler output is not JSON")
+                  raise SystemExit(1)
+              print("JSON root type:", type(data).__name__)
+              if isinstance(data, list):
+                  print("Result entries:", len(data))
+                  for entry in data:
+                      print("Entry keys:", sorted(entry))
+                      print("Success flag:", entry.get("success"))
+              return result
+          verify_backup.subprocess.run = diagnose
+          verify_backup.live_counts()
+          print("Read-only backup queries passed; counts are not logged.")
+          PY
