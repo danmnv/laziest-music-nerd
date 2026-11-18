@@ -26,6 +26,11 @@ const STATUS_ICON = { later: " ⏳", done: " ✓", nope: " ✗" };
 const LIST_HEAD = "<b>Последние 30 обзоров Фантано</b>\n\n"; // the channel's pinned list (lmn/card.py LIST_HEAD)
 const MESSAGE_LIMIT = 4096;
 const CAPTION_LIMIT = 1024; // a photo's caption
+const FANTANO_ARTISTS = new Map([
+  ["drake", "Drake"],
+  ["taylor_swift", "Taylor Swift"],
+  ["death_grips", "Death Grips"],
+]);
 // The stored mood words. The order is fixed: buttons carry the index (old messages too), votes store the words; words are
 // only appended. The same list is lmn/gemini.py MOODS (a test keeps them equal).
 const MOODS = ["для тренировки", "для настроения", "для работы за столом", "для тусовки", "в дорогу", "на прогулку", "ночью",
@@ -272,13 +277,16 @@ async function onUpdate(u, env) {
   if (text === "/random" || text === RANDOM_BUTTON) return sendRandom(env, uid);
   if (text === "/later" || text === LATER_BUTTON || text === OLD_LATER_BUTTON) return sendLater(env, uid);
   if (text === "/liked" || text === LIKED_BUTTON) return sendLiked(env, uid);
+  const aboutFantano = text === "/start about_fantano";
+  const artist = text.startsWith("/start search_") && FANTANO_ARTISTS.get(text.slice("/start search_".length));
   const open = openFromStart(text);
-  if (open) {
-    // an album tapped in a pinned list (the channel's or this chat's): its card here. Telegram sent "/start …" for the
-    // tap; it is removed so the chat holds only cards.
+  if (open || aboutFantano || artist) {
+    // A private deep link greets new users and removes the command for users who already know the bot.
     const known = await env.DB.prepare("SELECT 1 FROM users WHERE user_id=?").bind(uid).first();
     if (!known) await welcome(env, uid);
     else await tg(env, "deleteMessage", { chat_id: uid, message_id: m.message_id });
+    if (aboutFantano) return sendAboutFantano(env, uid);
+    if (artist) return search(env, uid, artist);
     return openCard(env, uid, open);
   }
   if (text.startsWith("/start")) return welcome(env, uid);
@@ -295,16 +303,44 @@ async function onUpdate(u, env) {
 
 async function welcome(env, uid) {
   await env.DB.prepare("INSERT OR IGNORE INTO users (user_id, started_at) VALUES (?, ?)").bind(uid, now()).run();
-  const channel = String(env.CHANNEL || "").replace(/^@/, "");
+  const about = startLink(env, "about_fantano");
   await tg(env, "sendMessage", {
     chat_id: uid,
     parse_mode: "HTML",
     link_preview_options: { is_disabled: true },
-    text: `Привет! ${ce(env, "wave")} Здесь мы знакомимся с новой музыкой, отталкиваясь от обзоров Anthony Fantano.\n\n` + helpText(env),
+    text: `<b>Привет!</b> ${ce(env, "wave")} Здесь мы знакомимся с новой музыкой, отталкиваясь от обзоров ` +
+      `<a href="${about}">Anthony Fantano (кто? что?)</a>.\n\n` + helpText(env),
     reply_markup: MENU,
   });
   await setSetting(env, `menu:${uid}`, MENU_V);
   await dropDmPin(env, uid);
+}
+
+function sendAboutFantano(env, uid) {
+  const artistLink = (key) => `<a href="${startLink(env, "search:" + key)}">${FANTANO_ARTISTS.get(key)}</a>`;
+  const paragraphs = [
+    "Каждый день на стриминги загружают больше ста тысяч треков. Всё это не переслушать, " +
+      "а публиковать все новинки подряд — значит спамить. Поэтому мы берём за основу обзоры Энтони Фантано. " +
+      "В канале по ним выходят карточки с описанием альбома, оценкой и ссылками, где его послушать.",
+    "Фантано — американский музыкальный критик. С 2009 года он ведёт The Needle Drop на YouTube и выпускает " +
+      "в среднем около трёх обзоров альбомов и EP в неделю. В обзорах он разбирает, как звучит альбом, " +
+      "о чём песни и как они складываются вместе.",
+    `У него выходят обзоры и на звёзд вроде ${artistLink("drake")} и ${artistLink("taylor_swift")}, ` +
+      `и на артистов из андеграунда. ${artistLink("death_grips")} он поддержал ещё в начале их карьеры и помог группе найти свою аудиторию. ` +
+      "The New York Times посвятила Фантано профиль под заголовком «Единственный музыкальный критик, который имеет значение (если вам меньше 25)». " +
+      "В рейтинге влияния хип-хоп-медиа Complex поставил его выше всех других музыкальных критиков.",
+    "Канал строится вокруг его обзоров. У бота охват шире. В нём можно найти альбомы, которых Фантано не обозревал, " +
+      "и подписаться на артистов, чтобы узнавать об их новых релизах, даже если на них не выйдет обзор.",
+    "Мнения критиков — всего лишь их мнения. Иногда интересно разобраться, почему Фантано услышал альбом совсем иначе, чем ты. " +
+      "Иногда достаточно найти в его обзорах пару альбомов на неделю. Пусть за новинками следит the internet’s busiest music nerd. " +
+      "Нам в laziest music nerd так проще.",
+  ];
+  return tg(env, "sendMessage", {
+    chat_id: uid,
+    text: paragraphs.join("\n\n"),
+    parse_mode: "HTML",
+    link_preview_options: { is_disabled: true },
+  });
 }
 
 function helpText(env) {
@@ -699,7 +735,8 @@ function tgLen(html) {
 // Above the channel's pinned list: a short welcome and how the channel and the bot work (lmn/card.py pin_intro)
 function pinIntro(env) {
   const bot = env.BOT_USERNAME;
-  return "<b>Привет!</b> 👋 Здесь мы знакомимся с новой музыкой, отталкиваясь от обзоров Anthony Fantano.\n\n" +
+  return "<b>Привет!</b> 👋 Здесь мы знакомимся с новой музыкой, отталкиваясь от обзоров " +
+    `<a href="https://t.me/${bot}?start=about_fantano">Anthony Fantano (кто? что?)</a>.\n\n` +
     "<b>Канал:</b> карточка каждого нового обзора с оценкой, описанием, критиками, треклистом и ссылками, где послушать.\n" +
     `<b>Бот</b> <a href="https://t.me/${bot}">@${bot}</a>: поиск любого альбома из архива, ` +
     "«Наверстать» пропущенные обзоры, списки «Послушать потом» и «Понравившееся», сообщения о новых альбомах артистов, за которыми следишь.\n" +

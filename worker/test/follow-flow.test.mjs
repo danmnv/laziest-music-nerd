@@ -738,9 +738,43 @@ test("no pinned list in a private chat: an old one goes at the next mark, «⏳ 
   assert.equal(list.reply_markup.inline_keyboard[0][0].text, "⏳ Radiohead — Kid A"); // the first put off first, as in «Наверстать»
 });
 
-test("/start pins nothing in the private chat", async () => {
+test("/start links to the Fantano introduction and pins nothing", async () => {
   await say(OTHER, "/start");
+  assert.ok(calls[0].text.includes('<a href="https://t.me/bot?start=about_fantano">Anthony Fantano (кто? что?)</a>'));
   assert.ok(!calls.some((c) => c.method === "pinChatMessage"));
+});
+
+test("the Fantano link sends a separate private message with three links to ordinary artist searches", async () => {
+  await say(OTHER, "/start about_fantano");
+  const messages = calls.filter((call) => call.method === "sendMessage");
+  assert.equal(messages.length, 2, "a new user gets the welcome followed by the introduction");
+  const [welcome, about] = messages;
+  assert.match(welcome.text, /^<b>Привет!<\/b>/);
+  assert.equal(about.chat_id, OTHER);
+  assert.equal(about.parse_mode, "HTML");
+  assert.deepEqual(about.link_preview_options, { is_disabled: true });
+  assert.match(about.text, /^Каждый день на стриминги/);
+  const links = [...about.text.matchAll(/<a href="https:\/\/t\.me\/bot\?start=([a-z_]+)">([^<]+)<\/a>/g)];
+  assert.deepEqual(links.map((match) => match[2]), ["Drake", "Taylor Swift", "Death Grips"]);
+
+  calls = [];
+  const click = (payload) => tgUpdate({
+    message: { chat: { type: "private" }, from: { id: OWNER }, message_id: 42, text: `/start ${payload}` },
+  });
+  await click("about_fantano");
+  assert.deepEqual(calls.map((call) => call.method), ["deleteMessage", "sendMessage"]);
+  assert.deepEqual(calls[1], { ...about, chat_id: OWNER });
+
+  for (const [, payload, name] of links) {
+    calls = [];
+    await say(OWNER, name);
+    const typed = calls;
+    assert.match(typed[0].text, new RegExp(name));
+    calls = [];
+    await click(payload);
+    assert.deepEqual(calls[0], { method: "deleteMessage", chat_id: OWNER, message_id: 42 });
+    assert.deepEqual(calls.slice(1), typed, name);
+  }
 });
 
 test("a link from a pinned list: the card in the private chat, the «/start» it sent removed", async () => {
@@ -754,7 +788,7 @@ test("a link from a pinned list: the card in the private chat, the «/start» it
   calls = [];
   await tgUpdate({ message: { chat: { type: "private" }, from: { id: 3 }, message_id: 7, text: `/start mb_${BENDS}` } });
   assert.equal(calls.filter((c) => c.method === "deleteMessage").length, 0);
-  assert.match(calls[0].text, /^Привет!/);
+  assert.match(calls[0].text, /^<b>Привет!<\/b>/);
   assert.ok(calls.some((c) => c.method === "sendPhoto" && c.chat_id === 3 && c.caption.includes("The Bends")));
 });
 
