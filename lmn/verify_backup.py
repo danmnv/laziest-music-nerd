@@ -11,6 +11,12 @@ TABLES = """
 SELECT name FROM sqlite_schema WHERE type='table'
 AND name NOT GLOB 'sqlite_*' AND name NOT GLOB '_cf_*' ORDER BY name
 """
+# Cloudflare workerd sets SQLITE_LIMIT_COMPOUND_SELECT to five.
+D1_SELECT_LIMIT = 5
+
+
+class BackupQueryError(Exception):
+    """A fixed diagnostic safe for the public workflow log."""
 
 
 def count_query(tables):
@@ -23,20 +29,28 @@ def count_query(tables):
 
 
 def live_counts():
-    def execute(sql):
+    def execute(sql, failure):
         cmd = shlex.split(os.environ["WRANGLER"]) + [
             "d1", "execute", os.environ["DB"], "--remote", "--json", "--command", sql,
         ]
-        call = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        entries = json.loads(call.stdout)
-        if not entries or any(entry.get("success") is not True for entry in entries):
-            raise ValueError("D1 query failed")
-        return [row for entry in entries for row in entry["results"]]
+        try:
+            call = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            entries = json.loads(call.stdout)
+            if not entries or any(entry["success"] is not True for entry in entries):
+                raise ValueError("D1 query failed")
+            return [row for entry in entries for row in entry["results"]]
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+            raise BackupQueryError(failure) from None
 
-    tables = [row["name"] for row in execute(TABLES)]
+    tables = [row["name"] for row in execute(TABLES, "D1: не удалось получить список таблиц")]
     if "users" not in tables:
         raise ValueError("D1 has no users table")
-    return {row["name"]: row["n"] for row in execute(count_query(tables))}
+    counts = {}
+    for start in range(0, len(tables), D1_SELECT_LIMIT):
+        batch = tables[start:start + D1_SELECT_LIMIT]
+        rows = execute(count_query(batch), "D1: не удалось подсчитать строки для проверки бэкапа")
+        counts.update((row["name"], row["n"]) for row in rows)
+    return counts
 
 
 def dump_counts(path):
@@ -71,6 +85,8 @@ def main():
             verify(before, dump_counts(dump), after)
         else:
             raise ValueError("unknown backup check command")
+    except BackupQueryError as error:
+        sys.exit(f"::error::{error}")
     except (OSError, sqlite3.Error, subprocess.SubprocessError, ValueError, KeyError):
         # The workflow is public. Do not emit D1 output, SQL or counts.
         sys.exit("::error::Не удалось подтвердить целостность и полноту выгрузки D1")

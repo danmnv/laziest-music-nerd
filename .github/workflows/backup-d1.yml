@@ -41,7 +41,11 @@ jobs:
           umask 077
           mkdir -p "$RUNNER_TEMP/b"
           python3 -m lmn.verify_backup capture "$RUNNER_TEMP/b/before.json"
-          $WRANGLER d1 export "$DB" --remote --output "$RUNNER_TEMP/b/dump.sql"
+          # Wrangler prints a signed URL for the unencrypted export. Keep it out of public logs.
+          if ! $WRANGLER d1 export "$DB" --remote --output "$RUNNER_TEMP/b/dump.sql" >/dev/null 2>&1; then
+            echo "::error::D1: Wrangler не смог выгрузить базу"
+            exit 1
+          fi
           python3 -m lmn.verify_backup verify "$RUNNER_TEMP/b/before.json" "$RUNNER_TEMP/b/dump.sql"
           rm "$RUNNER_TEMP/b/before.json"
           echo "Выгрузка D1 читается, набор таблиц и число строк проверены" >> "$GITHUB_STEP_SUMMARY"
