@@ -5,6 +5,8 @@ on:
   # вместо пересказа этой строки. Новым обзорам остаётся запас дневного лимита Gemini.
   schedule:
     - cron: "40 8 * * *"   # каждый день в 8:40 UTC, вскоре после того, как у Gemini обновился дневной лимит (полночь по Калифорнии); «Брифы» в 9:30 ждут конца этого запуска
+    - cron: "7 23 * * *"   # leave a second chance before the archive project's quota resets
+      timezone: America/Los_Angeles
   workflow_dispatch:
     inputs:
       key_check:
@@ -69,6 +71,14 @@ jobs:
     if: ${{ !inputs.key_check }}
     runs-on: ubuntu-latest
     timeout-minutes: 300
+    env:
+      TRANSCRIBE_QUOTA_SLOT: ${{ github.event.schedule == '7 23 * * *' && 'late' || 'main' }}
+      TRANSCRIBE_QUOTA_OWNER: ${{ github.run_id }}-${{ github.run_attempt }}
+      VIDEO_MINUTES: "360"
+      VIDEO_PER_LITE_MODEL: "24"
+      VIDEO_PER_MODEL: "8"
+      TRANSCRIBE_RETELL_MODEL: gemini-4-hydrogen
+      VIDEO_PER_RETELL_MODEL: "4"
     steps:
       - uses: actions/checkout@v5
       - name: Данные из приватного репозитория
@@ -82,31 +92,54 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Зарезервировать квоту
+        id: quota
+        if: ${{ !inputs.compare && !inputs.probe && !inputs.cards }}
+        run: |
+          set -euo pipefail
+          git -C .data config user.name "laziest-music-nerd-bot"
+          git -C .data config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          quota_file=data/transcribe-quota.json
+          for retry in 1 2 3 4; do
+            # This checkout is disposable and this step runs before any transcripts are generated.
+            git -C .data fetch --quiet origin main
+            git -C .data reset --quiet --hard FETCH_HEAD
+            python -m lmn.transcribe --claim-quota
+            if [ -f ".data/$quota_file" ]; then
+              git -C .data add -- "$quota_file"
+            fi
+            git -C .data diff --cached --quiet && exit 0
+            git -C .data commit -qm "data: резерв квоты расшифровок"
+            if git -C .data push --quiet origin HEAD:main; then
+              echo "claimed=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep $((retry * 5))
+          done
+          echo "::error::Не удалось сохранить резерв квоты"
+          exit 1
       - name: Расшифровки по видео
+        if: ${{ steps.quota.outputs.claimed == 'true' || inputs.compare || inputs.probe || inputs.cards }}
         timeout-minutes: 280
         run: python -m lmn.transcribe
         env:
           GEMINI_API_KEY: ${{ secrets.ARCHIVE_GEMINI_API_KEY }}   # a separate Google project from new reviews
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}   # only the videos' lengths
           VIDEO_LIMIT: ${{ inputs.limit }}
-          VIDEO_MINUTES: "360"   # includes retries; leave room in the archive project for other video jobs
-          VIDEO_PER_LITE_MODEL: "24"
-          VIDEO_PER_MODEL: "8"   # 3.6 Flash has a smaller daily quota than the Lite models
-          TRANSCRIBE_RETELL_MODEL: gemini-4-hydrogen
-          VIDEO_PER_RETELL_MODEL: "4"   # start with a small pilot for retellings after a transcript refusal
           TRANSCRIBE_COMPARE: ${{ inputs.compare }}
           TRANSCRIBE_PROBE: ${{ inputs.probe }}
           TRANSCRIBE_CARDS: ${{ inputs.cards }}
           TRANSCRIBE_RETELL: ${{ inputs.retell }}   # empty on the schedule = on (13.11.2026); "false" from a manual run = off
           PYTHONUNBUFFERED: "1"
       - name: Сохранить
-        if: ${{ always() && !inputs.compare && !inputs.probe && !inputs.cards }}
+        if: ${{ always() && steps.quota.outputs.claimed == 'true' }}
         run: |
           cd "$GITHUB_WORKSPACE/.data"   # the data repo: commits go there
           git config user.name "laziest-music-nerd-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           [ -d data/transcripts ] && git add data/transcripts
           [ -f data/briefs.json ] && git add data/briefs.json
+          git add -- data/transcribe-quota.json
           git diff --cached --quiet && exit 0
           git commit -q -m "data: расшифровки старых обзоров по видео"
           for i in 1 2 3 4; do  # the hourly check may have pushed meanwhile
