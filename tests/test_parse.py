@@ -107,6 +107,10 @@ class ParseTest(unittest.TestCase):
         self.assertIn('<a href="https://t.me/laziest_music_nerd_bot">Бот</a>: поиск по архиву', txt)
         # a short welcome and how the channel and the bot work, then the list (owner, 2026-11-02)
         self.assertTrue(txt.startswith("<b>Привет!</b> 👋 Здесь мы знакомимся с новой музыкой"))
+        self.assertIn(
+            '<a href="https://t.me/laziest_music_nerd_bot?start=about_fantano">Anthony Fantano (кто? что?)</a>',
+            txt,
+        )
         self.assertIn("Неофициальный проект", txt)
         self.assertLess(txt.index("<b>Бот</b>"), txt.index("<b>Последние 30 обзоров Фантано</b>\n\n"))
         self.assertLess(txt.index("Newer 29"), txt.index("Newer 0"))
