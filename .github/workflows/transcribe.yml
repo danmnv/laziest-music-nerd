@@ -14,7 +14,7 @@ on:
         type: boolean
         default: false
       limit:
-        description: "Сколько обзоров за запуск (пусто — сколько позволит дневная доля лимита)"
+        description: "Сколько видео за запуск (пусто — сколько позволит дневная доля лимита)"
         default: ""
       compare:
         description: "Только сравнить расшифровку Gemini с текстом сайта на N новых обзорах (ничего не сохраняет)"
@@ -139,6 +139,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           [ -d data/transcripts ] && git add data/transcripts
           [ -f data/briefs.json ] && git add data/briefs.json
+          [ -f data/decade-tens.json ] && git add data/decade-tens.json
           git add -- data/transcribe-quota.json
           git diff --cached --quiet && exit 0
           git commit -q -m "data: расшифровки старых обзоров по видео"

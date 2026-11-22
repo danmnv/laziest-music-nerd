@@ -15,11 +15,11 @@ import os
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import partial
 from pathlib import Path
 
-from . import briefs, gemini, tnd, transcribe_quota
+from . import briefs, decade_tens, gemini, notes, tnd, transcribe_quota
 
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 VIDEO_MINUTES = int(os.environ.get("VIDEO_MINUTES") or 360)
@@ -230,6 +230,61 @@ def claim_quota():
     )
 
 
+def process_decade_tens(archive, api_key, run_budget, limit):
+    """Use the archive's existing request and video-duration budget before ordinary reviews."""
+    path = DATA / decade_tens.FILENAME
+    cached = _load(decade_tens.FILENAME, {})
+    videos = cached.setdefault("videos", {})
+    now = datetime.now(timezone.utc)
+    pending = [vid for vid in decade_tens.EPISODES if not videos.get(vid, {}).get("items")
+               and videos.get(vid, {}).get("retry_after", "") <= now.isoformat()]
+    tried = 0
+    if pending:
+        try:
+            lengths = minutes(pending)
+        except Exception as e:
+            print(f"::warning::These Albums Are 10s: YouTube API: {e}")
+            lengths = {}
+        for vid in pending:
+            if limit and tried >= limit:
+                break
+            mins = lengths.get(vid)
+            if not mins or mins > run_budget.minutes_left:
+                continue
+            before = sum(gemini.requests.values())
+            result = decade_tens.request(
+                vid, api_key, mins,
+                budget=min(ARCHIVE_REVIEW_BUDGET, run_budget.deadline - time.monotonic()),
+                call_timeout=ARCHIVE_CALL_TIMEOUT,
+                before_request=partial(run_budget.reserve, mins),
+            )
+            if sum(gemini.requests.values()) == before:
+                continue
+            tried += 1
+            if result:
+                videos[vid] = result
+                print(f"These Albums Are 10s {vid}: {len(result['items'])} album descriptions")
+            else:
+                videos[vid] = {"retry_after": (now + timedelta(days=1)).isoformat()}
+                print(f"::warning::These Albums Are 10s {vid}: no usable answer, will retry")
+            decade_tens.save(path, cached)
+
+    if not videos:
+        return tried
+
+    # Fill covers and tracklists before the weekly album job reaches these 2022 entries. It can refine them later.
+    regular = _load("albums.json", {})
+    cached_albums = cached.get("albums", {})
+    items = [{**a, "id": key} for _, _, key, a in decade_tens.series_albums(archive) if not notes.found(regular.get(a["id"]))]
+    if items:
+        albums = notes.albums(items, cached_albums, limit=len(items),
+                              deadline=min(run_budget.deadline, time.monotonic() + 120))
+        if albums != cached_albums:
+            cached["albums"] = albums
+            decade_tens.save(path, cached)
+    return tried
+
+
 def run():
     api_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
     if not api_key:
@@ -257,6 +312,7 @@ def run():
     bpath = DATA / "briefs.json"
     data = _load("briefs.json", {})
     limit = int(os.environ.get("VIDEO_LIMIT") or 0)
+    special_tried = process_decade_tens(archive, api_key, run_budget, limit)
     items = todo(archive, data, have())
     if slot == "late" and run_budget.model_limit(RETELL_MODEL):
         retelling = next((i for i, item in enumerate(items) if item.get("retell")), None)
@@ -267,7 +323,7 @@ def run():
           f"HTTP request limits: {limits}" + (f", {limit} reviews" if limit else ""))
     made, failed, streak, lengths = 0, 0, 0, {}
     for n, a in enumerate(items):
-        if limit and made + failed >= limit:
+        if limit and special_tried + made + failed >= limit:
             break
         if time.monotonic() + gemini.MIN_REQUEST_SEC >= run_budget.deadline:
             print("transcripts: time is up for this run")

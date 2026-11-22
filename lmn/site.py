@@ -9,7 +9,7 @@ import unicodedata
 import urllib.parse
 from pathlib import Path
 
-from . import aoty, aoty_top, card, gemini, ratings, specials, tnd
+from . import aoty, aoty_top, card, decade_tens, gemini, ratings, specials, tnd
 from .colors import color, label
 from .musicbrainz import norm
 from .notes import is_miss
@@ -207,6 +207,15 @@ def lists_rows(badges):
     return [("У Фантано в списках", "<br>".join(f'🏆 <a href="{e(b["url"])}">{e(b["text"])}</a>' for b in badges))]
 
 
+def series_rows(series, link=True):
+    if not series:
+        return []
+    details = e(series.get("about") or series.get("brief"))
+    source = f'<a href="{e(series["url"])}">{e(series["text"])}</a>' if link else ""
+    content = "<br>".join(x for x in (source, details) if x)
+    return [("These Albums Are 10s", content)] if content else []
+
+
 def has_scores(rt):
     """A ratings entry with anything the critics line shows: outlets, Metacritic, AOTY, AnyDecentMusic, charts."""
     rt = rt or {}
@@ -263,12 +272,15 @@ def critics_rows(rt, a=None):
     return rows
 
 
-def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, album=None):
+def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, album=None, series=None):
     """A release page for a review the bot never posted a card for: what the archive knows, the artist's other
     reviews, and the reader's marks."""
     vid = a.get("video_id") or (note or {}).get("video_id")  # most archive entries have it only from the video's page (lmn/notes.py)
     review = f"https://youtu.be/{vid}" if vid else a["url"]
     btns = [("▶ Видеообзор" if vid else "Обзор", review)]
+    from_series = a["id"].startswith(decade_tens.PREFIX) and series
+    if from_series:
+        btns = [(series["text"], series["url"])]
     if vid and "theneedledrop.com" in a["url"]:
         btns.append(("Текст обзора на TND", a["url"]))
     # what the bot's card shows for this album, from Deezer (data/albums.json, lmn/notes.py)
@@ -284,12 +296,13 @@ def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, 
     meta = " · ".join(x for x in [", ".join(tnd.genres(a)[:5]),
                                     card.plural_tracks(len(album["t"])) if album.get("t") else None,
                                     f"{album['min']} мин" if album.get("min") else None,
-                                    "обзор " + a["published"][:10], "гостевой обзор" if a.get("guest") else None,
+                                    ("выпуск " if from_series else "обзор ") + a["published"][:10], "гостевой обзор" if a.get("guest") else None,
                                     f"{nth}-й из {len(by_date)} обзоров артиста" if nth and len(by_date) > 1 else None] if x)
     others = [x for x in artist_reviews if x["id"] != a["id"]]
     hist = (f'<h2>Фантано об этом артисте</h2>{history_list(artist_reviews, a["id"], 1)}' if others else "")
     brief = brief or {}
     rows = again_rows(a) + [(k, e(v)) for k, v in (("Кто", brief.get("who")), ("Обзор", brief.get("about") or brief.get("brief"))) if v]
+    rows += series_rows(series, link=not from_series)
     # Fantano's line only where there's no brief (as on bot-card pages)
     rows += notes_rows({**(note or {}), "blurb": None if brief.get("brief") else (note or {}).get("blurb")} if note else None, a["id"])
     if album.get("t"):  # Fantano's favourites marked with ★, as on bot-card pages
@@ -340,7 +353,7 @@ def dossier_rows(d):
     return rows
 
 
-def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None, artist_reviews=None):
+def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None, artist_reviews=None, series=None):
     c = color(r.get("score"), r.get("not_good"), r.get("classic"))
     a = r.get("artist") or {}
     ai = r.get("ai") or {}
@@ -374,7 +387,7 @@ def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None, artis
                      + ('<span class="muted">★ — выделил Фантано</span>' if (r.get("ai") or {}).get("best_tracks") else "")))
     # Fantano's line only where there's no brief; the favourites' players below the buttons (fav_section)
     rows += notes_rows({"blurb": None if ai.get("brief") else (note or {}).get("blurb")}, r["id"])
-    rows += lists_rows(lists)
+    rows += series_rows(series) + lists_rows(lists)
     rows += critics_rows(rt, r)
     bc = (r.get("links") or {}).get("bandcamp") or ""
     if (note or {}).get("bc") and (not bc or "bandcamp.com/search" in bc):
@@ -418,7 +431,7 @@ def recent_item(r):
 
 
 def build():
-    reviews = load("reviews.json", [])
+    reviews = [tnd.retitle_entry(r) for r in load("reviews.json", [])]
     archive = [tnd.tidy_entry(a) for a in load("archive.json", [])]
     if OUT.exists():
         shutil.rmtree(OUT)
@@ -433,12 +446,17 @@ def build():
     for r in reviews:
         if r["id"] not in dup:
             by_id[r["id"]] = {**r, **again.get(r["id"], {})}
+    series_data = load(decade_tens.FILENAME, {})
+    if series_data:
+        for _, _, _, a in decade_tens.series_albums(by_id.values()):
+            by_id.setdefault(a["id"], a)
     by_artist = {}
     for a in by_id.values():
         by_artist.setdefault(slug(a["artist_name"]), []).append(a)
     for items in by_artist.values():
         items.sort(key=lambda x: x["published"], reverse=True)
     enriched = {r["id"] for r in reviews}
+    series_by_id = decade_tens.card_sources(by_id.values(), series_data)
     ratings = load("ratings.json", {})
     aoty_data = load("aoty.json", {})  # the owner's music-database table (lmn/aoty.py): outlets where Wikipedia has none, AOTY's score
     artists = load("artists.json", {})
@@ -475,33 +493,44 @@ def build():
         bc = (bandcamp.get(a["id"]) or {}).get("u")
         if bc and not (nt or {}).get("bc"):  # Fantano's own "Listen:" link first, then the one found
             nt = {**(nt or {}), "bc": bc}
+        series = series_by_id.get(a["id"])
+        album_data = deezer_found(albums.get(a["id"])) or (series or {}).get("album")
+        album = deezer_found(album_data)
         br = briefs.get(a["id"])
+        series_brief = bool((series or {}).get("brief") and not (a.get("ai") or {}).get("brief")
+                            and (not (br or {}).get("brief") or br.get("src") == "short"))
+        if series_brief:
+            br = {"who": (br or {}).get("who") or series.get("who"), "moods": series.get("moods")}
+            if nt:
+                nt = {**nt, "blurb": None}
         # the score is in the page's and the card's first lines: not again in the text (gemini.drop_score)
         if br:
             br = {**br, **{k: gemini.drop_score(br[k]) for k in ("brief", "about") if br.get(k)}}
         if (a.get("ai") or {}).get("brief"):
             a = {**a, "ai": {**a["ai"], **{k: gemini.drop_score(a["ai"][k]) for k in ("brief", "about") if a["ai"].get(k)}}}
-        html_ = (release_page(a, rt, artists.get((a.get("artist") or {}).get("mbid") or ""), li, nt, br, by_artist[slug(a["artist_name"])])
+        html_ = (release_page(a, rt, artists.get((a.get("artist") or {}).get("mbid") or ""), li, nt, br, by_artist[slug(a["artist_name"])], series)
                  if a["id"] in enriched
-                 else archive_page(a, by_artist[slug(a["artist_name"])], rt, li, nt, br, deezer_found(albums.get(a["id"]))))
+                 else archive_page(a, by_artist[slug(a["artist_name"])], rt, li, nt, br, album, series))
         (OUT / "r" / f"{a['id']}.html").write_text(html_)
         crit, sales = critics_parts(rt)
         nt = nt or {}
-        bf = (a.get("ai") or {}).get("brief") or (br or {}).get("brief")
+        bf = series["brief"] if series_brief else (a.get("ai") or {}).get("brief") or (br or {}).get("brief")
         bm = (br or {}).get("moods") if not (a.get("ai") or {}).get("moods") else None  # the bot's mood vote for archive cards
         who = (a.get("ai") or {}).get("who") or (br or {}).get("who")  # the bot's card has «Кто» too (owner, 2026-11-08)
-        al = card_album(a, deezer_found(albums.get(a["id"]))) if a["id"] not in enriched else None
-        if not al and a["id"] not in enriched and is_miss(albums.get(a["id"])):
+        al = card_album(a, album) if a["id"] not in enriched else None
+        if not al and a["id"] not in enriched and is_miss(album_data or albums.get(a["id"])):
             al = {"miss": 1}  # looked up and not found (or only a single, links.fits): the bot doesn't search Deezer live
         # the bot's critics line: the channel card's (card.critics_from: 3 outlets, Metacritic, AOTY), the same on both
         cc = [f"{c['o']} {c['s']}" for c in card.critics_from(rt)]
         am = apple.get(a["id"]) if isinstance(apple.get(a["id"]), str) else None
         sc = (top_hits.get(a["id"]) or {}).get("sc")  # the album's SoundCloud page instead of a search (owner, 2026-11-08)
-        if crit or sales or li or nt or bf or bm or am or again_vid or who or al or sc:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
+        if crit or sales or li or nt or bf or bm or am or again_vid or who or al or sc or series:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
             (OUT / "rt" / f"{a['id']}.json").write_text(json.dumps(
                 {"crit": cc, "sales": sales[:4], "wp_url": (rt or {}).get("wp_url"), "contested": contested(a, rt),
                  **({"lists": li[:4]} if li else {}), **({"blurb": nt["blurb"]} if nt.get("blurb") else {}),
                  **({"brief": bf} if bf else {}), **({"moods": bm} if bm else {}), **({"who": who} if who else {}),
+                 **({"series": {k: series[k] for k in ("text", "url")}} if series else {}),
+                 **({"series_brief": True} if series_brief else {}),
                  **({"al": al} if al else {}),
                  **({"video_id": nt["video_id"]} if nt.get("video_id") and not a.get("video_id") else {}),
                  **({"bc": nt["bc"]} if nt.get("bc") else {}),

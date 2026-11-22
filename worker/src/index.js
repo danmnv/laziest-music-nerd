@@ -1287,11 +1287,12 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
     .sort((x, y) => order(String(x.published), String(y.published)));
   const nth = ofArtist.findIndex((x) => x.id === r.id) + 1;
   const year = (full && full.year) || (dz && dz.year && dz.year <= reviewYear ? dz.year : null);
+  const episodeEntry = r.id.startsWith("ten-");
   const facts = [
     genresOf(r).slice(0, 3).join(", "),
     tracks ? tracksWord(tracks) : "",
     minutes ? `${minutes} мин` : "",
-    year ? "" : `обзор ${reviewYear}`, // the review year only when the release year is unknown
+    year ? "" : `${episodeEntry ? "выпуск" : "обзор"} ${reviewYear}`, // the review year only when the release year is unknown
     r.guest ? "гостевой обзор" : "",
     nth && ofArtist.length > 1 ? `${nth}-й из ${ofArtist.length} обзоров артиста` : "",
   ].filter(Boolean).join(" · ");
@@ -1306,7 +1307,7 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   const who = (full && full.ai && full.ai.who) || (rt && rt.who);
   const about = [
     who ? `<b>Кто:</b> ${esc(who)}` : "",
-    brief ? `<b>Обзор:</b> ${esc(brief)}` : "",
+    brief ? `<b>${rt?.series_brief && !(full?.ai?.brief) ? "Из выпуска" : "Обзор"}:</b> ${esc(brief)}` : "",
     rt && rt.blurb && !brief ? `💬 <i>${esc(rt.blurb)}</i>` : "",
     fav.length && !list.length ? `★ Любимые у Фантано: ${esc(fav.join(", "))}` : "", // with a tracklist, ★ marks them there
   ].filter(Boolean).join("\n");
@@ -1320,7 +1321,8 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   const q = encodeURIComponent(`${r.artist_name} ${r.album}`);
   const vid = r.video_id || (rt && rt.video_id); // most archive reviews have it only in rt (lmn/notes.py: the video's page)
   const linkLine = linkItems([
-    vid ? ["Видеообзор", `https://youtu.be/${vid}`] : ["Обзор", r.url],
+    ...(episodeEntry ? [] : [vid ? ["Видеообзор", `https://youtu.be/${vid}`] : ["Обзор", r.url]]),
+    ...(rt?.series ? [[rt.series.text, rt.series.url]] : episodeEntry ? [["These Albums Are 10s", r.url]] : []),
     // no «Все платформы» (album.link) in the bot: the owner didn't like how it reads or what it opens (2026-11-02); the site keeps it
     ...listenLinks(q, links.youtube_album, apple, bandcampLink(links, r.artist_name, r.album, rt && rt.bc), rt && rt.sc),
     ["AOTY", `https://www.albumoftheyear.org/search/?q=${q}`],
