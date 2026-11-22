@@ -83,3 +83,43 @@ class DecadeTensTest(unittest.TestCase):
             self.assertIn("10/10", page)
             self.assertIn(cover["cv"], page)
             self.assertIn("Track One", page)
+
+
+class StandaloneTensTest(unittest.TestCase):
+    def test_tens_with_thin_or_missing_text_precede_newer_regular_reviews(self):
+        regular = {"id": "regular", "published": "2025-01-01", "score": 8, "video_id": "regular",
+                   "artist_name": "Other", "album": "An album"}
+        kids = {"id": "kids", "published": "2018-06-11", "score": 10, "artist_name": "Kids See Ghosts",
+                "album": "KIDS SEE GHOSTS", "video_id": "9rkFbKVownA"}
+        archive = [regular, kids, {**EXISTING, "classic": False, "score": 10, "video_id": "zappa"},
+                   {**kids, "id": "no-brief", "published": "2017-01-01", "album": "Another album"},
+                   {**kids, "id": "complete", "album": "Full text"}]
+        data = {"regular": {"src": "short"}, "kids": {"src": "short", "brief": "Одна фраза."},
+                "complete": {"brief": BRIEF, "about": ABOUT, "src": "video"}}
+        with mock.patch.object(transcribe, "_load", return_value={}):
+            items = transcribe.todo(archive, data, set())
+        self.assertEqual([a["id"] for a in items], ["kids", "no-brief", "regular"])
+
+    def test_video_only_ten_gets_a_brief_before_the_regular_archive(self):
+        from lmn import briefs
+
+        standalone = {"id": "9rkFbKVownA", "published": "2018-06-11", "score": 10,
+                      "artist_name": "Kids See Ghosts", "album": "KIDS SEE GHOSTS"}
+        ordinary = {"id": "a" * 24, "published": "2025-01-01", "score": 7,
+                    "artist_name": "Other", "album": "Other album"}
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p / "archive.json").write_text(json.dumps([ordinary, standalone]))
+            (p / "transcripts").mkdir()
+            (p / "transcripts" / (standalone["id"] + ".txt")).write_text("A complete review in test data. " * 30)
+            with mock.patch.object(briefs, "DATA", p), \
+                    mock.patch.dict("os.environ", {"BRIEFS_LANG": "both", "BRIEFS_LIMIT": "1"}), \
+                    mock.patch.object(briefs.tnd, "fetch_texts", side_effect=TimeoutError) as fetch, \
+                    mock.patch.object(briefs.llm, "available", return_value=True), \
+                    mock.patch.object(briefs.llm, "summarize", return_value={"brief": BRIEF, "about": ABOUT}) as ask:
+                briefs.run()
+            fetch.assert_called_once_with([ordinary["id"]])
+            self.assertEqual(ask.call_args.args[0], "Kids See Ghosts - KIDS SEE GHOSTS")
+            saved = json.loads((p / "briefs.json").read_text())
+            self.assertEqual(saved[standalone["id"]]["about"], ABOUT)
+            self.assertEqual(saved[standalone["id"]]["src"], "video")

@@ -24,7 +24,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import gemini, http, llm, tnd, watch
+from . import decade_tens, gemini, http, llm, tnd, watch
 
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 BATCH = 15
@@ -35,24 +35,44 @@ GIVE_UP = 5  # failures in a row: the key, the plan or the service is wrong, no 
 TR_BATCH = 10  # briefs per Gemini translation request
 
 
-def targets(archive, reviews, done):
+def priority_ten(a):
+    """A 10/10 album review by Fantano. Older albums from the decade series have their own pass."""
+    return (a.get("score") == 10
+            and not any(a.get(k) for k in ("guest", "classic", "not_good", "track", "dup_of"))
+            and not decade_tens.includes(a))
+
+
+def full_brief(v):
+    return bool(v.get("brief") and v.get("about") and v.get("src") != "short")
+
+
+def archive_order(a):
+    return priority_ten(a), a["published"]
+
+
+def targets(archive, reviews, done, transcribed=()):
     have = {r["id"] for r in reviews if (r.get("ai") or {}).get("brief")}
     out = [tnd.tidy_entry(a) for a in archive]
     out = [a for a in out if a.get("artist_name") and a.get("album") and not a.get("track")
-           and a["id"] not in done and a["id"] not in have and len(a["id"]) == 24]  # 24 hex: a TND post id
-    return sorted(out, key=lambda a: a["published"], reverse=True)
+           and a["id"] not in done and a["id"] not in have
+           and (len(a["id"]) == 24 or (a["id"] in transcribed and priority_ten(a)))]
+    return sorted(out, key=archive_order, reverse=True)
 
 
 def texts(items):
     for i in range(0, len(items), BATCH):
         chunk = items[i:i + BATCH]
+        post_ids = [a["id"] for a in chunk if len(a["id"]) == 24]
         try:
-            got = tnd.fetch_texts([a["id"] for a in chunk])
+            got = tnd.fetch_texts(post_ids) if post_ids else {}
         except Exception as e:
             print(f"  ! TND texts: {e}", file=sys.stderr)
             got = None  # unknown, not "no text": these are tried again next run
         for a in chunk:
-            yield a, (None if got is None else got.get(a["id"]) or "")
+            if len(a["id"]) != 24:
+                yield a, ""  # this review has a video instead of a TND post
+            else:
+                yield a, None if got is None else got.get(a["id"]) or ""
 
 
 PROMPT_V = 3  # 2: no score in the text (2026-11-01); 3: GPT-6 Luna on Selectel writes Russian and English itself, brief
@@ -329,9 +349,10 @@ def run():
     apath = DATA / "albums.json"
     albums = json.loads(apath.read_text()) if heard and apath.exists() else {}
     # written from a transcript before the tracklist was given with it ("tl"): once more, with it (owner, 2026-11-12)
-    todo = targets(archive, reviews, {k for k, v in data.items() if finished(v, lang)
-                                      and not (k in heard and v.get("tf", 0) < FAIL_MAX and (
-                                          v.get("src") != "video" or (not v.get("tl") and tracklist(albums, k))))})
+    done = {k for k, v in data.items() if finished(v, lang)
+            and not (k in heard and v.get("tf", 0) < FAIL_MAX and (
+                v.get("src") != "video" or (not v.get("tl") and tracklist(albums, k))))}
+    todo = targets(archive, reviews, done, transcribed=heard)
     print(f"briefs ({lang}): {sum(1 for v in data.values() if v.get('brief'))} done, {len(untranslated(data))} to translate, "
           f"{len(todo)} to write, this run up to {limit}")
     made = failed = tried = 0
@@ -344,7 +365,9 @@ def run():
             print("briefs: time is up for this run")
             break
         if text is None:
-            continue
+            if a["id"] not in heard or not priority_ten(a):
+                continue
+            text = ""  # the priority review has a transcript even when TND is down
         if llm.stats["rub"] >= max_rub:  # the run's spending cap: the key itself has no limit
             print(f"::warning::spent {llm.stats['rub']:.2f} ₽, the cap for a run is {max_rub:g} ₽, stopping")
             break

@@ -61,6 +61,18 @@ def album_keys(key, artist, title):
     return {(norm(a), norm(t)) for a, t in ((artist, title), *ALIASES.get(key, ()))}
 
 
+EPISODE_ALBUM_KEYS = frozenset(
+    pair
+    for _, _, items in EPISODES.values()
+    for key, artist, title, _ in items
+    for pair in album_keys(key, artist, title)
+)
+
+
+def includes(review):
+    return (norm(review.get("artist_name")), norm(review.get("album"))) in EPISODE_ALBUM_KEYS
+
+
 def series_albums(archive):
     by_name = {}
     for a in sorted(archive, key=lambda a: a.get("published") or "", reverse=True):

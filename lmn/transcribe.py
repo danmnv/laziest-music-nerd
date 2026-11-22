@@ -80,23 +80,27 @@ def have():
 
 
 def todo(archive, data, done):
-    """Archive reviews with only a retelling of Fantano's lines (or none), no transcript yet and a known video, newest
-    first."""
+    """Reviews with a known video and no substantial source text yet, with 10/10 reviews first."""
     notes = _load("notes.json", {})
     albums = _load("albums.json", {})
     out = []
-    for a in archive:
+    for entry in archive:
+        if entry["id"] in done:
+            continue
+        a = tnd.tidy_entry(dict(entry))
         v = data.get(a["id"]) or {}
-        if a["id"] in done or not (v.get("src") == "short" or v.get("short") == "none"):
+        short = v.get("src") == "short" or v.get("short") == "none"
+        missing_ten = briefs.priority_ten(a) and not briefs.full_brief(v)
+        if not (short or missing_ten):
             continue
         retell = v.get("vf", 0) >= FAIL_MAX
         if retell and not (RETELL and v.get("vr") and v.get("vt", 0) < FAIL_MAX):  # only what models refused (RECITATION
             continue  # and the like), not a request refused for the video itself (blocked: no "vr")
         vid = a.get("video_id") or (notes.get(a["id"]) or {}).get("video_id")
         if vid:
-            out.append({**tnd.tidy_entry(dict(a)), "video_id": vid, **({"retell": True} if retell else {}),
+            out.append({**a, "video_id": vid, **({"retell": True} if retell else {}),
                         "tracks": briefs.tracklist(albums, a["id"])})
-    return sorted(out, key=lambda a: a["published"], reverse=True)
+    return sorted(out, key=briefs.archive_order, reverse=True)
 
 
 def minutes(video_ids):
@@ -313,13 +317,16 @@ def run():
     data = _load("briefs.json", {})
     limit = int(os.environ.get("VIDEO_LIMIT") or 0)
     special_tried = process_decade_tens(archive, api_key, run_budget, limit)
-    items = todo(archive, data, have())
+    transcripts = have()
+    described = {r["id"] for r in _load("reviews.json", []) if (r.get("ai") or {}).get("brief")}
+    items = todo(archive, data, transcripts | described)
     if slot == "late" and run_budget.model_limit(RETELL_MODEL):
-        retelling = next((i for i, item in enumerate(items) if item.get("retell")), None)
+        first_regular = next((i for i, item in enumerate(items) if not briefs.priority_ten(item)), len(items))
+        retelling = next((i for i in range(first_regular, len(items)) if items[i].get("retell")), None)
         if retelling is not None:
-            items.insert(0, items.pop(retelling))
+            items.insert(first_regular, items.pop(retelling))
     limits = {model: run_budget.model_limit(model) for model in gemini.MODELS}
-    print(f"transcripts: {len(have())} done, {len(items)} to write; up to {run_budget.minutes:g} min of video, "
+    print(f"transcripts: {len(transcripts)} done, {len(items)} to write; up to {run_budget.minutes:g} min of video, "
           f"HTTP request limits: {limits}" + (f", {limit} reviews" if limit else ""))
     made, failed, streak, lengths = 0, 0, 0, {}
     for n, a in enumerate(items):
