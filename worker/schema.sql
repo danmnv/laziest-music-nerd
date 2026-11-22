@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS follow_delivery (
   PRIMARY KEY (user_id, review_id)
 );
 CREATE TABLE IF NOT EXISTS unreviewed (   -- albums without Fantano's review that someone opened: names for marks and reminders
-  id TEXT PRIMARY KEY,                   -- MusicBrainz release group ID, or "dz" + Deezer album ID
+  id TEXT PRIMARY KEY,                   -- MusicBrainz group ID, "dz" + Deezer album ID, or "av" + AOTY ID
   artist_name TEXT NOT NULL,
   album TEXT NOT NULL,
   year TEXT

@@ -451,6 +451,11 @@ def build():
     apple = load("apple.json", {})  # Apple Music links found from Actions (lmn/apple.py): the bot's cards read them from rt/
     top = load("aoty_top.json", {})  # the owner's second music-database table (lmn/aoty_top.py): SoundCloud links here, the rest in u/
     top_hits = aoty_top.reviewed(list(by_id.values()), top)
+    variants = load("aoty_variants.json", {})
+    for release in variants.values():
+        if release.get("r") in by_id:
+            top_hits[release["r"]] = {**top_hits.get(release["r"], {}), **release}
+    (OUT / "av.json").write_text(json.dumps(variants, ensure_ascii=False, separators=(",", ":")))
     (OUT / "wtb.json").write_text(json.dumps([{k: r[k] for k in ("artist", "video_id", "date")} for r in sp.get("rankings", [])],
                                              ensure_ascii=False))  # the bot's artist lists link the "worst to best" video
     (OUT / "rt").mkdir(exist_ok=True)
