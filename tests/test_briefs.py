@@ -234,7 +234,7 @@ class Run(unittest.TestCase):
                     mock.patch.object(briefs.llm, "summarize", return_value=dict(gemini.parse_answer(json.dumps(ANSWER)), model="m")) as s:
                 briefs.run()
             # a guest review too (owner, 2026-11-08); no song, done or YouTube-only review
-            self.assertEqual(ft.call_args[0][0], ["b" * 24, "a" * 24, "e" * 24])
+            self.assertEqual(ft.call_args[0][0], ["a" * 24, "b" * 24, "e" * 24])
             self.assertEqual(s.call_count, 1)
             out = json.loads((p / "briefs.json").read_text())
             self.assertEqual(out["e" * 24], {"skip": "short"})  # not fetched again next run

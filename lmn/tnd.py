@@ -112,6 +112,8 @@ def is_track(album, score=None, not_good=False, classic=False):
 #   AJR's OK ORCHESTRA, as the post's tags say (ajr, ok orchestra, april fools, shitpost). The owner, 2026-11-14:
 #   it sat in Death Grips' «💿 Альбомы артиста». The tags were its only genres: dropped, they aren't genres.
 RETITLED = {
+    # The Madvillainy classic review has the artist and album reversed in the TND archive.
+    "6684c32c49ea2a054e091603": {"wrong_artist": "Madvillainy", "artist_name": "Madvillain", "album": "Madvillainy"},
     "6684c32c49ea2a054e09265e": {"wrong_artist": "Death Grips", "artist_name": "AJR", "album": "OK ORCHESTRA", "genres": []},
 }
 

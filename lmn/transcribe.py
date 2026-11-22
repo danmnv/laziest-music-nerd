@@ -15,11 +15,11 @@ import os
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import partial
 from pathlib import Path
 
-from . import briefs, gemini, tnd, transcribe_quota
+from . import briefs, decade_tens, gemini, notes, tnd, transcribe_quota
 
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 VIDEO_MINUTES = int(os.environ.get("VIDEO_MINUTES") or 360)
@@ -80,23 +80,27 @@ def have():
 
 
 def todo(archive, data, done):
-    """Archive reviews with only a retelling of Fantano's lines (or none), no transcript yet and a known video, newest
-    first."""
+    """Reviews with a known video and no substantial source text yet, with 10/10 reviews first."""
     notes = _load("notes.json", {})
     albums = _load("albums.json", {})
     out = []
-    for a in archive:
+    for entry in archive:
+        if entry["id"] in done:
+            continue
+        a = tnd.tidy_entry(dict(entry))
         v = data.get(a["id"]) or {}
-        if a["id"] in done or not (v.get("src") == "short" or v.get("short") == "none"):
+        short = v.get("src") == "short" or v.get("short") == "none"
+        missing_ten = briefs.priority_ten(a) and not briefs.full_brief(v)
+        if not (short or missing_ten):
             continue
         retell = v.get("vf", 0) >= FAIL_MAX
         if retell and not (RETELL and v.get("vr") and v.get("vt", 0) < FAIL_MAX):  # only what models refused (RECITATION
             continue  # and the like), not a request refused for the video itself (blocked: no "vr")
         vid = a.get("video_id") or (notes.get(a["id"]) or {}).get("video_id")
         if vid:
-            out.append({**tnd.tidy_entry(dict(a)), "video_id": vid, **({"retell": True} if retell else {}),
+            out.append({**a, "video_id": vid, **({"retell": True} if retell else {}),
                         "tracks": briefs.tracklist(albums, a["id"])})
-    return sorted(out, key=lambda a: a["published"], reverse=True)
+    return sorted(out, key=briefs.archive_order, reverse=True)
 
 
 def minutes(video_ids):
@@ -230,6 +234,61 @@ def claim_quota():
     )
 
 
+def process_decade_tens(archive, api_key, run_budget, limit):
+    """Use the archive's existing request and video-duration budget before ordinary reviews."""
+    path = DATA / decade_tens.FILENAME
+    cached = _load(decade_tens.FILENAME, {})
+    videos = cached.setdefault("videos", {})
+    now = datetime.now(timezone.utc)
+    pending = [vid for vid in decade_tens.EPISODES if not videos.get(vid, {}).get("items")
+               and videos.get(vid, {}).get("retry_after", "") <= now.isoformat()]
+    tried = 0
+    if pending:
+        try:
+            lengths = minutes(pending)
+        except Exception as e:
+            print(f"::warning::These Albums Are 10s: YouTube API: {e}")
+            lengths = {}
+        for vid in pending:
+            if limit and tried >= limit:
+                break
+            mins = lengths.get(vid)
+            if not mins or mins > run_budget.minutes_left:
+                continue
+            before = sum(gemini.requests.values())
+            result = decade_tens.request(
+                vid, api_key, mins,
+                budget=min(ARCHIVE_REVIEW_BUDGET, run_budget.deadline - time.monotonic()),
+                call_timeout=ARCHIVE_CALL_TIMEOUT,
+                before_request=partial(run_budget.reserve, mins),
+            )
+            if sum(gemini.requests.values()) == before:
+                continue
+            tried += 1
+            if result:
+                videos[vid] = result
+                print(f"These Albums Are 10s {vid}: {len(result['items'])} album descriptions")
+            else:
+                videos[vid] = {"retry_after": (now + timedelta(days=1)).isoformat()}
+                print(f"::warning::These Albums Are 10s {vid}: no usable answer, will retry")
+            decade_tens.save(path, cached)
+
+    if not videos:
+        return tried
+
+    # Fill covers and tracklists before the weekly album job reaches these 2022 entries. It can refine them later.
+    regular = _load("albums.json", {})
+    cached_albums = cached.get("albums", {})
+    items = [{**a, "id": key} for _, _, key, a in decade_tens.series_albums(archive) if not notes.found(regular.get(a["id"]))]
+    if items:
+        albums = notes.albums(items, cached_albums, limit=len(items),
+                              deadline=min(run_budget.deadline, time.monotonic() + 120))
+        if albums != cached_albums:
+            cached["albums"] = albums
+            decade_tens.save(path, cached)
+    return tried
+
+
 def run():
     api_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
     if not api_key:
@@ -257,17 +316,21 @@ def run():
     bpath = DATA / "briefs.json"
     data = _load("briefs.json", {})
     limit = int(os.environ.get("VIDEO_LIMIT") or 0)
-    items = todo(archive, data, have())
+    special_tried = process_decade_tens(archive, api_key, run_budget, limit)
+    transcripts = have()
+    described = {r["id"] for r in _load("reviews.json", []) if (r.get("ai") or {}).get("brief")}
+    items = todo(archive, data, transcripts | described)
     if slot == "late" and run_budget.model_limit(RETELL_MODEL):
-        retelling = next((i for i, item in enumerate(items) if item.get("retell")), None)
+        first_regular = next((i for i, item in enumerate(items) if not briefs.priority_ten(item)), len(items))
+        retelling = next((i for i in range(first_regular, len(items)) if items[i].get("retell")), None)
         if retelling is not None:
-            items.insert(0, items.pop(retelling))
+            items.insert(first_regular, items.pop(retelling))
     limits = {model: run_budget.model_limit(model) for model in gemini.MODELS}
-    print(f"transcripts: {len(have())} done, {len(items)} to write; up to {run_budget.minutes:g} min of video, "
+    print(f"transcripts: {len(transcripts)} done, {len(items)} to write; up to {run_budget.minutes:g} min of video, "
           f"HTTP request limits: {limits}" + (f", {limit} reviews" if limit else ""))
     made, failed, streak, lengths = 0, 0, 0, {}
     for n, a in enumerate(items):
-        if limit and made + failed >= limit:
+        if limit and special_tried + made + failed >= limit:
             break
         if time.monotonic() + gemini.MIN_REQUEST_SEC >= run_budget.deadline:
             print("transcripts: time is up for this run")

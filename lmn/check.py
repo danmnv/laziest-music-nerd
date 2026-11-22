@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import card, http, refresh, tnd, watch, youtube
+from . import card, decade_tens, http, refresh, tnd, watch, youtube
 from .colors import EMOJI, color
 from .enrich import archive_entry, enrich
 from .telegram import Telegram
@@ -257,7 +257,7 @@ def main():
     started = time.monotonic()
     if MODE == "run":  # the watchdog: the Worker tells the owner when checks stop coming (lmn/watch.py)
         watch.heartbeat(DATA)
-    reviews = load("reviews.json", [])
+    reviews = [tnd.retitle_entry(r) for r in load("reviews.json", [])]
     state = load("state.json", {})
     archive = load("archive.json", [])
     for a in archive:  # old entries were saved before tnd.tidy_album existed
@@ -405,6 +405,10 @@ def main():
                 http.request(url + "/api/refresh-lists", method="POST", json_body={"items": items}, headers={"Authorization": f"Bearer {secret}"})
             except Exception as ex:
                 print(f"worker refresh failed: {type(ex).__name__}")
+    if not state.get("archive_bootstrap_pending") and (DATA / decade_tens.FILENAME).exists():
+        added = decade_tens.add_to_archive(archive)
+        if added:
+            print(f"These Albums Are 10s: {added} archive entries added")
     # An unfinished seed must not turn old reviews from a returning source into channel cards.
     if complete and sources_ready:
         state["seeded"] = True
