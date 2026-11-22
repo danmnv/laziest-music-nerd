@@ -17,7 +17,7 @@ import { genresOf } from "./genres.mjs";
 import { creditedNames, selfTitled, pickAlbum } from "./deezer.mjs";
 import { untitled, sortOut, quietHour, ruDate, RECHECK_HOURS } from "./releases.mjs";
 import { ce, plainEmoji } from "./emoji.mjs";
-import { topAlbum, topCritics } from "./top.mjs";
+import { topAlbum, topCritics, loadVariants, searchVariants, variantsOf, matchVariant, variantYear, fullName } from "./top.mjs";
 import { silentFor, daysLeft, TOKEN_WARN_DAYS, ALERTS } from "./watchdog.mjs";
 
 // «later» is shown as «Послушать потом» since 2026-11-02 (the owner: «может быть отложенное должно называться послушать потом»)
@@ -445,6 +445,9 @@ async function onCallback(q, env, applied) {
   } else if (parts[0] === "mb") {
     await answerNow();
     await sendMbAlbum(env, uid, parts[1], q.message);
+  } else if (parts[0] === "av") {
+    await answerNow();
+    await openVariant(env, uid, parts[1]);
   } else if (parts[0] === "ma") {
     await answerNow();
     await askMood(env, uid, parts[1], true, q.message && q.message.message_id);
@@ -674,6 +677,7 @@ async function openCard(env, uid, open) {
   const [kind, id] = [open.slice(0, open.indexOf(":")), open.slice(open.indexOf(":") + 1)];
   if (kind === "dz") return sendDeezerAlbum(env, uid, id);
   if (kind === "mb") return sendMbAlbum(env, uid, id, null);
+  if (kind === "av") return openVariant(env, uid, id);
   if (kind === "q") return openQueueCard(env, uid, id);
   if (kind === "t") return sendTracklist(env, uid, id);
   if (kind === "da") { // «💿 Альбомы артиста» pressed in the channel before the bot was started (the "da" callback)
@@ -1032,7 +1036,10 @@ async function deezerOtherAlbums(arch, artistName) {
 async function sendOtherAlbums(env, uid, arch, artist, extraOnly, key = null) {
   const k = nameKey(artist);
   const anchor = arch.find((a) => artistKey(a) === k);
-  const res = (await otherAlbums(env, arch, artist)) || (extraOnly ? null : await deezerOtherAlbums(arch, artist));
+  const [res, variants] = await Promise.all([
+    otherAlbums(env, arch, artist).then((r) => r || (extraOnly ? null : deezerOtherAlbums(arch, artist))),
+    extraOnly ? {} : loadVariants(env.SITE_URL),
+  ]);
   if (extraOnly) {
     if (!res || !res.extra.length) return tg(env, "sendMessage", { chat_id: uid, text: `У ${artist} больше ничего нет.` });
     return tg(env, "sendMessage", { chat_id: uid, text: `${artist} — концертные, сборники, ремиксы и прочее:`,
@@ -1044,13 +1051,16 @@ async function sendOtherAlbums(env, uid, arch, artist, extraOnly, key = null) {
     const rel = res && res.years && (res.years[nameKey(untitled(a.album))] || res.years[nameKey(untitled(a.album).replace(/\s*[([]?\b(redux|revisited|re-?review)\b[)\]]?\s*$/i, ""))]);
     return { a, year: rel || String(a.published).slice(0, 4), reviewYear: !rel };
   });
-  const all = [...reviewed, ...((res && res.main) || []).map((x) => ({ x, year: x.year || "" }))]
+  const editions = variantsOf(variants, artist).filter(([, e]) => !reviewed.some(({ a }) => a.id === e.r));
+  const other = (res?.main || []).filter((x) => !matchVariant(variantsOf(variants, artist, x.title), x.title, x.year));
+  const all = [...reviewed, ...other.map((x) => ({ x, year: x.year || "" }))]
     .sort((p, q) => order(String(q.year), String(p.year)));
-  if (!all.length) return tg(env, "sendMessage", { chat_id: uid, text: `Не нашёл дискографию ${artist}.` });
+  if (!all.length && !editions.length) return tg(env, "sendMessage", { chat_id: uid, text: `Не нашёл дискографию ${artist}.` });
   const shown = all.slice(0, 40);
   const rows = shown.map((it) => [it.a
     ? { text: `${badge(it.a)} · ${short(it.a.album)} · ${it.reviewYear ? "обзор " : ""}${it.year}`.slice(0, 120), callback_data: `a:${it.a.id}` }
     : discButton(it.x)]);
+  rows.push(...variantButtons(editions));
   if (res && res.extra.length && (anchor || key)) {
     rows.push([{ text: `Ещё: концертные, сборники, ремиксы (${res.extra.length})`, callback_data: anchor ? `dx:${anchor.id}` : `ux:${key}` }]);
   }
@@ -1114,10 +1124,34 @@ async function sendDeezerAlbum(env, uid, id) {
 }
 
 async function sendUnreviewed(env, uid, x) {
-  const arch = await archive(env);
-  const reviewed = reviewedIn(arch, x.artist, x.title);
+  const [arch, variants] = await Promise.all([archive(env), loadVariants(env.SITE_URL)]);
+  const editions = variantsOf(variants, x.artist, x.title);
+  const match = matchVariant(editions, x.title, x.year);
+  if (match) return sendVariant(env, uid, match, arch, x);
+  const reviewed = editions.length
+    ? arch.find((a) => !a.track && fullName(a.artist_name) === fullName(x.artist) && fullName(a.album) === fullName(x.title))
+    : reviewedIn(arch, x.artist, x.title);
   if (reviewed) return sendAlbum(env, uid, reviewed, "");
-  return sendCard(env, uid, await unreviewedCard(env, { ...x, liked: await isLiked(env, uid, x.key) }, arch));
+  const choices = x.year ? editions.filter(([, e]) => variantYear(e) === x.year) : editions;
+  if (choices.length) return sendVariantResults(env, uid, choices);
+  return sendCard(env, uid, await unreviewedCard(env, { ...x, liked: await isLiked(env, uid, x.key) }, arch,
+    { sharedTitle: editions.length > 0 }));
+}
+
+async function openVariant(env, uid, id) {
+  if (!/^[1-9]\d*$/.test(id || "")) return;
+  const [arch, variants] = await Promise.all([archive(env), loadVariants(env.SITE_URL)]);
+  if (!variants[id]) return tg(env, "sendMessage", { chat_id: uid, text: "Не удалось открыть этот релиз. Попробуй ещё раз." });
+  return sendVariant(env, uid, [id, variants[id]], arch);
+}
+
+async function sendVariant(env, uid, [id, edition], arch, source = {}) {
+  const review = edition.r && arch.find((a) => a.id === edition.r);
+  if (review) return sendAlbum(env, uid, review, "");
+  const key = source.key || `av${id}`;
+  const x = { key, artist: edition.a, title: edition.t, year: variantYear(edition),
+    kind: edition.kind || source.kind, liked: await isLiked(env, uid, key) };
+  return sendCard(env, uid, await unreviewedCard(env, x, arch, { edition }));
 }
 
 // Fantano's review of this album, if there is one
@@ -1157,18 +1191,20 @@ async function sendCard(env, uid, { text, reply_markup, cover }, signal) {
 }
 
 // The card of an album without Fantano's review. x.fresh: the release date of a just-released album (watchReleases).
-async function unreviewedCard(env, x, arch) {
+async function unreviewedCard(env, x, arch, { edition, sharedTitle = false } = {}) {
   const k = nameKey(x.artist);
-  // the owner's music-database table (top 5000 of the 2010s and 2020s, lmn/aoty_top.py): its genres, critics, tracklist, links
-  const top = (await topAlbum(env.SITE_URL, x.artist, x.title)) || {};
-  const [wiki, live] = await Promise.all([wikiCritics(x.artist, untitled(x.title)), top.am ? null : appleAlbum(x.artist, x.title)]);
+  const catalog = edition || (await topAlbum(env.SITE_URL, x.artist, x.title)) || {};
+  const top = sharedTitle && (!x.year || variantYear(catalog) !== x.year) ? {} : catalog;
+  // Generic external lookups can return another release with the same title.
+  const [wiki, live] = edition || sharedTitle ? [] :
+    await Promise.all([wikiCritics(x.artist, untitled(x.title)), top.am ? null : appleAlbum(x.artist, x.title)]);
   const apple = top.am || live;
   // Wikipedia's critics first (with the charts); the table's where Wikipedia has none
   const rt = wiki && wiki.crit && wiki.crit.length ? wiki : (topCritics(top).length ? { ...(wiki || {}), crit: topCritics(top) } : wiki);
   const list = (top.tr || []).map(([title, sec]) => ({ title, sec: sec || null }));
   const tracks = x.tracks || list.length;
   const minutes = x.minutes || (list.length && list.every((t) => t.sec) ? Math.round(list.reduce((n, t) => n + t.sec, 0) / 60) : null);
-  const year = x.year || (top.d ? String(top.d).slice(0, 4) : "");
+  const year = edition?.d || x.year || variantYear(top);
   const facts = [
     // The table's genres are finer than Deezer's ("Rap/Hip Hop")
     ((top.g && top.g.length ? top.g : x.genres) || []).slice(0, 3).join(", "),
@@ -1181,10 +1217,10 @@ async function unreviewedCard(env, x, arch) {
   const head = (x.intro ? x.intro + "\n\n" : "") +
     `<b>${esc(x.artist)} — ${esc(x.title)}</b>${year ? ` (${year})` : ""}\n${status}${facts ? " · " + esc(facts) : ""}${criticsText(rt) ? "\n" + criticsText(rt) : ""}`;
   const q = encodeURIComponent(`${x.artist} ${x.title}`);
-  const known = arch.find((a) => artistKey(a) === k); // any review of the artist: follow and their list work through it
+  const known = arch.find((a) => k ? artistKey(a) === k : fullName(a.artist_name) === fullName(x.artist));
   const linkLine = linkItems([
     ...listenLinks(q, null, apple, bandcampLink({ bandcamp: top.bc }, x.artist, x.title), top.sc),
-    ["AOTY", `https://www.albumoftheyear.org/search/?q=${q}`],
+    ["AOTY", edition?.p ? `https://www.albumoftheyear.org${edition.p}` : `https://www.albumoftheyear.org/search/?q=${q}`],
   ]);
   // the tracklist as on a review's card; what doesn't fit a photo's caption is cut («… ещё N», no link: no review id)
   const text = withTracklist(head, list, [], x.cover ? CAPTION_LIMIT : MESSAGE_LIMIT, linkLine);
@@ -1192,7 +1228,7 @@ async function unreviewedCard(env, x, arch) {
   if (x.key) {
     // remembered so that "⏳ Послушать потом", "♥ Понравившееся", the reminder and "▶ Отрывки" know what this ID is
     await env.DB.prepare("INSERT INTO unreviewed (id, artist_name, album, year) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET artist_name=excluded.artist_name, album=excluded.album, year=excluded.year")
-      .bind(x.key, x.artist, x.title, x.year || null).run();
+      .bind(x.key, x.artist, x.title, (x.key.startsWith("av") && edition?.d) || x.year || null).run();
     rows.push(...MARK_ROWS(x.key, !!x.liked)); // x.liked: this person liked it (sendUnreviewed)
   }
   if (known) {
@@ -1569,10 +1605,26 @@ function artistMessage(artist, total, items, others, video = null) {
   return { text: head + tail, reply_markup: { inline_keyboard: albumButtons(items, false).concat(more, video ? [[video]] : []) } };
 }
 
+function variantButtons(editions) {
+  return [...editions].sort(([, a], [, b]) => order(b.d, a.d)).map(([id, e]) => {
+    const sameYear = editions.some(([other, x]) => other !== id && fullName(x.a) === fullName(e.a) &&
+      fullName(x.t) === fullName(e.t) && variantYear(x) === variantYear(e));
+    return [{ text: `💿 ${short(e.a)} — ${short(e.t)} · ${sameYear ? e.d : variantYear(e)}`.slice(0, 120), callback_data: `av:${id}` }];
+  });
+}
+
+function sendVariantResults(env, uid, editions, reviews = []) {
+  return tg(env, "sendMessage", { chat_id: uid, text: "Найденные релизы:",
+    reply_markup: { inline_keyboard: [...variantButtons(editions), ...albumButtons(reviews, true)] } });
+}
+
 // A search answers with a card, one artist's albums, a few albums, or a choice of artists first.
 async function search(env, uid, query) {
-  const r = answerSearch(await archive(env), query);
+  const [arch, variants] = await Promise.all([archive(env), loadVariants(env.SITE_URL)]);
+  const r = answerSearch(arch, query);
+  const editions = searchVariants(variants, query);
   if (r.kind === "none") {
+    if (editions.length) return sendVariantResults(env, uid, editions);
     // no review: maybe the album exists anyway; its card then shows what's known without Fantano
     const d = await deezerJson(`search/album?q=${encodeURIComponent(query.slice(0, 100))}&limit=6`);
     const hits = (d.data || []).filter((x) => x.artist && x.record_type !== "single");
@@ -1583,14 +1635,25 @@ async function search(env, uid, query) {
     return tg(env, "sendMessage", { chat_id: uid, parse_mode: "HTML",
       text: `Не нашёл обзора Фантано по запросу «${esc(query.slice(0, 100))}». ${ce(env, "think")} Попробуй имя артиста или название альбома.` });
   }
-  if (r.kind === "card") return sendAlbum(env, uid, r.item, "");
-  if (r.kind === "albums" && r.artist) return tg(env, "sendMessage", { chat_id: uid, ...artistMessage(r.artist, r.total, r.items, r.others, await rankingVideo(env, r.artist)) });
-  if (r.kind === "albums") return tg(env, "sendMessage", { chat_id: uid, text: `Нашёл ${r.total}:`, reply_markup: { inline_keyboard: albumButtons(r.items, true) } });
+  if (r.kind === "card") {
+    const other = editions.filter(([, e]) => e.r !== r.item.id);
+    return other.length ? sendVariantResults(env, uid, other, [r.item]) : sendAlbum(env, uid, r.item, "");
+  }
+  if (r.kind === "albums") {
+    const other = editions.filter(([, e]) => !r.items.some((a) => a.id === e.r));
+    if (!r.artist && other.length) return sendVariantResults(env, uid, other, r.items);
+    if (r.artist) {
+      const message = artistMessage(r.artist, r.total, r.items, r.others, await rankingVideo(env, r.artist));
+      message.reply_markup.inline_keyboard.push(...variantButtons(other));
+      return tg(env, "sendMessage", { chat_id: uid, ...message });
+    }
+    return tg(env, "sendMessage", { chat_id: uid, text: `Нашёл ${r.total}:`, reply_markup: { inline_keyboard: albumButtons(r.items, true) } });
+  }
   return tg(env, "sendMessage", {
     chat_id: uid,
     text: `Нашёл ${reviewsWord(r.total)} у ${r.groups} ${plural(r.groups, "артиста", "артистов", "артистов")}. Выбери артиста` +
       (r.groups > r.artists.length ? ` (показаны ${r.artists.length} с наибольшим числом обзоров) или уточни запрос:` : ":"),
-    reply_markup: { inline_keyboard: r.artists.map((x) => [{ text: `${short(x.name)} · ${reviewsWord(x.count)}`.slice(0, 120), callback_data: `ar:${x.id}` }]) },
+    reply_markup: { inline_keyboard: [...r.artists.map((x) => [{ text: `${short(x.name)} · ${reviewsWord(x.count)}`.slice(0, 120), callback_data: `ar:${x.id}` }]), ...variantButtons(editions)] },
   });
 }
 
@@ -1986,7 +2049,7 @@ async function sendDigest(env) {
 
 // ---------- "⏳ Послушать потом", "♥ Понравившееся" and "▶ Отрывки" ----------
 
-// What marked IDs are: a review (archive), or an album without one (a MusicBrainz release group, or "dz<Deezer id>").
+// What marked IDs are: a review ID, a MusicBrainz release group, "dz<Deezer id>", or "av<AOTY id>".
 // -> { id: { artist_name, album, open: the callback that opens its card } }
 async function markedNames(env, ids) {
   const out = {};
@@ -1997,8 +2060,12 @@ async function markedNames(env, ids) {
   const rest = ids.filter((id) => !out[id]);
   for (let i = 0; i < rest.length; i += 50) {
     const part = rest.slice(i, i + 50);
-    const { results } = await env.DB.prepare(`SELECT id, artist_name, album FROM unreviewed WHERE id IN (${part.map(() => "?").join(",")})`).bind(...part).all();
-    for (const u of results) out[u.id] = { artist_name: u.artist_name, album: u.album, open: u.id.startsWith("dz") ? `dz:${u.id.slice(2)}` : `mb:${u.id}` };
+    const { results } = await env.DB.prepare(`SELECT id, artist_name, album, year FROM unreviewed WHERE id IN (${part.map(() => "?").join(",")})`).bind(...part).all();
+    for (const u of results) {
+      const match = /^(dz|av)(\d+)$/.exec(u.id);
+      const album = match?.[1] === "av" && u.year ? `${u.album} (${u.year})` : u.album;
+      out[u.id] = { artist_name: u.artist_name, album, open: match ? `${match[1]}:${match[2]}` : `mb:${u.id}` };
+    }
   }
   return out;
 }

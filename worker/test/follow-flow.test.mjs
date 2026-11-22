@@ -48,6 +48,7 @@ let mbDown = false;
 let longBrief = null; // a brief too long for a photo's caption
 let rtMoods = null; // the archive brief's mood guess for Kid A, when a test needs another
 let rtAl = null; // the album as checked from Actions (data/albums.json), in Kid A's rt file
+let av = {};
 let topU = null; // the site's u/ra.json (the owner's music-database table, lmn/aoty_top.py)
 let pinnedNow = null; // what getChat says is pinned in a private chat
 let freshAlbums = []; // albums Deezer lists for Radiohead on top of the old ones
@@ -61,6 +62,7 @@ beforeEach(() => {
   rtMoods = null;
   rtAl = null;
   topU = null;
+  av = {};
   pinnedNow = null;
   freshAlbums = [];
   db = new DatabaseSync(":memory:");
@@ -92,6 +94,7 @@ beforeEach(() => {
         brief: longBrief || "Radiohead уходят в электронику.", blurb: "Not shown when there is a brief.", moods: rtMoods || ["для работы за столом", "не то"],
         who: "британская рок-группа, четвёртый альбом", ...(rtAl ? { al: rtAl } : {}) }));
     }
+    if (String(url) === "https://site/av.json") return new Response(JSON.stringify(av));
     if (String(url) === "https://site/u/ra.json" && topU) return new Response(JSON.stringify(topU));
     if (String(url).startsWith("https://site/u/")) return new Response("not found", { status: 404 });
     if (String(url) === "https://site/wtb.json") return new Response(JSON.stringify([{ artist: "Radiohead", video_id: "uu8sC7YDOZg", date: "2017-04-17" }]));
@@ -1123,4 +1126,38 @@ test("after «✓ Слушал»: one message with similar albums as buttons, or
   calls = [];
   await press(OWNER, `m:${BENDS}:done`); // an album without a review: nothing to compare its genres with
   assert.ok(calls.some((c) => c.method === "sendMessage" && /^Пока не можем найти похожие/.test(c.text)));
+});
+
+test("same-title catalog albums have separate cards and reopen by ID from saved lists", async () => {
+  av = {
+    "1018": { a: "Weezer", t: "Weezer (Blue Album)", d: "1994-05-10", tr: [["My Name Is Jonas", 204]],
+      p: "/album/1018-weezer-weezer-blue-album.php", am: "https://music.apple.com/us/album/blue/1" },
+    "1015": { a: "Weezer", t: "Weezer (Green Album)", d: "2001-05-15", tr: [["Photograph", 139]],
+      p: "/album/1015-weezer-weezer-green-album.php", am: "https://music.apple.com/us/album/green/2" },
+  };
+  await say(OWNER, "Weezer");
+  const list = calls.find((c) => c.method === "sendMessage" && c.text === "Найденные релизы:");
+  assert.deepEqual(list.reply_markup.inline_keyboard.flat().map((b) => b.callback_data), ["av:1015", "av:1018"]);
+  calls = [];
+  await press(OWNER, "av:1018");
+  const blue = calls.find((c) => c.method === "sendMessage" && c.text.includes("Blue Album"));
+  assert.match(blue.text, /My Name Is Jonas/);
+  assert.doesNotMatch(blue.text, /Photograph/);
+  assert.match(blue.text, /https:\/\/music\.apple\.com\/us\/album\/blue\/1/);
+  await press(OWNER, "m:av1018:later");
+  calls = [];
+  await press(OWNER, "av:1015");
+  const green = calls.find((c) => c.method === "sendMessage" && c.text.includes("Green Album"));
+  assert.match(green.text, /Photograph/);
+  assert.doesNotMatch(green.text, /My Name Is Jonas/);
+  await press(OWNER, "lk:av1015");
+  calls = [];
+  await say(OWNER, "/liked");
+  assert.match(calls.find((c) => c.method === "sendMessage").text, /start=av_1015/);
+  calls = [];
+  await say(OWNER, "/start av_1015");
+  assert.match(calls.find((c) => c.method === "sendMessage").text, /Photograph/);
+  calls = [];
+  await say(OWNER, "/later");
+  assert.equal(calls.find((c) => c.method === "sendMessage").reply_markup.inline_keyboard[0][0].callback_data, "av:1018");
 });

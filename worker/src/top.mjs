@@ -30,3 +30,52 @@ export async function topAlbum(siteUrl, artist, title, get = fetch) {
     return null;
   }
 }
+
+// A small index of releases that share a title or cannot use the regular key.
+// Its IDs come from the supplied table and stay stable when titles are edited.
+export async function loadVariants(siteUrl, get = fetch) {
+  if (!siteUrl) return {};
+  try {
+    const r = await get(`${siteUrl}/av.json`, { cf: { cacheTtlByStatus: { "200-299": 3600, "404": 60 } } });
+    return r.ok ? await r.json() : {};
+  } catch {
+    return {};
+  }
+}
+
+// Preserve names such as "!!!", "( )" and "†" when there are no letters.
+export const fullName = (s) => nameKey(s) || String(s || "").normalize("NFKC").toLowerCase().replace(/\s+/gu, "");
+export const variantYear = (e) => String(e.d || "").slice(0, 4);
+const fullTitles = (e) => [e.t, ...(e.aliases || [])].map(fullName);
+const titleSuffix = (t) => t.match(/\s+[([]([^()[\]]+)[)\]]$/u)?.[1];
+
+export function searchVariants(variants, query) {
+  const dated = /^(.+?)\s+\(?(\d{4})\)?$/u.exec(query);
+  const wanted = fullName(dated ? dated[1] : query);
+  if (!wanted) return [];
+  return Object.entries(variants).filter(([, e]) => {
+    if (dated && variantYear(e) !== dated[2]) return false;
+    const artist = fullName(e.a);
+    const titles = [...fullTitles(e), nameKey(untitled(e.t))].filter(Boolean);
+    const suffix = titleSuffix(e.t);
+    return wanted === artist || titles.some((t) => wanted === t || wanted === artist + t) ||
+      (suffix && (wanted === fullName(suffix) || wanted === artist + fullName(suffix)));
+  });
+}
+
+export function variantsOf(variants, artist, title) {
+  const name = fullName(artist);
+  const full = fullName(title);
+  const bare = nameKey(untitled(title));
+  return Object.entries(variants).filter(([, e]) => fullName(e.a) === name &&
+    (!title || fullTitles(e).includes(full) || (bare && bare === nameKey(untitled(e.t)))));
+}
+
+export function matchVariant(editions, title, year) {
+  const full = fullName(title);
+  const dated = year ? editions.filter(([, e]) => variantYear(e) === year) : editions;
+  const exact = dated.filter(([, e]) => fullTitles(e).includes(full));
+  const qualified = titleSuffix(title);
+  if (exact.length === 1 && (year || qualified || !nameKey(untitled(title)))) return exact[0];
+  return year && !qualified && exact.length === 0 && dated.length === 1 ? dated[0] : null;
+}
