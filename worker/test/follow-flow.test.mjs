@@ -14,6 +14,7 @@ const ARCHIVE = [
   { id: "p", url: "https://tnd/pool", published: "2016-05-10", artist_name: "Radiohead", album: "A Moon Shaped Pool", score: 8, video_id: "vidvidvid01", genres: ["art rock"] },
   { id: "x", url: "https://tnd/x", published: "2011-01-01", artist_name: "Obscure", album: "Nothing", score: null },
 ];
+const HOUNDS_EPISODE = "https://youtu.be/g4gMMIzwLO0?t=210";
 let db, calls, env;
 
 function d1(sqlite) {
@@ -102,6 +103,10 @@ beforeEach(() => {
       return new Response(JSON.stringify({ crit: [], sales: [], blurb: "Radiohead return & shine.", fav: ["DAYDREAMING", "TRUE LOVE WAITS"], fav_play: true,
         apple: "https://music.apple.com/us/album/a-moon-shaped-pool/5" }));
     }
+    if (String(url) === "https://site/rt/hounds.json") return Response.json({
+      brief: "Пересказ отдельного обзора.", series: { url: HOUNDS_EPISODE, text: "10/10 в выпуске про 1980-е" },
+      al: { cv: "https://cdn/hounds.jpg", y: "1985" },
+    });
     if (String(url).startsWith("https://site/rt/")) return new Response("not found", { status: 404 });
     if (String(url).startsWith("https://musicbrainz.org/") && mbDown) return new Response("busy", { status: 503 });
     if (String(url).startsWith("https://musicbrainz.org/ws/2/release-group?artist=R&") && String(url).includes("offset=100")) {
@@ -183,15 +188,15 @@ beforeEach(() => {
   };
 });
 
-async function tgUpdate(update) {
+async function tgUpdate(update, app = worker) {
   const waits = [];
-  const res = await worker.fetch(new Request("https://w/tg", { method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": "w" }, body: JSON.stringify(update) }),
+  const res = await app.fetch(new Request("https://w/tg", { method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": "w" }, body: JSON.stringify(update) }),
     env, { waitUntil: (p) => waits.push(p) });
   await Promise.all(waits);
   return res;
 }
 const press = (uid, data, message_id = 77) => tgUpdate({ callback_query: { id: "q", from: { id: uid }, data, message: { message_id } } });
-const say = (uid, text) => tgUpdate({ message: { chat: { type: "private" }, from: { id: uid }, text } });
+const say = (uid, text, app) => tgUpdate({ message: { chat: { type: "private" }, from: { id: uid }, text } }, app);
 async function newReviews(reviews) {
   const r = await worker.fetch(new Request("https://w/api/new-reviews", { method: "POST", headers: { Authorization: "Bearer a" }, body: JSON.stringify({ reviews }) }),
     env, { waitUntil() {} });
@@ -292,6 +297,25 @@ test("with the site up, the card's last line is our site's page, named as ours (
   assert.match(c.caption, /^<b>Radiohead — Kid A<\/b>/); // the title itself is text: a link's text can't be copied
   // apart from the links by a blank line: it read as one of them (owner, 2026-11-02)
   assert.match(c.caption, /<\/blockquote>\n<a href=[^\n]+\n🌐 <a href="https:\/\/site\/r\/[^"]+\.html">На нашем сайте<\/a>$/);
+});
+
+test("a classic album links its episode from the score, followed by CLASSIC", async () => {
+  const { default: isolatedWorker } = await import("../src/index.js?classic-score");
+  const archive = [...ARCHIVE, { id: "hounds", url: "https://tnd/hounds", published: "2015-05-01",
+    artist_name: "Kate Bush", album: "Hounds of Love", classic: true, video_id: "wuE3plpz5Ho" }];
+  const fetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (String(url).endsWith("/archive.min.json") && PACKED) return Response.json(pack(archive));
+    if (String(url).endsWith("/archive.json")) return Response.json(archive);
+    return fetch(url, opts);
+  };
+  await say(OWNER, "hounds of love", isolatedWorker);
+  const card = calls.find((c) => c.method === "sendPhoto");
+  assert.ok(card);
+  assert.equal(card.caption.split("\n")[1], `🟢 <a href="${HOUNDS_EPISODE}">10/10</a> · CLASSIC`);
+  assert.equal(card.caption.split(HOUNDS_EPISODE).length, 2);
+  assert.ok(card.caption.includes('<a href="https://youtu.be/wuE3plpz5Ho">Видеообзор</a>'));
+  assert.match(card.caption, /<b>Обзор:<\/b> Пересказ отдельного обзора\./);
 });
 
 test("one hit is sent as a full card: cover, length, links, marks and follow", async () => {

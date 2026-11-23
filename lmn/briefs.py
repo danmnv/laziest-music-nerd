@@ -35,11 +35,11 @@ GIVE_UP = 5  # failures in a row: the key, the plan or the service is wrong, no 
 TR_BATCH = 10  # briefs per Gemini translation request
 
 
-def priority_ten(a):
-    """A 10/10 album review by Fantano. Older albums from the decade series have their own pass."""
-    return (a.get("score") == 10
-            and not any(a.get(k) for k in ("guest", "classic", "not_good", "track", "dup_of"))
-            and not decade_tens.includes(a))
+def priority_review(a):
+    """Dedicated reviews of 10/10 albums and of albums covered in the decade episodes."""
+    if a["id"].startswith(decade_tens.PREFIX) or any(a.get(k) for k in ("guest", "not_good", "track", "dup_of")):
+        return False
+    return decade_tens.includes(a) or (a.get("score") == 10 and not a.get("classic"))
 
 
 def full_brief(v):
@@ -47,7 +47,7 @@ def full_brief(v):
 
 
 def archive_order(a):
-    return priority_ten(a), a["published"]
+    return priority_review(a), a["published"]
 
 
 def targets(archive, reviews, done, transcribed=()):
@@ -55,7 +55,7 @@ def targets(archive, reviews, done, transcribed=()):
     out = [tnd.tidy_entry(a) for a in archive]
     out = [a for a in out if a.get("artist_name") and a.get("album") and not a.get("track")
            and a["id"] not in done and a["id"] not in have
-           and (len(a["id"]) == 24 or (a["id"] in transcribed and priority_ten(a)))]
+           and (len(a["id"]) == 24 or (a["id"] in transcribed and priority_review(a)))]
     return sorted(out, key=archive_order, reverse=True)
 
 
@@ -365,7 +365,7 @@ def run():
             print("briefs: time is up for this run")
             break
         if text is None:
-            if a["id"] not in heard or not priority_ten(a):
+            if a["id"] not in heard or not priority_review(a):
                 continue
             text = ""  # the priority review has a transcript even when TND is down
         if llm.stats["rub"] >= max_rub:  # the run's spending cap: the key itself has no limit

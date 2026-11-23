@@ -1,4 +1,5 @@
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -39,8 +40,17 @@ class DecadeTensTest(unittest.TestCase):
         self.assertEqual(parsed["black-saint"]["start_seconds"], 130)
         self.assertEqual(parsed["black-saint"]["brief"], BRIEF)
         rows[1]["start_seconds"] = rows[0]["start_seconds"]
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "same timestamp"):
             decade_tens.parse_answer(gemini_answer(json.dumps({"items": rows})), ALBUMS, 481)
+
+    def test_rejection_log_distinguishes_truncated_response_and_invalid_json(self):
+        cases = [(gemini_answer("{}", "MAX_TOKENS"), "generation ended with 'MAX_TOKENS'"),
+                 (gemini_answer("{"), "invalid JSON at line 1, column 2")]
+        for raw, detail in cases:
+            with self.subTest(detail=detail), mock.patch.object(gemini, "generate", return_value=("test-model", raw)), \
+                    mock.patch("builtins.print") as printed:
+                self.assertIsNone(decade_tens.request(VID, "fake-key", 8))
+                self.assertIn(detail, printed.call_args.args[0])
 
     def test_priority_pass_reserves_quota_and_reuses_a_cached_episode(self):
         with tempfile.TemporaryDirectory() as d:
@@ -60,25 +70,41 @@ class DecadeTensTest(unittest.TestCase):
                 self.assertEqual(transcribe.process_decade_tens([EXISTING], "fake-key", budget, 0), 0)
                 mock_generate.assert_called_once()
 
-    def test_site_uses_existing_card_and_publishes_timestamp_and_description(self):
+    def test_site_keeps_original_review_as_the_source_and_uses_episode_text_for_new_cards(self):
         with tempfile.TemporaryDirectory() as d:
             data, out = Path(d, "data"), Path(d, "out")
             data.mkdir()
-            (data / "archive.json").write_text(json.dumps([EXISTING]))
+            dylan = {"id": "original-dylan", "artist_name": "Bob Dylan", "album": "Highway 61 Revisited",
+                     "classic": True, "url": "https://theneedledrop.com/dylan", "published": "2015-01-02T00:00:00Z"}
+            (data / "archive.json").write_text(json.dumps([EXISTING, dylan]))
+            original_brief = "Существующий пересказ отдельного обзора."
+            original_about = "Текст из отдельного обзора, в котором подробно разбирается музыка."
+            (data / "briefs.json").write_text(json.dumps({
+                EXISTING["id"]: {"brief": original_brief, "about": original_about, "src": "video"},
+            }))
             items = decade_tens.parse_answer(gemini_answer(json.dumps({"items": response_rows()})), ALBUMS, 481)
             cover = {"cv": "https://example.com/cover.jpg", "t": [["Track One", 190]], "y": "1963"}
             decade_tens.save(data / decade_tens.FILENAME, {"videos": {VID: {"items": items}}, "albums": {"black-saint": cover}})
             with mock.patch.object(site, "DATA", data), mock.patch.object(site, "OUT", out):
                 site.build()
             self.assertFalse((out / "r" / "ten-hot-rats.html").exists())
-            for review_id, seconds in (("original-zappa", 30), ("ten-black-saint", 130)):
+            for review_id, brief, about, seconds in (
+                ("original-zappa", original_brief, original_about, 30),
+                ("original-dylan", None, None, 80),
+                ("ten-black-saint", BRIEF, ABOUT, 130),
+            ):
                 page = (out / "r" / f"{review_id}.html").read_text()
                 link = decade_tens.video_url(VID, seconds)
-                self.assertIn(ABOUT, page)
-                self.assertIn(link, page)
+                self.assertEqual(page.count(f'href="{link}"'), 1)
+                self.assertRegex(page, rf'<p><a class="score green" href="{re.escape(link)}"[^>]*>10/10</a>')
                 payload = json.loads((out / "rt" / f"{review_id}.json").read_text())
-                self.assertEqual(payload["brief"], BRIEF)
+                self.assertEqual(payload.get("brief"), brief)
                 self.assertEqual(payload["series"]["url"], link)
+                if about:
+                    self.assertIn(about, page)
+                if review_id.startswith("original-"):
+                    self.assertNotIn(ABOUT, page)
+                    self.assertRegex(page, r'10/10</a> <span class="score green">CLASSIC</span>')
             page = (out / "r" / "ten-black-saint.html").read_text()
             self.assertIn("10/10", page)
             self.assertIn(cover["cv"], page)
@@ -91,14 +117,21 @@ class StandaloneTensTest(unittest.TestCase):
                    "artist_name": "Other", "album": "An album"}
         kids = {"id": "kids", "published": "2018-06-11", "score": 10, "artist_name": "Kids See Ghosts",
                 "album": "KIDS SEE GHOSTS", "video_id": "9rkFbKVownA"}
-        archive = [regular, kids, {**EXISTING, "classic": False, "score": 10, "video_id": "zappa"},
+        madvillain = {"id": "6684c32c49ea2a054e091603", "published": "2013-01-01",
+                      "artist_name": "Madvillainy", "album": "Madvillain", "classic": True}
+        hounds = {"id": "6684c32c49ea2a054e091d7a", "published": "2015-05-01", "artist_name": "Kate Bush",
+                  "album": "Hounds of Love", "classic": True}
+        archive = [regular, kids, {**EXISTING, "video_id": "zappa"}, madvillain, hounds,
                    {**kids, "id": "no-brief", "published": "2017-01-01", "album": "Another album"},
                    {**kids, "id": "complete", "album": "Full text"}]
         data = {"regular": {"src": "short"}, "kids": {"src": "short", "brief": "Одна фраза."},
                 "complete": {"brief": BRIEF, "about": ABOUT, "src": "video"}}
-        with mock.patch.object(transcribe, "_load", return_value={}):
+        notes = {hounds["id"]: {"video_id": "wuE3plpz5Ho"}}
+        with mock.patch.object(transcribe, "_load", side_effect=lambda name, default: notes if name == "notes.json" else default):
             items = transcribe.todo(archive, data, set())
-        self.assertEqual([a["id"] for a in items], ["kids", "no-brief", "regular"])
+        self.assertEqual([a["id"] for a in items], ["kids", "no-brief", hounds["id"], EXISTING["id"], madvillain["id"], "regular"])
+        self.assertEqual(items[2]["video_id"], "wuE3plpz5Ho")
+        self.assertEqual(items[-2]["video_id"], "u7JPMQkVuMo")
 
     def test_video_only_ten_gets_a_brief_before_the_regular_archive(self):
         from lmn import briefs
