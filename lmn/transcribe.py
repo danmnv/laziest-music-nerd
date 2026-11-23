@@ -80,7 +80,7 @@ def have():
 
 
 def todo(archive, data, done):
-    """Reviews with a known video and no substantial source text yet, with 10/10 reviews first."""
+    """Reviews with a known video and no substantial source text yet, ordered by archive priority."""
     notes = _load("notes.json", {})
     albums = _load("albums.json", {})
     out = []
@@ -90,13 +90,13 @@ def todo(archive, data, done):
         a = tnd.tidy_entry(dict(entry))
         v = data.get(a["id"]) or {}
         short = v.get("src") == "short" or v.get("short") == "none"
-        missing_ten = briefs.priority_ten(a) and not briefs.full_brief(v)
-        if not (short or missing_ten):
+        missing_priority = briefs.priority_review(a) and not briefs.full_brief(v)
+        if not (short or missing_priority):
             continue
         retell = v.get("vf", 0) >= FAIL_MAX
         if retell and not (RETELL and v.get("vr") and v.get("vt", 0) < FAIL_MAX):  # only what models refused (RECITATION
             continue  # and the like), not a request refused for the video itself (blocked: no "vr")
-        vid = a.get("video_id") or (notes.get(a["id"]) or {}).get("video_id")
+        vid = a.get("video_id") or (notes.get(a["id"]) or {}).get("video_id") or decade_tens.ORIGINAL_VIDEOS.get(a["id"])
         if vid:
             out.append({**a, "video_id": vid, **({"retell": True} if retell else {}),
                         "tracks": briefs.tracklist(albums, a["id"])})
@@ -321,7 +321,7 @@ def run():
     described = {r["id"] for r in _load("reviews.json", []) if (r.get("ai") or {}).get("brief")}
     items = todo(archive, data, transcripts | described)
     if slot == "late" and run_budget.model_limit(RETELL_MODEL):
-        first_regular = next((i for i, item in enumerate(items) if not briefs.priority_ten(item)), len(items))
+        first_regular = next((i for i, item in enumerate(items) if not briefs.priority_review(item)), len(items))
         retelling = next((i for i in range(first_regular, len(items)) if items[i].get("retell")), None)
         if retelling is not None:
             items.insert(first_regular, items.pop(retelling))

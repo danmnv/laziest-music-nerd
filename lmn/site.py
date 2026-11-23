@@ -490,6 +490,9 @@ def build():
         again_vid = ((notes.get(other) or {}).get("video_id") or (by_id.get(other) or {}).get("video_id")) if other else None
         li = lists.get(a["id"])
         nt = notes.get(a["id"])
+        original_vid = decade_tens.ORIGINAL_VIDEOS.get(a["id"])
+        if original_vid and not (a.get("video_id") or (nt or {}).get("video_id")):
+            nt = {**(nt or {}), "video_id": original_vid}
         bc = (bandcamp.get(a["id"]) or {}).get("u")
         if bc and not (nt or {}).get("bc"):  # Fantano's own "Listen:" link first, then the one found
             nt = {**(nt or {}), "bc": bc}
@@ -497,10 +500,9 @@ def build():
         album_data = deezer_found(albums.get(a["id"])) or (series or {}).get("album")
         album = deezer_found(album_data)
         br = briefs.get(a["id"])
-        series_brief = bool((series or {}).get("brief") and not (a.get("ai") or {}).get("brief")
-                            and (not (br or {}).get("brief") or br.get("src") == "short"))
+        series_brief = bool((series or {}).get("brief"))
         if series_brief:
-            br = {"who": (br or {}).get("who") or series.get("who"), "moods": series.get("moods")}
+            br = {"who": series.get("who"), "moods": series.get("moods")}
             if nt:
                 nt = {**nt, "blurb": None}
         # the score is in the page's and the card's first lines: not again in the text (gemini.drop_score)

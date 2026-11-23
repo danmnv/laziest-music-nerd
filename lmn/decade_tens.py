@@ -52,6 +52,12 @@ ALIASES = {
 }
 PREFIX = "ten-"
 
+# Original reviews linked by Fantano in the episode descriptions. These two archive posts lack a video ID.
+ORIGINAL_VIDEOS = {
+    "6684c32c49ea2a054e091111": "SqntE3jS43k",  # Marvin Gaye – What's Going On
+    "6684c32c49ea2a054e091603": "u7JPMQkVuMo",  # Madvillain – Madvillainy
+}
+
 
 def video_url(vid, seconds=None):
     return f"https://youtu.be/{vid}" + (f"?t={seconds}" if seconds else "")
@@ -99,10 +105,12 @@ def add_to_archive(archive):
 def card_sources(archive, cached):
     by_id = {}
     for vid, decade, key, a in series_albums(archive):
-        about = (cached.get("videos", {}).get(vid, {}).get("items") or {}).get(key) or {}
+        segment = (cached.get("videos", {}).get(vid, {}).get("items") or {}).get(key) or {}
         by_id[a["id"]] = {
-            **about, "text": f"10/10 в выпуске про {decade}-е",
-            "url": video_url(vid, about.get("start_seconds")),
+            # A dedicated review supplies its own text. Its episode segment is only a source link.
+            **(segment if a["id"].startswith(PREFIX) else {}),
+            "text": f"10/10 в выпуске про {decade}-е",
+            "url": video_url(vid, segment.get("start_seconds")),
             "album": cached.get("albums", {}).get(key),
         }
     return by_id
@@ -132,19 +140,29 @@ def parse_answer(raw, albums, duration_seconds):
     """Require a usable, distinct segment for every album in the episode before saving."""
     expected = {key: album_keys(key, artist, title) for key, artist, title, _ in albums}
     cand = raw["candidates"][0]
-    if cand.get("finishReason") != "STOP":
-        raise ValueError("incomplete response")
+    reason = cand.get("finishReason")
+    if reason != "STOP":
+        raise ValueError(f"generation ended with {reason!r}")
     parts = cand["content"]["parts"]
     answer = json.loads("".join(p.get("text", "") for p in parts if not p.get("thought")))["items"]
+    if not isinstance(answer, list):
+        raise ValueError("items must be a list")
     items, starts = {}, set()
     for row in answer:
         key, start = row["id"], row["start_seconds"]
-        if (key in items or (norm(row["artist"]), norm(row["album"])) not in expected[key]
-                or type(start) is not int or not 0 <= start < duration_seconds or start in starts):
-            raise ValueError("wrong album or invalid timestamp")
+        if key not in expected:
+            raise ValueError("unexpected album ID")
+        if key in items:
+            raise ValueError(f"{key}: repeated album ID")
+        if (norm(row["artist"]), norm(row["album"])) not in expected[key]:
+            raise ValueError(f"{key}: artist or title does not match")
+        if type(start) is not int or not 0 <= start < duration_seconds:
+            raise ValueError(f"{key}: timestamp is not a whole number of seconds within the video")
+        if start in starts:
+            raise ValueError(f"{key}: same timestamp as another album")
         fields = {k: row[k].strip() for k in ("brief", "about") if isinstance(row.get(k), str)}
         if not fields.get("brief") or not fields.get("about"):
-            raise ValueError("missing description")
+            raise ValueError(f"{key}: missing short or full description")
         who, moods = row.get("who"), row.get("moods")
         items[key] = {
             "start_seconds": start,
@@ -155,7 +173,7 @@ def parse_answer(raw, albums, duration_seconds):
         }
         starts.add(start)
     if items.keys() != expected.keys():
-        raise ValueError("incomplete album list")
+        raise ValueError("missing albums: " + ", ".join(sorted(expected.keys() - items.keys())))
     return items
 
 
@@ -171,9 +189,14 @@ def request(vid, api_key, mins, **kwargs):
         return None
     try:
         return {"model": model, "items": parse_answer(raw, albums, round(mins * 60))}
-    except (AttributeError, KeyError, IndexError, TypeError, ValueError) as e:
-        print(f"::warning::These Albums Are 10s {vid}: rejected Gemini response ({type(e).__name__})")
-        return None
+    except json.JSONDecodeError as e:
+        detail = f"invalid JSON at line {e.lineno}, column {e.colno}"
+    except ValueError as e:
+        detail = str(e)
+    except (AttributeError, KeyError, IndexError, TypeError) as e:
+        detail = f"unexpected response structure ({type(e).__name__})"
+    print(f"::warning::These Albums Are 10s {vid}: {model} response rejected: {detail}")
+    return None
 
 
 def save(path, cached):
