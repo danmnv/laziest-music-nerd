@@ -1,4 +1,5 @@
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -94,7 +95,8 @@ class DecadeTensTest(unittest.TestCase):
             ):
                 page = (out / "r" / f"{review_id}.html").read_text()
                 link = decade_tens.video_url(VID, seconds)
-                self.assertIn(link, page)
+                self.assertEqual(page.count(f'href="{link}"'), 1)
+                self.assertRegex(page, rf'<p><a class="score green" href="{re.escape(link)}"[^>]*>10/10</a>')
                 payload = json.loads((out / "rt" / f"{review_id}.json").read_text())
                 self.assertEqual(payload.get("brief"), brief)
                 self.assertEqual(payload["series"]["url"], link)
@@ -102,7 +104,7 @@ class DecadeTensTest(unittest.TestCase):
                     self.assertIn(about, page)
                 if review_id.startswith("original-"):
                     self.assertNotIn(ABOUT, page)
-                    self.assertIn("CLASSIC", page)
+                    self.assertRegex(page, r'10/10</a> <span class="score green">CLASSIC</span>')
             page = (out / "r" / "ten-black-saint.html").read_text()
             self.assertIn("10/10", page)
             self.assertIn(cover["cv"], page)
@@ -117,14 +119,18 @@ class StandaloneTensTest(unittest.TestCase):
                 "album": "KIDS SEE GHOSTS", "video_id": "9rkFbKVownA"}
         madvillain = {"id": "6684c32c49ea2a054e091603", "published": "2013-01-01",
                       "artist_name": "Madvillainy", "album": "Madvillain", "classic": True}
-        archive = [regular, kids, {**EXISTING, "video_id": "zappa"}, madvillain,
+        hounds = {"id": "6684c32c49ea2a054e091d7a", "published": "2015-05-01", "artist_name": "Kate Bush",
+                  "album": "Hounds of Love", "classic": True}
+        archive = [regular, kids, {**EXISTING, "video_id": "zappa"}, madvillain, hounds,
                    {**kids, "id": "no-brief", "published": "2017-01-01", "album": "Another album"},
                    {**kids, "id": "complete", "album": "Full text"}]
         data = {"regular": {"src": "short"}, "kids": {"src": "short", "brief": "Одна фраза."},
                 "complete": {"brief": BRIEF, "about": ABOUT, "src": "video"}}
-        with mock.patch.object(transcribe, "_load", return_value={}):
+        notes = {hounds["id"]: {"video_id": "wuE3plpz5Ho"}}
+        with mock.patch.object(transcribe, "_load", side_effect=lambda name, default: notes if name == "notes.json" else default):
             items = transcribe.todo(archive, data, set())
-        self.assertEqual([a["id"] for a in items], ["kids", "no-brief", EXISTING["id"], madvillain["id"], "regular"])
+        self.assertEqual([a["id"] for a in items], ["kids", "no-brief", hounds["id"], EXISTING["id"], madvillain["id"], "regular"])
+        self.assertEqual(items[2]["video_id"], "wuE3plpz5Ho")
         self.assertEqual(items[-2]["video_id"], "u7JPMQkVuMo")
 
     def test_video_only_ten_gets_a_brief_before_the_regular_archive(self):

@@ -75,11 +75,17 @@ def slug(name):
     return k[:60] if k and not lost else "x" + hashlib.sha1(name.encode()).hexdigest()[:10]
 
 
-def score_badge(a):
+def score_badge(a, series=None):
     if a.get("track"):
         return '<span class="score none">трек</span>'
     c = color(a.get("score"), a.get("not_good"), a.get("classic")) or "none"
-    return f'<span class="score {c}">{e(card.score_text(a))}</span>'
+    original = f'<span class="score {c}">{e(card.score_text(a))}</span>'
+    if not series:
+        return original
+    linked = f'<a class="score green" href="{e(series["url"])}" title="{e(series["text"])}">10/10</a>'
+    if a.get("classic") or a.get("not_good") or a.get("score") not in (None, 10):
+        return f"{linked} {original}"
+    return linked
 
 
 def history_list(items, current_id, depth):
@@ -207,13 +213,11 @@ def lists_rows(badges):
     return [("У Фантано в списках", "<br>".join(f'🏆 <a href="{e(b["url"])}">{e(b["text"])}</a>' for b in badges))]
 
 
-def series_rows(series, link=True):
+def series_rows(series):
     if not series:
         return []
-    details = e(series.get("about") or series.get("brief"))
-    source = f'<a href="{e(series["url"])}">{e(series["text"])}</a>' if link else ""
-    content = "<br>".join(x for x in (source, details) if x)
-    return [("These Albums Are 10s", content)] if content else []
+    details = series.get("about") or series.get("brief")
+    return [("These Albums Are 10s", e(details))] if details else []
 
 
 def has_scores(rt):
@@ -277,10 +281,8 @@ def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, 
     reviews, and the reader's marks."""
     vid = a.get("video_id") or (note or {}).get("video_id")  # most archive entries have it only from the video's page (lmn/notes.py)
     review = f"https://youtu.be/{vid}" if vid else a["url"]
-    btns = [("▶ Видеообзор" if vid else "Обзор", review)]
     from_series = a["id"].startswith(decade_tens.PREFIX) and series
-    if from_series:
-        btns = [(series["text"], series["url"])]
+    btns = [] if from_series else [("▶ Видеообзор" if vid else "Обзор", review)]
     if vid and "theneedledrop.com" in a["url"]:
         btns.append(("Текст обзора на TND", a["url"]))
     # what the bot's card shows for this album, from Deezer (data/albums.json, lmn/notes.py)
@@ -302,7 +304,7 @@ def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, 
     hist = (f'<h2>Фантано об этом артисте</h2>{history_list(artist_reviews, a["id"], 1)}' if others else "")
     brief = brief or {}
     rows = again_rows(a) + [(k, e(v)) for k, v in (("Кто", brief.get("who")), ("Обзор", brief.get("about") or brief.get("brief"))) if v]
-    rows += series_rows(series, link=not from_series)
+    rows += series_rows(series)
     # Fantano's line only where there's no brief (as on bot-card pages)
     rows += notes_rows({**(note or {}), "blurb": None if brief.get("brief") else (note or {}).get("blurb")} if note else None, a["id"])
     if album.get("t"):  # Fantano's favourites marked with ★, as on bot-card pages
@@ -316,7 +318,7 @@ def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, 
     body = f"""<article class="release" data-id="{e(a['id'])}">
 {f'<img class="cover" src="{e(album["cv"])}" alt="">' if album.get("cv") else ''}
 <h1><a href="../a/{slug(a['artist_name'])}.html">{e(a['artist_name'])}</a> — {e(a['album'])}{f' <span class="muted">({e(year)})</span>' if year else ''}</h1>
-<p>{score_badge(a)} <span class="muted">{e(meta)}</span></p>
+<p>{score_badge(a, series)} <span class="muted">{e(meta)}</span></p>
 {dl}
 <p class="btns">{''.join(f'<a class="btn" href="{e(u)}">{e(n)}</a>' for n, u in btns)}</p>
 <div class="mine" hidden></div>
@@ -400,10 +402,11 @@ def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None, artis
                                     f"{r['duration_min']} мин" if r.get("duration_min") else None, r["published"][:10],
                                     "гостевой обзор" if r.get("guest") else None] if x)
     cover = (r.get("covers") or [None])[0]
+    score = score_badge(r, series) if series else f'<span class="score {c or "none"}">{card.score_text(r)}</span>'
     body = f"""<article class="release" data-id="{e(r['id'])}">
 {f'<img class="cover" src="{e(cover)}" alt="">' if cover else ''}
 <h1><a href="../a/{slug(r['artist_name'])}.html">{e(r['artist_name'])}</a> — {e(r['album'])}</h1>
-<p><span class="score {c or 'none'}">{card.score_text(r)}</span> <span class="muted">{e(meta)}</span></p>
+<p>{score} <span class="muted">{e(meta)}</span></p>
 <dl>{''.join(f'<dt>{k}</dt><dd>{v}</dd>' for k, v in rows)}</dl>
 <p class="btns">{btns}</p>
 <div class="mine" hidden></div>

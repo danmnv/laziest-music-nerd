@@ -1288,6 +1288,13 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   const nth = ofArtist.findIndex((x) => x.id === r.id) + 1;
   const year = (full && full.year) || (dz && dz.year && dz.year <= reviewYear ? dz.year : null);
   const episodeEntry = r.id.startsWith("ten-");
+  const episodeUrl = rt?.series?.url || (episodeEntry ? r.url : null);
+  let score = badge(r);
+  if (episodeUrl) {
+    const linked = `🟢 ${linkItems([["10/10", episodeUrl]])}`;
+    const showOriginal = r.classic || r.not_good || (r.score != null && r.score !== 10);
+    score = showOriginal ? `${linked} · ${r.classic ? "CLASSIC" : score}` : linked;
+  }
   const facts = [
     genresOf(r).slice(0, 3).join(", "),
     tracks ? tracksWord(tracks) : "",
@@ -1317,12 +1324,11 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   const other = first || redo;
   const againWords = other ? `${first ? "Первый обзор" : "Позже переоценил"} (${other.y})` : "";
   const again = other ? `\n🔁 ${rt && rt.again_vid ? `<a href="https://youtu.be/${esc(rt.again_vid)}">${againWords}</a>` : againWords}: ${badge(other)}` : "";
-  const head = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${badge(r)}${facts ? " · " + esc(facts) : ""}${again}`;
+  const head = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${score}${facts ? " · " + esc(facts) : ""}${again}`;
   const q = encodeURIComponent(`${r.artist_name} ${r.album}`);
   const vid = r.video_id || (rt && rt.video_id); // most archive reviews have it only in rt (lmn/notes.py: the video's page)
   const linkLine = linkItems([
     ...(episodeEntry ? [] : [vid ? ["Видеообзор", `https://youtu.be/${vid}`] : ["Обзор", r.url]]),
-    ...(rt?.series ? [[rt.series.text, rt.series.url]] : episodeEntry ? [["These Albums Are 10s", r.url]] : []),
     // no «Все платформы» (album.link) in the bot: the owner didn't like how it reads or what it opens (2026-11-02); the site keeps it
     ...listenLinks(q, links.youtube_album, apple, bandcampLink(links, r.artist_name, r.album, rt && rt.bc), rt && rt.sc),
     ["AOTY", `https://www.albumoftheyear.org/search/?q=${q}`],
