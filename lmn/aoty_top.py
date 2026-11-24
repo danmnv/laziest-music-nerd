@@ -24,7 +24,7 @@ import unicodedata
 import urllib.parse
 from pathlib import Path
 
-from . import aoty
+from . import aoty, links
 
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 GENRE_MAX = 22  # characters: «Festival Progressive House» and the like don't fit a card's line
@@ -46,6 +46,16 @@ def untitled(t):
 
 def key(artist, title):
     return f"{name_key(artist)[:60]}--{name_key(untitled(title))[:80]}"
+
+
+def release_identity(artist, title):
+    """Keep the full title so a deluxe edition or a same-title release is not inferred from a bare key."""
+    return tuple(name_key(s) or str(s or "").strip() for s in (artist, title))
+
+
+def release_dates(top):
+    return {release_identity(e["a"], e["t"]): e["d"] for e in top.values()
+            if e.get("a") and e.get("t") and e.get("d")}
 
 
 def shard(k):
@@ -138,7 +148,8 @@ def reviewed(archive, top):
         if a.get("track") or not a.get("artist_name") or not a.get("album"):
             continue
         e = top.get(key(a["artist_name"], a["album"]))
-        if e:
+        title = links.album_title_key(a["album"])
+        if e and title and links.album_title_key(e.get("t")) == title:
             out[a["id"]] = e
     return out
 

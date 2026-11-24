@@ -97,7 +97,7 @@ def is_review(u):
     """Titled like a review, and the description has the album line, or else the score line and a title that gives
     artist and album (a new way of writing the album line must not lose the card, nor post one without names)."""
     d, title = u.get("desc") or "", u.get("title") or ""
-    if not REVIEW_TITLE.search(title):
+    if u.get("video_id") in tnd.NON_REVIEWS or not REVIEW_TITLE.search(title):
         return False
     if META.search(d):
         return True
@@ -137,7 +137,7 @@ def review_from_video(u):
     host = re.sub(r"^https?://", "", listen).split("/", 1)[0].lower()
     vid = u["video_id"]
     from .notes import blurb  # notes imports this module
-    return {
+    return tnd.retitle_entry({
         "id": vid, "source": "youtube", "slug": None, "url": f"https://www.youtube.com/watch?v={vid}", "title": u["title"],
         "artist_name": artist, "album": album, "published": u["published"],
         "score": d.get("score"), "not_good": bool(d.get("not_good") or info.get("not_good_title")),
@@ -149,7 +149,7 @@ def review_from_video(u):
         "listen_bandcamp": listen if host == "bandcamp.com" or host.endswith(".bandcamp.com") else None,
         "listen_url": listen or None,
         "blurb": blurb(u["desc"]),  # Fantano's one line under the video: on the card until the description comes
-    }
+    })
 
 
 def _ts(iso):
@@ -191,7 +191,7 @@ def plan(posts, uploads, reviews, seeding, now=None):
     by_video = {r["video_id"]: r for r in reviews if r.get("video_id")}
     waiting = {_key(r): r for r in reviews if r.get("source") == "youtube" and not r.get("tnd_url") and _key(r)}
     no_video = {_key(r): r for r in reviews if not r.get("video_id") and _key(r)}  # site posts with no video link found
-    site = [(tnd.parse_post(p), p.get("plaintext")) for p in posts]
+    site = [(rev, p.get("plaintext")) for p in posts if not (rev := tnd.parse_post(p)).get("non_review")]
     site_by_video = {rev["video_id"]: (rev, text) for rev, text in site if rev.get("video_id")}
     new, upgrades, taken = [], [], set()
     from_video = {}  # this run's reviews taken from a video alone, by artist and album: (item, upload)

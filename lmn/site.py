@@ -9,7 +9,7 @@ import unicodedata
 import urllib.parse
 from pathlib import Path
 
-from . import aoty, aoty_top, card, decade_tens, gemini, ratings, specials, tnd
+from . import aoty, aoty_top, card, decade_tens, editions, gemini, ratings, specials, tnd
 from .colors import color, label
 from .musicbrainz import norm
 from .notes import is_miss
@@ -191,14 +191,29 @@ def deezer_found(v):
     return v if isinstance(v, dict) and (v.get("dz") or v.get("cv") or v.get("t")) else None
 
 
-def card_album(a, album):
-    """What the bot's card shows of the album, checked from Actions (data/albums.json), so the Worker needn't search
-    Deezer live (owner, 2026-11-08: the live search found KNEECAP's single «FENIAN», not the album): {"cv", "y", "min",
-    "t"}. The year only when it isn't after the review: Deezer may only have a later reissue."""
+def release_year(review, album=None, note=None, catalog_date=None):
+    """Use the review's year or an album-level date. Deezer's streaming edition may be decades newer."""
+    def as_year(value):
+        year = str(value or "")[:4]
+        return year if re.fullmatch(r"[12]\d{3}", year) else None
+
+    stated = as_year(review.get("year"))
+    if stated or review.get("track"):
+        return stated
+    mb_date = album.get("y") if album and album.get("mb") and not album.get("dz") else None
+    for date in (catalog_date, (note or {}).get("release_year"), mb_date):
+        year = as_year(date)
+        if year and year <= (review.get("published") or "")[:4]:
+            return year
+    return None
+
+
+def card_album(a, album, year=None):
+    """Release metadata for the bot's card, including the verified year when available."""
     if not album:
         return None
     out = {"cv": album.get("cv"), "min": album.get("min"), "t": album.get("t"),
-           "y": album.get("y") if (album.get("y") or "9999") <= a["published"][:4] else None}
+           "y": year or release_year(a, album)}
     return {k: v for k, v in out.items() if v} or None
 
 
@@ -276,7 +291,7 @@ def critics_rows(rt, a=None):
     return rows
 
 
-def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, album=None, series=None):
+def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, album=None, series=None, year=None):
     """A release page for a review the bot never posted a card for: what the archive knows, the artist's other
     reviews, and the reader's marks."""
     vid = a.get("video_id") or (note or {}).get("video_id")  # most archive entries have it only from the video's page (lmn/notes.py)
@@ -292,7 +307,7 @@ def archive_page(a, artist_reviews, rt=None, lists=None, note=None, brief=None, 
     if (note or {}).get("bc"):  # Fantano's own "Listen:" link (lmn/notes.py)
         btns.append((card.bandcamp_label(note["bc"]), note["bc"]))
     btns += search_buttons(a["artist_name"], a["album"])
-    year = album.get("y") if (album.get("y") or "9999") <= a["published"][:4] else None  # Deezer may only have a later reissue
+    year = year or release_year(a, album, note)
     by_date = sorted(artist_reviews, key=lambda x: x["published"])
     nth = next((i for i, x in enumerate(by_date, 1) if x["id"] == a["id"]), 0)
     meta = " · ".join(x for x in [", ".join(tnd.genres(a)[:5]),
@@ -355,7 +370,7 @@ def dossier_rows(d):
     return rows
 
 
-def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None, artist_reviews=None, series=None):
+def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None, artist_reviews=None, series=None, year=None):
     c = color(r.get("score"), r.get("not_good"), r.get("classic"))
     a = r.get("artist") or {}
     ai = r.get("ai") or {}
@@ -403,9 +418,10 @@ def release_page(r, rt=None, wiki=None, lists=None, note=None, brief=None, artis
                                     "гостевой обзор" if r.get("guest") else None] if x)
     cover = (r.get("covers") or [None])[0]
     score = score_badge(r, series) if series else f'<span class="score {c or "none"}">{card.score_text(r)}</span>'
+    year = year or release_year(r, note=note)
     body = f"""<article class="release" data-id="{e(r['id'])}">
 {f'<img class="cover" src="{e(cover)}" alt="">' if cover else ''}
-<h1><a href="../a/{slug(r['artist_name'])}.html">{e(r['artist_name'])}</a> — {e(r['album'])}</h1>
+<h1><a href="../a/{slug(r['artist_name'])}.html">{e(r['artist_name'])}</a> — {e(r['album'])}{f' <span class="muted">({e(year)})</span>' if year else ''}</h1>
 <p>{score} <span class="muted">{e(meta)}</span></p>
 <dl>{''.join(f'<dt>{k}</dt><dd>{v}</dd>' for k, v in rows)}</dl>
 <p class="btns">{btns}</p>
@@ -436,6 +452,10 @@ def recent_item(r):
 def build():
     reviews = [tnd.retitle_entry(r) for r in load("reviews.json", [])]
     archive = [tnd.tidy_entry(a) for a in load("archive.json", [])]
+    for a in archive + reviews:
+        edition = editions.REVIEW_EDITIONS.get(a["id"])
+        if edition and edition["album"]:
+            a["year"] = edition["album"]["y"]
     if OUT.exists():
         shutil.rmtree(OUT)
     shutil.copytree(SRC, OUT)
@@ -443,11 +463,11 @@ def build():
     (OUT / "a").mkdir(exist_ok=True)
     # a review theneedledrop.com posted twice has no page of its own; a second review of an album names the other one
     # (lmn/rereviews.py), also on a bot card's page, whose record is reviews.json's
-    dup = {a["id"] for a in archive if a.get("dup_of")}
+    dup = {a["id"] for a in archive if a.get("dup_of") or a.get("non_review")}
     again = {a["id"]: {k: a[k] for k in ("first", "redo") if a.get(k)} for a in archive if a.get("first") or a.get("redo")}
     by_id = {a["id"]: a for a in archive if a.get("artist_name") and a.get("album") and a["id"] not in dup}
     for r in reviews:
-        if r["id"] not in dup:
+        if r["id"] not in dup and not r.get("non_review"):
             by_id[r["id"]] = {**r, **again.get(r["id"], {})}
     series_data = load(decade_tens.FILENAME, {})
     if series_data:
@@ -470,9 +490,14 @@ def build():
     bandcamp = load("bandcamp.json", {})  # direct Bandcamp links found through MusicBrainz (lmn/bandcamp.py)
     albums = load("albums.json", {})
     apple = load("apple.json", {})  # Apple Music links found from Actions (lmn/apple.py): the bot's cards read them from rt/
+    for review_id, edition in editions.REVIEW_EDITIONS.items():
+        albums[review_id] = edition["album"]
+        apple[review_id] = edition["apple"]
     top = load("aoty_top.json", {})  # the owner's second music-database table (lmn/aoty_top.py): SoundCloud links here, the rest in u/
     top_hits = aoty_top.reviewed(list(by_id.values()), top)
     variants = load("aoty_variants.json", {})
+    catalog_dates = aoty_top.release_dates(top)
+    variant_dates = {r["r"]: r["d"] for r in variants.values() if r.get("r") and r.get("d")}
     for release in variants.values():
         if release.get("r") in by_id:
             top_hits[release["r"]] = {**top_hits.get(release["r"], {}), **release}
@@ -484,7 +509,8 @@ def build():
         return aoty.merge(ratings.get(i), aoty_data.get(i))
 
     for a in by_id.values():
-        rt = album_rt(a["id"])
+        corrected = tnd.deliberately_unscored(a)
+        rt = None if corrected else album_rt(a["id"])
         other = (a.get("first") or a.get("redo") or {}).get("id")
         if other and not has_scores(rt):
             # the critics' scores belong to the album, not to one of Fantano's two reviews of it: Wikipedia and AOTY often
@@ -492,17 +518,25 @@ def build():
             rt = album_rt(other) or rt
         again_vid = ((notes.get(other) or {}).get("video_id") or (by_id.get(other) or {}).get("video_id")) if other else None
         li = lists.get(a["id"])
-        nt = notes.get(a["id"])
+        nt = None if corrected else notes.get(a["id"])
         original_vid = decade_tens.ORIGINAL_VIDEOS.get(a["id"])
         if original_vid and not (a.get("video_id") or (nt or {}).get("video_id")):
             nt = {**(nt or {}), "video_id": original_vid}
-        bc = (bandcamp.get(a["id"]) or {}).get("u")
+        bc = None if corrected else (bandcamp.get(a["id"]) or {}).get("u")
         if bc and not (nt or {}).get("bc"):  # Fantano's own "Listen:" link first, then the one found
             nt = {**(nt or {}), "bc": bc}
         series = series_by_id.get(a["id"])
-        album_data = deezer_found(albums.get(a["id"])) or (series or {}).get("album")
+        cached_album = albums.get(a["id"])
+        album_data = deezer_found(cached_album) or (series or {}).get("album") or cached_album
         album = deezer_found(album_data)
+        names = [(a["artist_name"], a["album"]), *((series or {}).get("catalog_names") or ())]
+        catalog_date = variant_dates.get(a["id"]) or next(
+            (catalog_dates[k] for artist, title in names if (k := aoty_top.release_identity(artist, title)) in catalog_dates), None)
+        year = release_year(a, album_data, nt, catalog_date)
         br = briefs.get(a["id"])
+        # The existing NAV brief describes the actual album. The PORTALS brief describes Melanie Martinez.
+        if corrected and a["artist_name"] != "NAV":
+            br = None
         series_brief = bool((series or {}).get("brief"))
         if series_brief:
             br = {"who": series.get("who"), "moods": series.get("moods")}
@@ -513,30 +547,30 @@ def build():
             br = {**br, **{k: gemini.drop_score(br[k]) for k in ("brief", "about") if br.get(k)}}
         if (a.get("ai") or {}).get("brief"):
             a = {**a, "ai": {**a["ai"], **{k: gemini.drop_score(a["ai"][k]) for k in ("brief", "about") if a["ai"].get(k)}}}
-        html_ = (release_page(a, rt, artists.get((a.get("artist") or {}).get("mbid") or ""), li, nt, br, by_artist[slug(a["artist_name"])], series)
+        html_ = (release_page(a, rt, artists.get((a.get("artist") or {}).get("mbid") or ""), li, nt, br, by_artist[slug(a["artist_name"])], series, year=year)
                  if a["id"] in enriched
-                 else archive_page(a, by_artist[slug(a["artist_name"])], rt, li, nt, br, album, series))
+                 else archive_page(a, by_artist[slug(a["artist_name"])], rt, li, nt, br, album, series, year=year))
         (OUT / "r" / f"{a['id']}.html").write_text(html_)
         crit, sales = critics_parts(rt)
         nt = nt or {}
         bf = series["brief"] if series_brief else (a.get("ai") or {}).get("brief") or (br or {}).get("brief")
         bm = (br or {}).get("moods") if not (a.get("ai") or {}).get("moods") else None  # the bot's mood vote for archive cards
         who = (a.get("ai") or {}).get("who") or (br or {}).get("who")  # the bot's card has «Кто» too (owner, 2026-11-08)
-        al = card_album(a, album) if a["id"] not in enriched else None
+        al = card_album(a, album, year) if a["id"] not in enriched else None
         if not al and a["id"] not in enriched and is_miss(album_data or albums.get(a["id"])):
             al = {"miss": 1}  # looked up and not found (or only a single, links.fits): the bot doesn't search Deezer live
         # the bot's critics line: the channel card's (card.critics_from: 3 outlets, Metacritic, AOTY), the same on both
         cc = [f"{c['o']} {c['s']}" for c in card.critics_from(rt)]
         am = apple.get(a["id"]) if isinstance(apple.get(a["id"]), str) else None
         sc = (top_hits.get(a["id"]) or {}).get("sc")  # the album's SoundCloud page instead of a search (owner, 2026-11-08)
-        if crit or sales or li or nt or bf or bm or am or again_vid or who or al or sc or series:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
+        if crit or sales or li or nt or bf or bm or am or again_vid or who or al or sc or series or year:  # small per-review file for the bot's cards, so the Worker never parses all of ratings.json
             (OUT / "rt" / f"{a['id']}.json").write_text(json.dumps(
                 {"crit": cc, "sales": sales[:4], "wp_url": (rt or {}).get("wp_url"), "contested": contested(a, rt),
                  **({"lists": li[:4]} if li else {}), **({"blurb": nt["blurb"]} if nt.get("blurb") else {}),
                  **({"brief": bf} if bf else {}), **({"moods": bm} if bm else {}), **({"who": who} if who else {}),
                  **({"series": {k: series[k] for k in ("text", "url")}} if series else {}),
                  **({"series_brief": True} if series_brief else {}),
-                 **({"al": al} if al else {}),
+                 **({"al": al} if al else {}), **({"release_year": year} if year else {}),
                  **({"video_id": nt["video_id"]} if nt.get("video_id") and not a.get("video_id") else {}),
                  **({"bc": nt["bc"]} if nt.get("bc") else {}),
                  **({"apple": am} if am else {}), **({"sc": sc} if sc else {}),

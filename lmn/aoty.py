@@ -20,7 +20,7 @@ import sys
 import unicodedata
 from pathlib import Path
 
-from . import ratings
+from . import ratings, tnd
 
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 # The table's names for outlets the site lists under Wikipedia's names (ratings.PRIORITY)
@@ -139,12 +139,15 @@ def fill_scores(archive, data):
     n = 0
     names = {}
     for a in archive:
+        if a.get("non_review"):
+            continue
         k = (loose(a.get("artist_name")), loose(a.get("album")))
         names[k] = names.get(k, 0) + 1
     for a in archive:
         t = (data.get(a["id"]) or {}).get("tnd")
         if (t is None or t != int(t) or a.get("score") is not None or a.get("not_good") or a.get("classic")
                 or a.get("track") or a.get("guest") or a.get("first") or a.get("redo")
+                or tnd.deliberately_unscored(a)
                 or names[(loose(a.get("artist_name")), loose(a.get("album")))] > 1):
             continue
         a["score"], a["score_source"] = int(t), "aoty"

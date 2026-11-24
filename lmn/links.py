@@ -1,6 +1,7 @@
 """Listening links. Every lookup is optional: on failure the button is just not shown."""
 import os
 import re
+import unicodedata
 import urllib.parse
 
 from . import http
@@ -8,7 +9,10 @@ from .musicbrainz import norm
 
 
 CREDIT_SPLIT = re.compile(r"\s*(?:&|,|\+|\||\bx\b|\bwith\b|\bfeat\.?|\band\b)\s*", re.I)
-EDITION = re.compile(r"\b(deluxe|expanded|edition|remaster(ed)?|anniversary|bonus|special)\b", re.I)
+EDITION = (r"(?:(?:\d{4}\s+)?(?:digitally\s+)?remaster(?:ed)?|(?:super\s+)?deluxe|expanded|"
+           r"(?:\d+(?:st|nd|rd|th)\s+)?anniversary|special|bonus(?:\s+track)?)(?:\s+edition)?")
+BRACKET_EDITION = re.compile(r"\s*[\[(]" + EDITION + r"[\])]\s*$", re.I)
+PLAIN_EDITION = re.compile(r"\s+(?:[-–]\s+)?" + EDITION + r"\s*$", re.I)
 
 
 def credited_names(artist):
@@ -24,24 +28,34 @@ def self_titled(artist, album):
     return f"{artist}{m.group(1)}" if m else album
 
 
+def album_title_key(title):
+    title = re.sub(r"(?<=\()the\s+(?=[^\s()]+\s+album\))", "", title or "", flags=re.I)
+    folded = (ch for ch in unicodedata.normalize("NFKD", title) if not unicodedata.combining(ch))
+    return "".join(ch for ch in "".join(folded).lower().replace("&", "and") if ch.isalnum())
+
+
+def album_title_matches(title, want, editions=False):
+    """Preserve release names in brackets, such as (Teal Album) or (LP3)."""
+    if not want:
+        return False
+    if album_title_key(title) == want:
+        return True
+    bracketed = BRACKET_EDITION.sub("", title or "")
+    return (album_title_key(bracketed) == want
+            or (editions and album_title_key(PLAIN_EDITION.sub("", bracketed)) == want))
+
+
 def _rank(want):
-    return lambda x: (x.get("record_type") != "single", norm(x.get("title")) == want, x.get("nb_tracks") or 0)
+    return lambda x: (x.get("record_type") != "single", album_title_key(x.get("title")) == want, x.get("nb_tracks") or 0)
 
 
 def pick_album(results, names, album, editions=False):
-    """The result for this album: the same title, or the title before a bracket ("Kid A (Remastered)"); with
-    editions, also a title that starts the same and names an edition ("Kid A Deluxe Edition"), never another record
-    that merely starts the same ("Kid A Mnesia"). By the full artist name first, then by one of the credited names.
-    Of several with the title, the album before a single of the same name (_rank)."""
-    want = norm(album)
+    """Prefer a matching album to a same-title single, then the exact title to a standard edition suffix."""
+    want = album_title_key(album)
     for key in [norm(n) for n in names if norm(n)]:
         mine = [x for x in results or [] if x and norm((x.get("artist") or {}).get("name")) == key]
-        same = [x for x in mine if norm(x.get("title")) == want or norm(re.sub(r"\s*[(\[].*$", "", x.get("title") or "")) == want]
-        # a single named after the album comes first in the search for some (KNEECAP "FENIAN", 2026-11-08: a 3-track
-        # single with its own cover): the album itself first, then the exact title, then the longest
-        hit = max(same, key=_rank(want), default=None)
-        if not hit and editions:
-            hit = next((x for x in mine if norm(x.get("title")).startswith(want) and EDITION.search(x.get("title") or "")), None)
+        hits = [x for x in mine if album_title_matches(x.get("title"), want, editions)]
+        hit = max(hits, key=_rank(want), default=None)
         if hit:
             return hit
     return None
@@ -129,6 +143,12 @@ def bandcamp_search(artist, album):
     return "https://bandcamp.com/search?" + urllib.parse.urlencode({"q": f"{artist} {album}", "item_type": "a"})
 
 
+def _apple_matches(row, artist, album):
+    title = row.get("collectionName") or ""
+    return (norm(row.get("artistName")) == artist and not title.endswith(" - Single")
+            and album_title_matches(re.sub(r" - EP$", "", title), album))
+
+
 def apple_find(artist, album):
     """The album's page on Apple Music, from Apple's public iTunes Search API (no key; made for linking to the store):
     the URL, 0 when Apple has no such album, None when the request failed. Only an exact artist and title match
@@ -140,18 +160,16 @@ def apple_find(artist, album):
             {"term": f"{artist} {want}", "entity": "album", "limit": 10}), timeout=15, retries=0)
     except (http.HttpError, ValueError):
         return None
-    nt = norm(want)
+    nt = album_title_key(want)
     for na in [norm(n) for n in names if norm(n)]:
-        for x in d.get("results", []):
-            name = x.get("collectionName") or ""
-            if name.endswith(" - Single") or norm(x.get("artistName")) != na:
-                continue
-            if norm(re.sub(r" - EP$", "", name)) == nt or norm(re.sub(r"\s*[(\[][^)\]]*[)\]]\s*$", "", re.sub(r" - EP$", "", name))) == nt:
-                return (x.get("collectionViewUrl") or "").split("?")[0] or 0
+        hits = [x for x in d.get("results", []) if _apple_matches(x, na, nt) and x.get("collectionViewUrl")]
+        hit = max(hits, key=lambda x: album_title_key(x["collectionName"]) == nt, default=None)
+        if hit:
+            return hit["collectionViewUrl"].split("?")[0]
     return 0
 
 
-def apple_tracks(url):
+def apple_tracks(url, artist=None, album=None):
     """The tracklist and cover of an album on Apple Music, by its page's URL (iTunes lookup API, no key): {"tracks":
     [{"title", "sec"}], "cover": 1000×1000 artwork URL}, or None. Apple lists an album's whole tracklist even before its
     release (Wolves in the Throne Room «Estuary», 2026-11-10: Deezer had only a 2-track single, MusicBrainz nothing)."""
@@ -163,8 +181,13 @@ def apple_tracks(url):
     except (http.HttpError, ValueError):
         return None
     res = d.get("results") or []
+    collection = next((x for x in res if x.get("wrapperType") == "collection"), {})
+    if artist and album:
+        want = album_title_key(self_titled(artist, album))
+        if not any(_apple_matches(collection, norm(name), want) for name in credited_names(artist)):
+            return None
     songs = sorted((x for x in res if x.get("wrapperType") == "track"), key=lambda x: (x.get("discNumber") or 1, x.get("trackNumber") or 0))
-    art = next((x.get("artworkUrl100") for x in res if x.get("wrapperType") == "collection"), None)
+    art = collection.get("artworkUrl100")
     tracks = [{"title": x.get("trackName") or "", "sec": round((x.get("trackTimeMillis") or 0) / 1000) or None} for x in songs]
     out = {"tracks": tracks, "cover": art.replace("100x100bb", "1000x1000bb") if art else None}
     return out if tracks or out["cover"] else None

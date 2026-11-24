@@ -32,3 +32,12 @@ test("the album comes before a single of the same name (KNEECAP «FENIAN», owne
     { id: 2, title: "FENIAN", record_type: "album", nb_tracks: 14, artist: { name: "Kneecap" } }];
   assert.equal(pickAlbum(res, creditedNames("KNEECAP"), "FENIAN").id, 2);
 });
+
+test("release nicknames stay part of the title in streaming searches", () => {
+  const teal = r(1, "Weezer (Teal Album)", "Weezer");
+  const white = r(2, "Weezer (White Album)", "Weezer");
+  const deluxe = r(3, "Weezer (Teal Album) [Deluxe Edition]", "Weezer");
+  assert.equal(pickAlbum([white, deluxe, teal], ["Weezer"], "Weezer (The Teal Album)").id, 1);
+  assert.equal(pickAlbum([deluxe], ["Weezer"], "Weezer (The Teal Album)").id, 3);
+  assert.equal(pickAlbum([teal, white], ["Weezer"], "Weezer"), null);
+});

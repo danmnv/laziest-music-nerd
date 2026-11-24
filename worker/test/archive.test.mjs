@@ -92,3 +92,9 @@ test("order sorts dates and ids as plain strings", () => {
   assert.deepEqual(["2020-01-01", "2016-05-10", "2019-07-01"].sort(order), ["2016-05-10", "2019-07-01", "2020-01-01"]);
   assert.equal(order("a", "a"), 0);
 });
+
+test("a skit marked as a non-review stays out of both archive formats", () => {
+  const raw = [...RAW, { id: "skit", artist_name: "Kanye West", album: "Vultures 2", non_review: true }];
+  assert.equal(plain(raw).data.length, plain(RAW).data.length);
+  assert.equal(through(raw).data.length, through(RAW).data.length);
+});

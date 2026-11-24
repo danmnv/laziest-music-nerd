@@ -15,7 +15,7 @@ import sys
 import time
 import urllib.parse
 
-from . import http, links, musicbrainz
+from . import editions, http, links, musicbrainz
 from .musicbrainz import norm
 from .youtube import parse_description
 from .yt_archive import title_keys
@@ -136,8 +136,8 @@ def fallback(artist, album, known=None, named=None, apple=None):
     keep = {k: known[k] for k in FALLBACK if isinstance(known, dict) and is_miss(known) and known.get(k)}
     if keep.get("cv") and keep.get("t"):
         return {**keep, "fb": 1}
-    # the album on Apple Music (data/apple.json): its tracklist and cover, exact by the page's id (links.apple_tracks)
-    am = links.apple_tracks(apple) if apple else None
+    # Check the cached Apple link's album before using its tracklist or artwork.
+    am = links.apple_tracks(apple, artist, album) if apple else None
     if am and links.fits(named, am.get("tracks")):
         if am.get("tracks") and not keep.get("t"):
             keep["t"] = [[t["title"], t["sec"] or 0] for t in am["tracks"]]
@@ -207,6 +207,10 @@ def albums(archive, old, limit=1500, deadline=None, today=None, nts=None, apple=
     out, n = {}, 0
     for a in sorted(archive, key=lambda x: x.get("published") or "", reverse=True):
         if not (a.get("artist_name") and a.get("album")) or a.get("track"):
+            continue
+        pinned = editions.REVIEW_EDITIONS.get(a["id"])
+        if pinned:
+            out[a["id"]] = pinned["album"]
             continue
         known = old.get(a["id"])
         # a miss from before the fallback (2026-11-08) is asked once more, now with it
@@ -296,8 +300,11 @@ def build(uploads, archive, old, deezer_limit=1500, apple_limit=200, deadline=No
         # looked up before: dz is the ID, or 0 when the track isn't on Deezer (None: the search failed, ask again)
         known = {f["t"]: f["dz"] for f in prev.get("fav", []) if f.get("dz") is not None}
         known_am = {f["t"]: f["am"] for f in prev.get("fav", []) if f.get("am") is not None}
+        meta = parse_description(v["desc"])
+        year = meta.get("year") if (norm(meta.get("meta_artist")) == norm(a["artist_name"])
+                                    and norm(meta.get("meta_album")) == norm(a["album"])) else None
         fav = []
-        for t in parse_description(v["desc"]).get("fav_tracks", [])[:5]:
+        for t in meta.get("fav_tracks", [])[:5]:
             if t in known:
                 fav.append({"t": t, "dz": known[t]})
             elif lookups < deezer_limit and not late():
@@ -315,7 +322,7 @@ def build(uploads, archive, old, deezer_limit=1500, apple_limit=200, deadline=No
                     am = apple_track(a["artist_name"], t)
                     if am is not None:
                         f["am"] = am
-        n = {"video_id": v["id"], "blurb": blurb(v["desc"]), "fav": fav, "bc": bandcamp(v["desc"])}
+        n = {"video_id": v["id"], "blurb": blurb(v["desc"]), "fav": fav, "bc": bandcamp(v["desc"]), "release_year": year}
         out[a["id"]] = {k: x for k, x in n.items() if x}
     print(f"notes: {len(out)} reviews, {sum(1 for n in out.values() if n.get('blurb'))} with a blurb, "
           f"{sum(1 for n in out.values() if n.get('fav'))} with fav tracks; Deezer lookups {lookups}, Apple lookups {apple}")
@@ -327,8 +334,14 @@ def apply_dates(path, data_dir):
     a fresh archive.json, so it never fights check.py's appends."""
     import json
     from pathlib import Path
+    from . import tnd
     data_dir = Path(data_dir)
     archive = json.loads((data_dir / "archive.json").read_text())
+    corrected = 0
+    for a in archive:
+        previous = dict(a)
+        tnd.retitle_entry(a)
+        corrected += a != previous
     nts = json.loads((data_dir / "notes.json").read_text())
     moved = use_video_dates(json.loads(Path(path).read_text()), archive, nts)
     print(f"archive: {moved} dates changed to the review videos'")
@@ -343,7 +356,7 @@ def apply_dates(path, data_dir):
         print(f"archive: genres from the second music-database table for {genres} reviews")
     linked = rereviews.link(archive)
     print(f"archive: {linked} entries got or lost a link to another review of the same album")
-    if moved or linked or filled or genres:
+    if moved or linked or filled or genres or corrected:
         (data_dir / "archive.json").write_text(json.dumps(archive, ensure_ascii=False, indent=1) + "\n")
 
 
