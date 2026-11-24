@@ -46,7 +46,8 @@ if __name__ == "__main__":
 
 
 LOOKUP = {"results": [
-    {"wrapperType": "collection", "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/x/100x100bb.jpg"},
+    {"wrapperType": "collection", "artistName": "Wolves in the Throne Room", "collectionName": "Estuary",
+     "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/x/100x100bb.jpg"},
     {"wrapperType": "track", "trackName": "Land of Light", "trackTimeMillis": 300000, "discNumber": 1, "trackNumber": 2},
     {"wrapperType": "track", "trackName": "Knights of Tiamat", "trackTimeMillis": 420500, "discNumber": 1, "trackNumber": 1}]}
 

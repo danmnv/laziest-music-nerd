@@ -24,7 +24,7 @@ import unicodedata
 import urllib.parse
 from pathlib import Path
 
-from . import aoty
+from . import aoty, links
 
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 GENRE_MAX = 22  # characters: «Festival Progressive House» and the like don't fit a card's line
@@ -138,7 +138,8 @@ def reviewed(archive, top):
         if a.get("track") or not a.get("artist_name") or not a.get("album"):
             continue
         e = top.get(key(a["artist_name"], a["album"]))
-        if e:
+        title = links.album_title_key(a["album"])
+        if e and title and links.album_title_key(e.get("t")) == title:
             out[a["id"]] = e
     return out
 

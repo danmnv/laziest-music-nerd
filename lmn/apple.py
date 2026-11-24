@@ -14,7 +14,7 @@ import os
 import time
 from pathlib import Path
 
-from . import links
+from . import editions, links
 from .notes import is_miss, miss_due
 
 DATA = Path(os.environ.get("DATA_DIR", "data"))
@@ -30,6 +30,10 @@ def run(archive, old, limit=1000, deadline=None, today=None, sleep=time.sleep):
     out, n, failing = {}, 0, 0
     for a in sorted(archive, key=lambda x: x.get("published") or "", reverse=True):
         if not (a.get("artist_name") and a.get("album")) or a.get("track"):
+            continue
+        pinned = editions.REVIEW_EDITIONS.get(a["id"])
+        if pinned:
+            out[a["id"]] = pinned["apple"]
             continue
         known = old.get(a["id"])
         if known is not None and not (is_miss(known) and miss_due(known, a.get("published"), today)):

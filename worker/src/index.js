@@ -14,7 +14,7 @@ import { startLink, openFromStart } from "./links.mjs";
 import { PAGE, OLD_DAYS, QFROM_MINUTES, lastHeard, after, before, nextAfter, laterReviews, daysOld, line as queueLine } from "./queue.mjs";
 import { searchArchive } from "./search.mjs";
 import { genresOf } from "./genres.mjs";
-import { creditedNames, selfTitled, pickAlbum } from "./deezer.mjs";
+import { albumTitleKey, albumTitleMatches, creditedNames, selfTitled, pickAlbum } from "./deezer.mjs";
 import { untitled, sortOut, quietHour, ruDate, RECHECK_HOURS } from "./releases.mjs";
 import { ce, plainEmoji } from "./emoji.mjs";
 import { topAlbum, topCritics, loadVariants, searchVariants, variantsOf, matchVariant, variantYear, fullName } from "./top.mjs";
@@ -905,14 +905,16 @@ async function deezerAlbum(artist, album) {
 // Only an exact match of artist and title counts; otherwise null and the card gets a search link instead.
 async function appleAlbum(artist, album) {
   try {
-    const r = await appleSearch(`${artist} ${untitled(album)}`);
+    const title = selfTitled(artist, album);
+    const r = await appleSearch(`${artist} ${title}`);
     if (!r.ok) console.log("itunes search", r.status);
     const d = r.ok ? await r.json() : {};
-    const want = nameKey(untitled(album));
+    const want = albumTitleKey(title);
     // Apple names a single "Title - Single" and an EP "Title - EP": a single of the same name is not the album
-    const hit = (d.results || []).find((x) => nameKey(x.artistName) === nameKey(artist) && !/ - Single$/.test(x.collectionName || "") &&
-      nameKey(untitled(String(x.collectionName || "").replace(/ - EP$/, ""))) === want);
-    return hit && hit.collectionViewUrl ? hit.collectionViewUrl.split("?")[0] : null;
+    const hits = (d.results || []).filter((x) => x.collectionViewUrl && nameKey(x.artistName) === nameKey(artist) &&
+      !/ - Single$/.test(x.collectionName || "") && albumTitleMatches(String(x.collectionName || "").replace(/ - EP$/, ""), want));
+    const hit = hits.find((x) => albumTitleKey(x.collectionName) === want) || hits[0];
+    return hit ? hit.collectionViewUrl.split("?")[0] : null;
   } catch (e) {
     return null;
   }
@@ -1085,12 +1087,12 @@ async function sendMbAlbum(env, uid, id, msg) {
   if (!g || !g.title) {
     const x = fromListButton(msg, `mb:${id}`);
     if (!x) return tg(env, "sendMessage", { chat_id: uid, text: "MusicBrainz сейчас не отвечает, попробуй через минуту." });
-    const dz = await deezerAlbum(x.artist, untitled(x.title));
+    const dz = await deezerAlbum(x.artist, x.title);
     return sendUnreviewed(env, uid, { ...x, key: id, genres: dz ? dz.genres : [], tracks: dz && dz.tracks, minutes: dz && dz.minutes,
       cover: dz && dz.cover, link: dz && dz.link });
   }
   const artist = ((g["artist-credit"] || [])[0] || {}).name || "";
-  const dz = await deezerAlbum(artist, untitled(g.title));
+  const dz = await deezerAlbum(artist, g.title);
   const second = g["secondary-types"] || [];
   const kind = second.length ? (KIND_RU[second[0]] || second[0].toLowerCase()) : g["primary-type"] === "EP" ? "EP" : "";
   return sendUnreviewed(env, uid, {
@@ -1275,7 +1277,7 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
     : await deezerAlbum(r.artist_name, r.album);
   // a card the bot posted has it (lmn/links.py), an archive album from Actions (lmn/apple.py, in rt); the live search
   // last: Apple often refuses the Worker (429, its address is shared with other Cloudflare sites)
-  const apple = links.apple || (rt && rt.apple) || await appleAlbum(r.artist_name, r.album);
+  const apple = al?.no_streaming ? null : links.apple || rt?.apple || await appleAlbum(r.artist_name, r.album);
   const cover = (full && full.covers && full.covers[0]) || (dz && dz.cover);
   const tracks = (full && full.tracks && full.tracks.length) || (dz && dz.tracks);
   const list = (full && full.tracks && full.tracks.length ? full.tracks : dz && dz.list) || [];
@@ -1400,6 +1402,7 @@ async function sendTracklist(env, uid, id) {
   const full = (await reviews(env)).find((x) => x.id === id);
   const rt = full ? null : await criticsOf(env, id);
   const al = (rt && rt.al) || {};
+  if (al.no_streaming) return tg(env, "sendMessage", { chat_id: uid, text: "У этого обзора нет треклиста." });
   let list = full && full.tracks && full.tracks.length ? full.tracks : (al.t || []).map(([title, sec]) => ({ title, sec: sec || null }));
   let minutes = (full && full.duration_min) || al.min;
   let year = (full && full.year) || al.y;
@@ -2006,7 +2009,7 @@ async function checkArtists(env, when, budget) {
         .sort((a, b) => order(String(b.published), String(a.published)));
       for (const a of theirs.slice(0, 2)) {
         budget.left -= 3;
-        const hit = await deezerAlbum(a.artist_name, untitled(a.album));
+        const hit = await deezerAlbum(a.artist_name, a.album);
         if (hit && hit.artistId) { dz = hit.artistId; break; }
       }
       if (dz) await env.DB.prepare("UPDATE watched_artists SET dz_id=? WHERE name_key=?").bind(dz, w.name_key).run();

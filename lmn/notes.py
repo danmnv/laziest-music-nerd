@@ -15,7 +15,7 @@ import sys
 import time
 import urllib.parse
 
-from . import http, links, musicbrainz
+from . import editions, http, links, musicbrainz
 from .musicbrainz import norm
 from .youtube import parse_description
 from .yt_archive import title_keys
@@ -136,8 +136,8 @@ def fallback(artist, album, known=None, named=None, apple=None):
     keep = {k: known[k] for k in FALLBACK if isinstance(known, dict) and is_miss(known) and known.get(k)}
     if keep.get("cv") and keep.get("t"):
         return {**keep, "fb": 1}
-    # the album on Apple Music (data/apple.json): its tracklist and cover, exact by the page's id (links.apple_tracks)
-    am = links.apple_tracks(apple) if apple else None
+    # Check the cached Apple link's album before using its tracklist or artwork.
+    am = links.apple_tracks(apple, artist, album) if apple else None
     if am and links.fits(named, am.get("tracks")):
         if am.get("tracks") and not keep.get("t"):
             keep["t"] = [[t["title"], t["sec"] or 0] for t in am["tracks"]]
@@ -207,6 +207,10 @@ def albums(archive, old, limit=1500, deadline=None, today=None, nts=None, apple=
     out, n = {}, 0
     for a in sorted(archive, key=lambda x: x.get("published") or "", reverse=True):
         if not (a.get("artist_name") and a.get("album")) or a.get("track"):
+            continue
+        pinned = editions.REVIEW_EDITIONS.get(a["id"])
+        if pinned:
+            out[a["id"]] = pinned["album"]
             continue
         known = old.get(a["id"])
         # a miss from before the fallback (2026-11-08) is asked once more, now with it

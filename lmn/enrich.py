@@ -83,7 +83,7 @@ def enrich(rev, plaintext, archive, use_ai=True):
     if apple:
         r["links"]["apple"] = apple
     # Apple's tracklist and cover when Deezer and MusicBrainz have no album (yet): Apple lists it even before release
-    am = _try("apple tracks", lambda: links.apple_tracks(apple)) if apple and not (dz and r.get("tracks")) else None
+    am = _try("apple tracks", lambda: links.apple_tracks(apple, artist, album)) if apple and not (dz and r.get("tracks")) else None
     if am and not links.fits(named_tracks(r), am.get("tracks")):
         print(f"apple: {apple} has {len(am['tracks'])} tracks without Fantano's favourites: left out")
         am = None

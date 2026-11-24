@@ -9,7 +9,7 @@ import unicodedata
 import urllib.parse
 from pathlib import Path
 
-from . import aoty, aoty_top, card, decade_tens, gemini, ratings, specials, tnd
+from . import aoty, aoty_top, card, decade_tens, editions, gemini, ratings, specials, tnd
 from .colors import color, label
 from .musicbrainz import norm
 from .notes import is_miss
@@ -436,6 +436,10 @@ def recent_item(r):
 def build():
     reviews = [tnd.retitle_entry(r) for r in load("reviews.json", [])]
     archive = [tnd.tidy_entry(a) for a in load("archive.json", [])]
+    for a in archive + reviews:
+        edition = editions.REVIEW_EDITIONS.get(a["id"])
+        if edition and edition["album"]:
+            a["year"] = edition["album"]["y"]
     if OUT.exists():
         shutil.rmtree(OUT)
     shutil.copytree(SRC, OUT)
@@ -470,6 +474,9 @@ def build():
     bandcamp = load("bandcamp.json", {})  # direct Bandcamp links found through MusicBrainz (lmn/bandcamp.py)
     albums = load("albums.json", {})
     apple = load("apple.json", {})  # Apple Music links found from Actions (lmn/apple.py): the bot's cards read them from rt/
+    for review_id, edition in editions.REVIEW_EDITIONS.items():
+        albums[review_id] = edition["album"]
+        apple[review_id] = edition["apple"]
     top = load("aoty_top.json", {})  # the owner's second music-database table (lmn/aoty_top.py): SoundCloud links here, the rest in u/
     top_hits = aoty_top.reviewed(list(by_id.values()), top)
     variants = load("aoty_variants.json", {})
@@ -525,6 +532,8 @@ def build():
         al = card_album(a, album) if a["id"] not in enriched else None
         if not al and a["id"] not in enriched and is_miss(album_data or albums.get(a["id"])):
             al = {"miss": 1}  # looked up and not found (or only a single, links.fits): the bot doesn't search Deezer live
+        if editions.REVIEW_EDITIONS.get(a["id"], {}).get("album") == 0:
+            al = {"miss": 1, "no_streaming": True}
         # the bot's critics line: the channel card's (card.critics_from: 3 outlets, Metacritic, AOTY), the same on both
         cc = [f"{c['o']} {c['s']}" for c in card.critics_from(rt)]
         am = apple.get(a["id"]) if isinstance(apple.get(a["id"]), str) else None
