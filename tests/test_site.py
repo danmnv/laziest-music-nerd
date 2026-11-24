@@ -96,12 +96,14 @@ class SiteTest(unittest.TestCase):
                  "artist_name": "The Clash", "album": "London Calling", "classic": True}
         edition = {**album, "id": "edition", "album": "London Calling (25th Anniversary Edition)"}
         unmatched = {**album, "id": "unmatched", "album": "London Calling (Remastered)"}
+        track = {**album, "id": "track", "track": True}
         deezer = {"dz": 6856704, "cv": "https://cdn/london.jpg", "y": "2001", "t": [["London Calling", 199]]}
         with tempfile.TemporaryDirectory() as d:
             data, out = Path(d, "data"), Path(d, "out")
             data.mkdir()
-            (data / "archive.json").write_text(json.dumps([album, edition, unmatched]))
+            (data / "archive.json").write_text(json.dumps([album, edition, unmatched, track]))
             (data / "albums.json").write_text(json.dumps({a["id"]: deezer for a in (album, edition, unmatched)}))
+            (data / "notes.json").write_text(json.dumps({"london": {"release_year": 2001}}))
             (data / "aoty_top.json").write_text(json.dumps({
                 "theclash--londoncalling": {"a": "The Clash", "t": "London Calling", "d": "1979-12-14"},
             }))
@@ -120,6 +122,7 @@ class SiteTest(unittest.TestCase):
                 self.assertNotIn("(2001)</span></h1>", page)
                 if year:
                     self.assertIn(f'({year})</span></h1>', page)
+            self.assertNotIn("(1979)</span></h1>", (out / "r" / "track.html").read_text())
 
 
 class CriticsTest(unittest.TestCase):

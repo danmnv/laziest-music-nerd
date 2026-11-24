@@ -197,11 +197,11 @@ def release_year(review, album=None, note=None, catalog_date=None):
         year = str(value or "")[:4]
         return year if re.fullmatch(r"[12]\d{3}", year) else None
 
-    stated = as_year(review.get("year")) or as_year((note or {}).get("release_year"))
-    if stated:
+    stated = as_year(review.get("year"))
+    if stated or review.get("track"):
         return stated
     mb_date = album.get("y") if album and album.get("mb") and not album.get("dz") else None
-    for date in (catalog_date, mb_date):
+    for date in (catalog_date, (note or {}).get("release_year"), mb_date):
         year = as_year(date)
         if year and year <= (review.get("published") or "")[:4]:
             return year
