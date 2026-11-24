@@ -1273,7 +1273,7 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   // Room «Estuary», 2026-11-10; lmn/links.py fits leaves such a single out); al.miss: Actions found no album either
   const dz = full ? null
     : al ? { cover: al.cv || null, tracks: al.t ? al.t.length : null, list: (al.t || []).map(([title, sec]) => ({ title, sec: sec || null })),
-             minutes: al.min || null, year: al.y || null }
+             minutes: al.min || null }
     : await deezerAlbum(r.artist_name, r.album);
   // a card the bot posted has it (lmn/links.py), an archive album from Actions (lmn/apple.py, in rt); the live search
   // last: Apple often refuses the Worker (429, its address is shared with other Cloudflare sites)
@@ -1282,13 +1282,13 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   const tracks = (full && full.tracks && full.tracks.length) || (dz && dz.tracks);
   const list = (full && full.tracks && full.tracks.length ? full.tracks : dz && dz.list) || [];
   const minutes = (full && full.duration_min) || (dz && dz.minutes);
-  // The release year; Deezer may only have a later reissue, so its year counts only if it isn't after the review.
+  // The site resolves the album's year independently of the edition providing the cover and tracks.
   const reviewYear = String(r.published).slice(0, 4);
   const rk = nameKey(r.artist_name);
   const ofArtist = (await archive(env)).filter((x) => artistKey(x) === rk)
     .sort((x, y) => order(String(x.published), String(y.published)));
   const nth = ofArtist.findIndex((x) => x.id === r.id) + 1;
-  const year = (full && full.year) || (dz && dz.year && dz.year <= reviewYear ? dz.year : null);
+  const year = rt?.release_year || full?.year || null;
   const episodeEntry = r.id.startsWith("ten-");
   const episodeUrl = rt?.series?.url || (episodeEntry ? r.url : null);
   let score = badge(r);
@@ -1400,18 +1400,17 @@ async function sendTracklist(env, uid, id) {
   const a = (await archiveById(env, id)) || (await reviews(env)).find((x) => x.id === id);
   if (!a) return tg(env, "sendMessage", { chat_id: uid, text: "Не нашёл этот альбом." });
   const full = (await reviews(env)).find((x) => x.id === id);
-  const rt = full ? null : await criticsOf(env, id);
+  const rt = await criticsOf(env, id);
   const al = (rt && rt.al) || {};
   if (al.no_streaming) return tg(env, "sendMessage", { chat_id: uid, text: "У этого обзора нет треклиста." });
   let list = full && full.tracks && full.tracks.length ? full.tracks : (al.t || []).map(([title, sec]) => ({ title, sec: sec || null }));
   let minutes = (full && full.duration_min) || al.min;
-  let year = (full && full.year) || al.y;
   if (!list.length) {
     const dz = await deezerAlbum(a.artist_name, a.album);
-    if (dz) [list, minutes, year] = [dz.list, minutes || dz.minutes, year || dz.year];
+    if (dz) [list, minutes] = [dz.list, minutes || dz.minutes];
   }
   const fav = (full && full.ai && full.ai.best_tracks) || (rt && rt.fav) || [];
-  const date = (full && full.release_date) || year;
+  const date = full?.release_date || rt?.release_year || full?.year;
   const facts = [badge(a), genresOf(a).slice(0, 3).join(", "), date ? `вышел ${date}` : "", minutes ? `${minutes} мин` : "",
     list.length ? tracksWord(list.length) : ""].filter(Boolean).join(" · ");
   const lines = trackLines(list, fav);

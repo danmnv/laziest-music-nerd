@@ -49,6 +49,7 @@ let mbDown = false;
 let longBrief = null; // a brief too long for a photo's caption
 let rtMoods = null; // the archive brief's mood guess for Kid A, when a test needs another
 let rtAl = null; // the album as checked from Actions (data/albums.json), in Kid A's rt file
+let rtYear;
 let av = {};
 let topU = null; // the site's u/ra.json (the owner's music-database table, lmn/aoty_top.py)
 let pinnedNow = null; // what getChat says is pinned in a private chat
@@ -62,6 +63,7 @@ beforeEach(() => {
   longBrief = null;
   rtMoods = null;
   rtAl = null;
+  rtYear = "2000";
   topU = null;
   av = {};
   pinnedNow = null;
@@ -93,7 +95,7 @@ beforeEach(() => {
     if (String(url) === "https://site/rt/k.json") {
       return new Response(JSON.stringify({ crit: ["Metacritic 91", "Pitchfork 10/10"], sales: ["US #1", "UK #1"], wp_url: "https://en.wikipedia.org/wiki/Kid_A", video_id: "kidavideo01", bc: "https://radiohead.bandcamp.com/album/kid-a",
         brief: longBrief || "Radiohead уходят в электронику.", blurb: "Not shown when there is a brief.", moods: rtMoods || ["для работы за столом", "не то"],
-        who: "британская рок-группа, четвёртый альбом", ...(rtAl ? { al: rtAl } : {}) }));
+        who: "британская рок-группа, четвёртый альбом", release_year: rtYear, ...(rtAl ? { al: rtAl } : {}) }));
     }
     if (String(url) === "https://site/av.json") return new Response(JSON.stringify(av));
     if (String(url) === "https://site/u/ra.json" && topU) return new Response(JSON.stringify(topU));
@@ -105,7 +107,7 @@ beforeEach(() => {
     }
     if (String(url) === "https://site/rt/hounds.json") return Response.json({
       brief: "Пересказ отдельного обзора.", series: { url: HOUNDS_EPISODE, text: "10/10 в выпуске про 1980-е" },
-      al: { cv: "https://cdn/hounds.jpg", y: "1985" },
+      release_year: "1985", al: { cv: "https://cdn/hounds.jpg", y: "2011" },
     });
     if (String(url).startsWith("https://site/rt/")) return new Response("not found", { status: 404 });
     if (String(url).startsWith("https://musicbrainz.org/") && mbDown) return new Response("busy", { status: 503 });
@@ -312,6 +314,7 @@ test("a classic album links its episode from the score, followed by CLASSIC", as
   await say(OWNER, "hounds of love", isolatedWorker);
   const card = calls.find((c) => c.method === "sendPhoto");
   assert.ok(card);
+  assert.match(card.caption, /^<b>Kate Bush — Hounds of Love<\/b> \(1985\)/);
   assert.equal(card.caption.split("\n")[1], `🟢 <a href="${HOUNDS_EPISODE}">10/10</a> · CLASSIC`);
   assert.equal(card.caption.split(HOUNDS_EPISODE).length, 2);
   assert.ok(card.caption.includes('<a href="https://youtu.be/wuE3plpz5Ho">Видеообзор</a>'));
@@ -358,6 +361,21 @@ test("one hit is sent as a full card: cover, length, links, marks and follow", a
   assert.ok(btns.some((b) => b.text === "💿 Альбомы артиста" && b.callback_data === "da:k"));
   await press(OWNER, "f:k"); // an old review the bot never posted a card for
   assert.match(answers().at(-1).text, /Ты следишь за Radiohead/);
+});
+
+test("an edition year does not appear as the album year", async () => {
+  rtYear = undefined;
+  rtAl = { cv: "https://cdn/kida.jpg", y: "2017", t: [["Kid A", 284]] };
+  await say(OWNER, "kid a");
+  const card = calls.find((x) => x.method === "sendPhoto");
+  assert.match(card.caption, /^<b>Radiohead — Kid A<\/b>\n/);
+  assert.notEqual(card.photo, null);
+  assert.doesNotMatch(card.caption, /2017/);
+  calls = [];
+  await say(OWNER, "/start t_k");
+  const tracklist = calls.find((x) => x.method === "sendMessage");
+  assert.match(tracklist.text, /Kid A 4:44/);
+  assert.doesNotMatch(tracklist.text, /вышел/);
 });
 
 test("an album Actions found no album for (or only a single) is not searched live: no single's cover (2026-11-10)", async () => {

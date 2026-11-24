@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 from lmn import card, site, tnd
 from lmn.enrich import archive_entry
@@ -90,6 +91,40 @@ class SiteTest(unittest.TestCase):
             self.assertEqual(cat["o1"]["k"], "swans")
 
 
+    def test_release_year_comes_from_the_exact_catalogue_release(self):
+        album = {"id": "london", "url": "https://theneedledrop.com/london", "published": "2026-01-07",
+                 "artist_name": "The Clash", "album": "London Calling", "classic": True}
+        edition = {**album, "id": "edition", "album": "London Calling (25th Anniversary Edition)"}
+        unmatched = {**album, "id": "unmatched", "album": "London Calling (Remastered)"}
+        track = {**album, "id": "track", "track": True}
+        deezer = {"dz": 6856704, "cv": "https://cdn/london.jpg", "y": "2001", "t": [["London Calling", 199]]}
+        with tempfile.TemporaryDirectory() as d:
+            data, out = Path(d, "data"), Path(d, "out")
+            data.mkdir()
+            (data / "archive.json").write_text(json.dumps([album, edition, unmatched, track]))
+            (data / "albums.json").write_text(json.dumps({a["id"]: deezer for a in (album, edition, unmatched)}))
+            (data / "notes.json").write_text(json.dumps({"london": {"release_year": 2001}}))
+            (data / "aoty_top.json").write_text(json.dumps({
+                "theclash--londoncalling": {"a": "The Clash", "t": "London Calling", "d": "1979-12-14"},
+            }))
+            (data / "aoty_variants.json").write_text(json.dumps({
+                "test-variant": {"a": "The Clash", "t": edition["album"], "d": "2004-09-20", "r": "edition"},
+            }))
+            with mock.patch.object(site, "DATA", data), mock.patch.object(site, "OUT", out):
+                site.build()
+            for review_id, year in (("london", "1979"), ("edition", "2004"), ("unmatched", None)):
+                payload = json.loads((out / "rt" / f"{review_id}.json").read_text())
+                self.assertEqual(payload.get("release_year"), year)
+                self.assertEqual(payload["al"].get("y"), year)
+                self.assertEqual(payload["al"]["t"], deezer["t"])
+                page = (out / "r" / f"{review_id}.html").read_text()
+                self.assertIn("https://www.deezer.com/album/6856704", page)
+                self.assertNotIn("(2001)</span></h1>", page)
+                if year:
+                    self.assertIn(f'({year})</span></h1>', page)
+            self.assertNotIn("(1979)</span></h1>", (out / "r" / "track.html").read_text())
+
+
 class CriticsTest(unittest.TestCase):
     RT = {"checked": "2026-11-01T00:00:00Z", "wp": "Kid A", "wp_url": "https://en.wikipedia.org/wiki/Kid_A", "metacritic": 80,
           "adm": None, "critics": [{"outlet": "Pitchfork", "score": "10/10", "s10": 10}, {"outlet": "AllMusic", "score": "4.5/5", "s10": 9}],
@@ -163,7 +198,7 @@ class Lists(unittest.TestCase):
 class Notes(unittest.TestCase):
     def test_blurb_and_players(self):
         a = {"id": "nat", "url": "https://tnd/nat", "published": "2023-05-05", "artist_name": "The National", "album": "First Two Pages", "score": 6}
-        n = {"blurb": "If you found <it> too colorful", "fav": [{"t": "EUCALYPTUS", "dz": 111}, {"t": "ALIEN", "dz": None}, {"t": "X"},
+        n = {"release_year": 2023, "blurb": "If you found <it> too colorful", "fav": [{"t": "EUCALYPTUS", "dz": 111}, {"t": "ALIEN", "dz": None}, {"t": "X"},
                                                                   {"t": "TROPIC", "dz": 0, "am": "us/album/x/123?i=456"}]}
         older = {"id": "boxer", "url": "https://tnd/boxer", "published": "2010-01-01", "artist_name": "The National", "album": "High Violet", "score": 7}
         album = {"dz": 42, "cv": "https://cdn/cover.jpg", "y": "2023", "min": 46, "t": [["Eucalyptus", 260], ["Tropic Morning News", 301]]}

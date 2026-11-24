@@ -48,6 +48,16 @@ def key(artist, title):
     return f"{name_key(artist)[:60]}--{name_key(untitled(title))[:80]}"
 
 
+def release_identity(artist, title):
+    """Keep the full title so a deluxe edition or a same-title release is not inferred from a bare key."""
+    return tuple(name_key(s) or str(s or "").strip() for s in (artist, title))
+
+
+def release_dates(top):
+    return {release_identity(e["a"], e["t"]): e["d"] for e in top.values()
+            if e.get("a") and e.get("t") and e.get("d")}
+
+
 def shard(k):
     """The site's file for a key: u/<shard>.json, so 10 000 albums take a few hundred files (Pages allows 20 000).
     Latin letters, digits and "-" only in a file name; the rest (30-odd albums in other scripts) share "__"."""
