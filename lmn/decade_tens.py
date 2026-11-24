@@ -45,6 +45,7 @@ EPISODES = {
 }
 
 ALIASES = {
+    "black-saint": (("Mingus", "The Black Saint and the Sinner Lady"),),  # credited as Mingus in the supplied catalogue
     "36-chambers": (("Wu-Tang Clan", "Enter the Wu-Tang: 36 Chambers"), ("Wu-Tang Clan", "36 Chambers")),
     "purple-rain": (("Prince", "Purple Rain"), ("Prince & The Revolution", "Purple Rain")),
     "skinny-fists": (("Godspeed You! Black Emperor", "Lift Your Skinny Fists Like Antennas to Heaven!"),),
@@ -61,6 +62,10 @@ ORIGINAL_VIDEOS = {
 
 def video_url(vid, seconds=None):
     return f"https://youtu.be/{vid}" + (f"?t={seconds}" if seconds else "")
+
+
+ALBUM_NAMES = {key: ((artist, title), *ALIASES.get(key, ()))
+               for _, _, items in EPISODES.values() for key, artist, title, _ in items}
 
 
 def album_keys(key, artist, title):
@@ -112,6 +117,7 @@ def card_sources(archive, cached):
             "text": f"10/10 в выпуске про {decade}-е",
             "url": video_url(vid, segment.get("start_seconds")),
             "album": cached.get("albums", {}).get(key),
+            "catalog_names": ALBUM_NAMES[key],
         }
     return by_id
 

@@ -296,8 +296,11 @@ def build(uploads, archive, old, deezer_limit=1500, apple_limit=200, deadline=No
         # looked up before: dz is the ID, or 0 when the track isn't on Deezer (None: the search failed, ask again)
         known = {f["t"]: f["dz"] for f in prev.get("fav", []) if f.get("dz") is not None}
         known_am = {f["t"]: f["am"] for f in prev.get("fav", []) if f.get("am") is not None}
+        meta = parse_description(v["desc"])
+        year = meta.get("year") if (norm(meta.get("meta_artist")) == norm(a["artist_name"])
+                                    and norm(meta.get("meta_album")) == norm(a["album"])) else None
         fav = []
-        for t in parse_description(v["desc"]).get("fav_tracks", [])[:5]:
+        for t in meta.get("fav_tracks", [])[:5]:
             if t in known:
                 fav.append({"t": t, "dz": known[t]})
             elif lookups < deezer_limit and not late():
@@ -315,7 +318,7 @@ def build(uploads, archive, old, deezer_limit=1500, apple_limit=200, deadline=No
                     am = apple_track(a["artist_name"], t)
                     if am is not None:
                         f["am"] = am
-        n = {"video_id": v["id"], "blurb": blurb(v["desc"]), "fav": fav, "bc": bandcamp(v["desc"])}
+        n = {"video_id": v["id"], "blurb": blurb(v["desc"]), "fav": fav, "bc": bandcamp(v["desc"]), "release_year": year}
         out[a["id"]] = {k: x for k, x in n.items() if x}
     print(f"notes: {len(out)} reviews, {sum(1 for n in out.values() if n.get('blurb'))} with a blurb, "
           f"{sum(1 for n in out.values() if n.get('fav'))} with fav tracks; Deezer lookups {lookups}, Apple lookups {apple}")
