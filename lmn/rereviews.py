@@ -44,7 +44,7 @@ def link(archive):
             a.pop(k, None)
     groups = {}
     for a in archive:
-        if a.get("artist_name") and a.get("album") and not a.get("track") and a.get("published"):
+        if a.get("artist_name") and a.get("album") and not (a.get("track") or a.get("non_review")) and a.get("published"):
             groups.setdefault((_key(a["artist_name"]), album_key(a["album"])), []).append(a)
     for items in groups.values():
         if len(items) < 2:

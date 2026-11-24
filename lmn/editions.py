@@ -2,7 +2,6 @@
 
 The IDs identify the corresponding album pages on Deezer and Apple Music.
 The cover, year, duration and tracks came from that Deezer ID.
-Zero means the review has no corresponding streaming edition.
 """
 
 REVIEW_EDITIONS = {
@@ -90,9 +89,6 @@ REVIEW_EDITIONS = {
             ],
         },
     },
-    # The 2025 TND post quotes an April Fools' video about NAV; its headline is Bully.
-    # The later EP and full album are both unrelated to that video's review.
-    "67ec9e8ba176bb07ab370e71": {"apple": 0, "album": 0},
     "69cdd0bac4ab5e049cd37b65": {  # Ye — Bully (2026), the 18-track album
         "apple": "https://music.apple.com/us/album/bully/1888707282",
         "album": {
@@ -119,6 +115,56 @@ REVIEW_EDITIONS = {
                 ["DAMN", 123],
                 ["LAST BREATH (feat. Peso Pluma)", 186],
                 ["THIS ONE HERE", 180],
+            ],
+        },
+    },
+    "67ec9e8ba176bb07ab370e71": {  # NAV — OMW2 REXDALE
+        "apple": "https://music.apple.com/us/album/omw2-rexdale/1805392941",
+        "album": {
+            "dz": 734140171,
+            "cv": "https://cdn-images.dzcdn.net/images/cover/d3e45dc463ef97d4b5d7996e21ef1c45/1000x1000-000000-80-0-0.jpg",
+            "y": "2025",
+            "min": 37,
+            "t": [
+                ["SINKING", 126],
+                ["YOU", 184],
+                ["STAY UP", 119],
+                ["BURBS", 115],
+                ["UNLIMITED", 208],
+                ["BACK 2 BUSINESS", 143],
+                ["U.N.I.", 132],
+                ["ONE OF NONE", 159],
+                ["NXXD YOU", 200],
+                ["REAL ME", 187],
+                ["RED", 133],
+                ["KEEP GOING", 136],
+                ["GET 2 U", 181],
+                ["PAIN AWAY", 177],
+            ],
+        },
+    },
+    "6684c6e049ea2a054e0b032f": {  # TesseracT — PORTALS
+        "apple": "https://music.apple.com/us/album/portals/1569244326",
+        "album": {
+            "dz": 232732702,
+            "cv": "https://cdn-images.dzcdn.net/images/cover/5ac587fad4325e4043ba3e53ad7c9851/1000x1000-000000-80-0-0.jpg",
+            "y": "2021",
+            "min": 106,
+            "t": [
+                ["Of Matter (P O R T A L S)", 894],
+                ["King (P O R T A L S)", 345],
+                ["Concealing Fate Parts 1, 2 & 3 (P O R T A L S)", 1103],
+                ["Tourniquet (P O R T A L S)", 278],
+                ["Beneath My Skin / Mirror Image (P O R T A L S)", 675],
+                ["Orbital (P O R T A L S)", 136],
+                ["Juno (P O R T A L S)", 361],
+                ["Cages (P O R T A L S)", 328],
+                ["Dystopia (P O R T A L S)", 382],
+                ["Phoenix (P O R T A L S)", 250],
+                ["Nocturne (P O R T A L S)", 257],
+                ["Eden (P O R T A L S)", 393],
+                ["Of Energy (P O R T A L S)", 653],
+                ["Seven Names (P O R T A L S)", 295],
             ],
         },
     },

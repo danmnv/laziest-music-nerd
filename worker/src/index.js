@@ -1277,7 +1277,7 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
     : await deezerAlbum(r.artist_name, r.album);
   // a card the bot posted has it (lmn/links.py), an archive album from Actions (lmn/apple.py, in rt); the live search
   // last: Apple often refuses the Worker (429, its address is shared with other Cloudflare sites)
-  const apple = al?.no_streaming ? null : links.apple || rt?.apple || await appleAlbum(r.artist_name, r.album);
+  const apple = links.apple || rt?.apple || await appleAlbum(r.artist_name, r.album);
   const cover = (full && full.covers && full.covers[0]) || (dz && dz.cover);
   const tracks = (full && full.tracks && full.tracks.length) || (dz && dz.tracks);
   const list = (full && full.tracks && full.tracks.length ? full.tracks : dz && dz.list) || [];
@@ -1402,7 +1402,6 @@ async function sendTracklist(env, uid, id) {
   const full = (await reviews(env)).find((x) => x.id === id);
   const rt = await criticsOf(env, id);
   const al = (rt && rt.al) || {};
-  if (al.no_streaming) return tg(env, "sendMessage", { chat_id: uid, text: "У этого обзора нет треклиста." });
   let list = full && full.tracks && full.tracks.length ? full.tracks : (al.t || []).map(([title, sec]) => ({ title, sec: sec || null }));
   let minutes = (full && full.duration_min) || al.min;
   if (!list.length) {

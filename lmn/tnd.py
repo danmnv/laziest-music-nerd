@@ -115,13 +115,43 @@ RETITLED = {
     # The Madvillainy classic review has the artist and album reversed in the TND archive.
     "6684c32c49ea2a054e091603": {"wrong_artist": "Madvillainy", "artist_name": "Madvillain", "album": "Madvillainy"},
     "6684c32c49ea2a054e09265e": {"wrong_artist": "Death Grips", "artist_name": "AJR", "album": "OK ORCHESTRA", "genres": []},
+    "67ec9e8ba176bb07ab370e71": {
+        "wrong_artist": "Kanye West", "artist_name": "NAV", "album": "OMW2 REXDALE",
+        "genres": ["hip hop"], "video_id": "7oa-CbST4Z0",
+    },
+    "6684c6e049ea2a054e0b032f": {
+        "wrong_artist": "Melanie Martinez", "artist_name": "TesseracT", "album": "PORTALS",
+        "genres": ["progressive metal", "djent"], "video_id": "HMdF_4Pw8C0", "type": "live",
+    },
 }
+
+# Both videos discuss these records in character. Neither gives the record a usable verdict.
+UNSCORED = {"67ec9e8ba176bb07ab370e71", "6684c6e049ea2a054e0b032f"}
+VIDEO_RETITLES = {RETITLED[i]["video_id"]: i for i in UNSCORED}
+# The Vultures 2 skit predates the record; Planningtorock's two April Fools uploads give opposite scores.
+NON_REVIEWS = {"660b120d5808d110dcffb2af", "S5cH5lgxUpM", "l7ovkjrJFMI", "MO_DTx7DOTo"}
+
+
+def correction_id(a):
+    video = a.get("video_id") or a.get("id")
+    return a.get("tnd_id") or VIDEO_RETITLES.get(video, a.get("id"))
+
+
+def deliberately_unscored(a):
+    return correction_id(a) in UNSCORED or bool(a.get("non_review"))
+
 
 
 def retitle_entry(a):
-    fix = RETITLED.get(a.get("id"))
+    i = correction_id(a)
+    fix = RETITLED.get(i)
     if fix and a.get("artist_name") == fix["wrong_artist"]:
         a.update({k: v for k, v in fix.items() if k != "wrong_artist"})
+    if i in NON_REVIEWS or a.get("video_id") in NON_REVIEWS:
+        a["non_review"] = True
+    if deliberately_unscored(a):
+        a.update(score=None, classic=False, not_good=False, score_note=None, not_bad=False, loved=False)
+        a.pop("score_source", None)
     return a
 
 

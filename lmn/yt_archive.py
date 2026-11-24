@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import http
 from .musicbrainz import norm
-from .tnd import tidy_entry
+from .tnd import NON_REVIEWS, deliberately_unscored, tidy_entry
 
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 API = "https://www.googleapis.com/youtube/v3"
@@ -83,12 +83,15 @@ def key(artist, album):
 def main():
     archive = [tidy_entry(a) for a in json.loads((DATA / "archive.json").read_text())]
     missing = {key(a["artist_name"], a["album"]): a for a in archive
-               if a.get("artist_name") and a.get("album") and a.get("score") is None and not a.get("not_good") and not a.get("classic") and not a.get("track")}
+               if a.get("artist_name") and a.get("album") and a.get("score") is None and not a.get("not_good")
+               and not a.get("classic") and not a.get("track") and not deliberately_unscored(a)}
     print(f"archive entries without a score: {len(missing)}")
     videos = all_uploads()
     print(f"videos on the channel: {len(videos)}")
     filled = 0
     for v in videos:
+        if v["id"] in NON_REVIEWS:
+            continue
         a = None
         for artist, album in title_keys(v["title"]):
             a = missing.get(key(artist, album))

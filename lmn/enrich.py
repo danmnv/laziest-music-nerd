@@ -145,6 +145,8 @@ def archive_entry(rev):
                                    "video_id")}
     if rev.get("track"):
         out["track"] = True
+    if rev.get("non_review"):
+        out["non_review"] = True
     if out.get("published"):  # UTC with Z, like the rest of the archive (notes.use_video_dates), so dates sort as strings
         out["published"] = notes.utc(out["published"])
     return out

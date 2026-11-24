@@ -463,11 +463,11 @@ def build():
     (OUT / "a").mkdir(exist_ok=True)
     # a review theneedledrop.com posted twice has no page of its own; a second review of an album names the other one
     # (lmn/rereviews.py), also on a bot card's page, whose record is reviews.json's
-    dup = {a["id"] for a in archive if a.get("dup_of")}
+    dup = {a["id"] for a in archive if a.get("dup_of") or a.get("non_review")}
     again = {a["id"]: {k: a[k] for k in ("first", "redo") if a.get(k)} for a in archive if a.get("first") or a.get("redo")}
     by_id = {a["id"]: a for a in archive if a.get("artist_name") and a.get("album") and a["id"] not in dup}
     for r in reviews:
-        if r["id"] not in dup:
+        if r["id"] not in dup and not r.get("non_review"):
             by_id[r["id"]] = {**r, **again.get(r["id"], {})}
     series_data = load(decade_tens.FILENAME, {})
     if series_data:
@@ -509,7 +509,8 @@ def build():
         return aoty.merge(ratings.get(i), aoty_data.get(i))
 
     for a in by_id.values():
-        rt = album_rt(a["id"])
+        corrected = tnd.deliberately_unscored(a)
+        rt = None if corrected else album_rt(a["id"])
         other = (a.get("first") or a.get("redo") or {}).get("id")
         if other and not has_scores(rt):
             # the critics' scores belong to the album, not to one of Fantano's two reviews of it: Wikipedia and AOTY often
@@ -517,11 +518,11 @@ def build():
             rt = album_rt(other) or rt
         again_vid = ((notes.get(other) or {}).get("video_id") or (by_id.get(other) or {}).get("video_id")) if other else None
         li = lists.get(a["id"])
-        nt = notes.get(a["id"])
+        nt = None if corrected else notes.get(a["id"])
         original_vid = decade_tens.ORIGINAL_VIDEOS.get(a["id"])
         if original_vid and not (a.get("video_id") or (nt or {}).get("video_id")):
             nt = {**(nt or {}), "video_id": original_vid}
-        bc = (bandcamp.get(a["id"]) or {}).get("u")
+        bc = None if corrected else (bandcamp.get(a["id"]) or {}).get("u")
         if bc and not (nt or {}).get("bc"):  # Fantano's own "Listen:" link first, then the one found
             nt = {**(nt or {}), "bc": bc}
         series = series_by_id.get(a["id"])
@@ -533,6 +534,9 @@ def build():
             (catalog_dates[k] for artist, title in names if (k := aoty_top.release_identity(artist, title)) in catalog_dates), None)
         year = release_year(a, album_data, nt, catalog_date)
         br = briefs.get(a["id"])
+        # The existing NAV brief describes the actual album. The PORTALS brief describes Melanie Martinez.
+        if corrected and a["artist_name"] != "NAV":
+            br = None
         series_brief = bool((series or {}).get("brief"))
         if series_brief:
             br = {"who": series.get("who"), "moods": series.get("moods")}
@@ -555,8 +559,6 @@ def build():
         al = card_album(a, album, year) if a["id"] not in enriched else None
         if not al and a["id"] not in enriched and is_miss(album_data or albums.get(a["id"])):
             al = {"miss": 1}  # looked up and not found (or only a single, links.fits): the bot doesn't search Deezer live
-        if editions.REVIEW_EDITIONS.get(a["id"], {}).get("album") == 0:
-            al = {"miss": 1, "no_streaming": True}
         # the bot's critics line: the channel card's (card.critics_from: 3 outlets, Metacritic, AOTY), the same on both
         cc = [f"{c['o']} {c['s']}" for c in card.critics_from(rt)]
         am = apple.get(a["id"]) if isinstance(apple.get(a["id"]), str) else None

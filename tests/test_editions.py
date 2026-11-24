@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from lmn import aoty_top, apple, links, notes, site
+from lmn import aoty, aoty_top, apple, links, notes, site, tnd, youtube
 
 
 class AlbumEditionTest(unittest.TestCase):
@@ -76,11 +76,17 @@ class AlbumEditionTest(unittest.TestCase):
                     covers.add(rt["al"]["cv"])
             self.assertEqual(len(covers), len(examples))
 
-    def test_bully_full_album_belongs_only_to_the_2026_review(self):
-        early, current = "67ec9e8ba176bb07ab370e71", "69cdd0bac4ab5e049cd37b65"
-        archive = [{"id": i, "artist_name": artist, "album": "Bully", "published": date, "url": "https://example.com/review"}
-                   for i, artist, date in [(early, "Kanye West", "2025-04-02"), (current, "Ye", "2026-04-02")]]
-        stale = {early: {"dz": 949407771, "y": "2026"}, current: {"dz": 907177312, "y": "2025"}}
+    def test_april_fools_videos_use_the_album_actually_discussed(self):
+        nav, ye, portals, skit = ("67ec9e8ba176bb07ab370e71", "69cdd0bac4ab5e049cd37b65",
+                                  "6684c6e049ea2a054e0b032f", "660b120d5808d110dcffb2af")
+        cases = [(nav, "Kanye West", "Bully", "2025-04-02", 4, False),
+                 (ye, "Ye", "Bully", "2026-04-02", 4, False),
+                 (portals, "Melanie Martinez", "P O R T A L S", "2023-04-01", None, True),
+                 (skit, "Kanye West", "Vultures 2", "2024-04-01", 2, False)]
+        archive = [{"id": i, "artist_name": artist, "album": title, "published": date,
+                    "score": score, "not_good": ng, "url": "https://example.com/review"}
+                   for i, artist, title, date, score, ng in cases]
+        stale = {nav: {"dz": 949407771, "y": "2026"}, ye: {"dz": 907177312, "y": "2025"}}
         with tempfile.TemporaryDirectory() as tmp:
             data, output = Path(tmp, "data"), Path(tmp, "site")
             data.mkdir()
@@ -88,11 +94,29 @@ class AlbumEditionTest(unittest.TestCase):
             (data / "albums.json").write_text(json.dumps(stale))
             with patch.multiple(site, DATA=data, OUT=output):
                 site.build()
-            original = json.loads((output / "rt" / f"{early}.json").read_text())
-            self.assertEqual(original["al"], {"miss": 1, "no_streaming": True})
-            self.assertNotIn("apple", original)
-            album = json.loads((output / "rt" / f"{current}.json").read_text())
-            self.assertTrue(album["apple"].endswith("/1888707282"))
-            self.assertEqual(album["al"]["y"], "2026")
-            self.assertEqual(len(album["al"]["t"]), 18)
-            self.assertEqual(album["al"]["t"][0][0], "KING")
+            text = json.loads((output / "catalog.json").read_text())
+            titles = {x["i"]: (x["a"], x["t"], x["s"], x["ng"]) for x in text}
+            self.assertEqual(titles, {nav: ("NAV", "OMW2 REXDALE", None, 0), ye: ("Ye", "Bully", 4, 0),
+                                      portals: ("TesseracT", "PORTALS", None, 0)})
+            self.assertFalse((output / "r" / f"{skit}.html").exists())
+            for i, n, apple_id, video in ((nav, 14, "1805392941", "7oa-CbST4Z0"),
+                                           (ye, 18, "1888707282", None),
+                                           (portals, 14, "1569244326", "HMdF_4Pw8C0")):
+                r = json.loads((output / "rt" / f"{i}.json").read_text())
+                self.assertEqual(len(r["al"]["t"]), n)
+                self.assertTrue(r["apple"].endswith(f"/{apple_id}"))
+                if video:
+                    self.assertIn(f"https://youtu.be/{video}", (output / "r" / f"{i}.html").read_text())
+
+        for a in archive:
+            tnd.tidy_entry(a)
+        self.assertEqual(aoty.fill_scores(archive, {nav: {"tnd": 4}, portals: {"tnd": 2}}), 0)
+        self.assertIsNone(archive[0]["score"])
+        self.assertFalse(archive[2]["not_good"])
+
+    def test_youtube_only_import_obeys_the_april_fools_corrections(self):
+        nav = youtube.review_from_video({"video_id": "7oa-CbST4Z0", "title": "Kanye West - Bully ALBUM REVIEW",
+                                         "published": "2025-04-01", "desc": "4/10"})
+        self.assertEqual((nav["artist_name"], nav["album"], nav["score"]), ("NAV", "OMW2 REXDALE", None))
+        for vid in ("S5cH5lgxUpM", "l7ovkjrJFMI", "MO_DTx7DOTo"):
+            self.assertFalse(youtube.is_review({"video_id": vid, "title": "Band - Album ALBUM REVIEW", "desc": "10/10"}))

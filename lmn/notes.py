@@ -334,8 +334,14 @@ def apply_dates(path, data_dir):
     a fresh archive.json, so it never fights check.py's appends."""
     import json
     from pathlib import Path
+    from . import tnd
     data_dir = Path(data_dir)
     archive = json.loads((data_dir / "archive.json").read_text())
+    corrected = 0
+    for a in archive:
+        previous = dict(a)
+        tnd.retitle_entry(a)
+        corrected += a != previous
     nts = json.loads((data_dir / "notes.json").read_text())
     moved = use_video_dates(json.loads(Path(path).read_text()), archive, nts)
     print(f"archive: {moved} dates changed to the review videos'")
@@ -350,7 +356,7 @@ def apply_dates(path, data_dir):
         print(f"archive: genres from the second music-database table for {genres} reviews")
     linked = rereviews.link(archive)
     print(f"archive: {linked} entries got or lost a link to another review of the same album")
-    if moved or linked or filled or genres:
+    if moved or linked or filled or genres or corrected:
         (data_dir / "archive.json").write_text(json.dumps(archive, ensure_ascii=False, indent=1) + "\n")
 
 

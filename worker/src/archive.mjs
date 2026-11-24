@@ -59,7 +59,7 @@ export const albumKey = (a) => (a.lk !== undefined ? a.lk : (a.lk = nameKey(a.al
 // archive.json's list -> the packed object (JSON.stringify it). Anything not known here travels in "x" by the
 // review's index, so a field added to the archive later is not lost.
 export function pack(raw) {
-  const rows = (raw || []).filter((a) => a && !a.dup_of);
+  const rows = (raw || []).filter((a) => a && !a.dup_of && !a.non_review);
   const c = Object.fromEntries(COLUMNS.map((f) => [f, rows.map((a) => (a[f] === undefined ? null : a[f]))]));
   // nearly every review's address starts alike (https://theneedledrop.com/album-reviews/): that start is kept once (u)
   // and cut from the addresses that have it; any other address stays whole, known by its "://"
@@ -131,5 +131,5 @@ export function unpack(d) {
 
 // archive.json's list as the bot uses it, when there is no packed copy
 export function plain(raw) {
-  return { data: (raw || []).filter((a) => !a.dup_of), alias: dupAliases(raw), tags: null };
+  return { data: (raw || []).filter((a) => !a.dup_of && !a.non_review), alias: dupAliases(raw), tags: null };
 }
