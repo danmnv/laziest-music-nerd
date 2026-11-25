@@ -140,41 +140,89 @@ async function wp(params, signal) {
   return r.ok ? r.json() : {};
 }
 
-// A backup for MusicBrainz: read the artist's Discography section, then take only dated entries
-// explicitly listed as studio albums or EPs. The rest of the artist's article is not needed.
+const canonicalStudio = /^(?:primary|main|core|standardi[sz]ed) studio albums?$/i;
+const studioHeading = /^(?:(?:original|solo|primary|main|core|standardi[sz]ed) )?studio albums?$/i;
+const discographyLines = (text) =>
+  text.replace(/<!--[\s\S]*?-->|<ref\b[^>]*\/>|<ref\b[^>]*>[\s\S]*?<\/ref>/gi, "").split("\n");
+const albumLink = (link) => {
+  const parts = link.split("|");
+  return { target: parts[0].trim(), title: parts.at(-1).trim().replaceAll("&amp;", "&") };
+};
+
+function discographyBullets(text, allowed) {
+  const albums = [];
+  let kind = null;
+  for (const line of discographyLines(text)) {
+    const heading = /^\s*(?:={2,6}|''')\s*(.*?)\s*(?:={2,6}|''')\s*$/.exec(line);
+    if (heading) {
+      const label = clean(heading[1]);
+      kind = studioHeading.test(label) ? "" : /^(?:extended plays?|EPs)$/i.test(label) ? "EP" : null;
+    }
+    if (kind === null && !allowed) continue;
+    const row = /^\*\s*(?:'')?\[\[([^\]]+)\]\](?:'')?(?:\s*\([^()]*\))*\s*\(((?:19|20)\d{2})\)\s*$/.exec(line);
+    if (!row) continue;
+    const album = albumLink(row[1]);
+    if (kind !== null || allowed?.has(norm(album.target))) albums.push({ ...album, year: row[2], kind: kind || "" });
+  }
+  return albums;
+}
+
+function studioAlbumRows(text) {
+  const albums = [];
+  let current;
+  for (const line of discographyLines(text)) {
+    const heading = /^\s*={2,6}\s*(.*?)\s*={2,6}\s*$/.exec(line);
+    if (heading && !studioHeading.test(clean(heading[1]))) break;
+    if (/^\s*\|[-}]/.test(line)) current = undefined;
+    const header = /^\s*!\s*scope\s*=\s*["']?row["']?[^|]*\|.*?\[\[([^\]]+)\]\]/i.exec(line);
+    const item = /^\*\s*(?:'')?\[\[([^\]]+)\]\](?:'')?/.exec(line);
+    if (header || item) {
+      const year = item && /\(((?:19|20)\d{2})\)\s*$/.exec(line)?.[1];
+      current = { ...albumLink((header || item)[1]), year, kind: "" };
+      albums.push(current);
+    }
+    const date = /^\s*\*?\s*(?:released|release date):[^\n]*?\b((?:19|20)\d{2})\b/i.exec(line);
+    if (current && !current.year && date) current.year = date[1];
+  }
+  return albums;
+}
+
+async function discographySection(page, section, signal) {
+  if (!page.revid || !section) return "";
+  const d = await wp({ action: "parse", oldid: page.revid, section: section.index, prop: "wikitext" }, signal);
+  return d.parse?.wikitext || "";
+}
+
+// Read albums only from sections explicitly classified as studio albums or EPs.
 export async function wikiDiscography(artist) {
   try {
-    const signal = AbortSignal.timeout(6500);
+    const signal = AbortSignal.timeout(8000);
     const p = (await wp({ action: "parse", page: artist, redirects: "1", prop: "sections|revid" }, signal)).parse;
-    const name = p?.title?.replace(/\s*\([^()]*\)$/, "");
-    if (!name || !norm(artist) || (norm(p.title) !== norm(artist) && norm(name) !== norm(artist))) return [];
-    const section = p.sections?.find((x) => /^discography$/i.test(x.line));
-    if (!section || !p.revid) return [];
-    const d = await wp({ action: "parse", oldid: p.revid, section: section.index, prop: "wikitext" }, signal);
-    const text = d.parse?.wikitext;
-    if (typeof text !== "string") return [];
-
-    const albums = [];
-    const seen = new Set();
-    let kind = null;
-    for (const line of text.replace(/<!--[\s\S]*?-->|<ref\b[^>]*\/>|<ref\b[^>]*>[\s\S]*?<\/ref>/gi, "").split("\n")) {
-      const heading = /^\s*(?:={2,6}|''')\s*(.*?)\s*(?:={2,6}|''')\s*$/.exec(line);
-      if (heading) {
-        const label = clean(heading[1]);
-        kind = /^(?:(?:original|solo) )?studio albums?$/i.test(label) ? "" :
-          /^(?:extended plays?|EPs)$/i.test(label) ? "EP" : null;
-      }
-      if (kind === null) continue;
-      const row = /^\*\s*(?:'')?\[\[([^\]]+)\]\](?:'')?\s*\(((?:19|20)\d{2})\)\s*$/.exec(line);
-      if (!row) continue;
-      const title = row[1].split("|").at(-1).trim().replaceAll("&amp;", "&");
-      const year = row[2];
-      const key = `${title.toLowerCase()}|${year}`;
-      if (!title || seen.has(key)) continue;
-      seen.add(key);
-      albums.push({ title, year, kind, wiki: albums.length });
+    const key = norm(artist);
+    if (!p || !key || (norm(p.title) !== key && norm(p.title?.replace(/\s*\([^()]*\)$/, "")) !== key)) return [];
+    const text = await discographySection(p, p.sections?.find((x) => /^discography$/i.test(x.line)), signal);
+    let albums = discographyBullets(text);
+    if (!albums.length) {
+      // Some artist articles list albums without classifying them. Follow their
+      // link to the matching discography article and read its studio-only table.
+      const main = template(text, ["main"]);
+      const aliases = new Set([`${key}discography`, `${key}albumsdiscography`]);
+      const link = main && Object.values(params(main)).find((name) => aliases.has(norm(name)));
+      if (!link) return [];
+      const linked = (await wp({ action: "parse", page: link, redirects: "1", prop: "sections|revid" }, signal)).parse;
+      if (!linked || !aliases.has(norm(linked.title))) return [];
+      const sections = linked.sections || [];
+      const studio = sections.find((x) => canonicalStudio.test(x.line)) || sections.find((x) => studioHeading.test(x.line));
+      const confirmed = studioAlbumRows(await discographySection(linked, studio, signal));
+      const withoutDate = new Set(confirmed.filter((a) => !a.year).map((a) => norm(a.target)));
+      // When the studio list omits dates, match the exact album links against the dated artist overview.
+      albums = [...confirmed.filter((a) => a.year), ...discographyBullets(text, withoutDate)];
     }
-    return albums;
+    const unique = new Map();
+    for (const a of albums) {
+      if (a.title) unique.set(`${a.title.toLowerCase()}|${a.year}|${a.kind}`, a);
+    }
+    return [...unique.values()].map(({ title, year, kind }, wiki) => ({ title, year, kind, wiki }));
   } catch {
     return [];
   }

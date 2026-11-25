@@ -11,7 +11,7 @@ import { criticsText } from "./critics.mjs";
 import { remapStatements } from "./dups.mjs";
 import { unpack, plain, artistKey, order, sharedTags } from "./archive.mjs";
 import { wikiCritics, wikiDiscography } from "./wiki.mjs";
-import { DISCOGRAPHY_RETENTION, musicBrainzCatalog, takeMusicBrainzSlot } from "./mb-discography.mjs";
+import { DISCOGRAPHY_RETENTION, deferMusicBrainzSlot, musicBrainzCatalog, takeMusicBrainzSlot } from "./mb-discography.mjs";
 import { startLink, openFromStart } from "./links.mjs";
 import { PAGE, OLD_DAYS, QFROM_MINUTES, lastHeard, after, before, nextAfter, laterReviews, daysOld, line as queueLine } from "./queue.mjs";
 import { searchArchive } from "./search.mjs";
@@ -444,25 +444,28 @@ async function onCallback(q, env, applied) {
     await answerNow();
     const arch = await archive(env);
     const a = arch.find((x) => x.id === parts[1]);
-    if (a) await sendOtherAlbums(env, uid, arch, a.artist_name, false);
-  } else if (parts[0] === "ua" || parts[0] === "ux") {
+    if (a) await sendOtherAlbums(env, uid, arch, a.artist_name);
+  } else if (parts[0] === "ua" || parts[0] === "ux" || parts[0] === "ue") {
     // «💿 Альбомы артиста» on the card of an artist without reviews (ux: its «Ещё» list): the artist's name was saved
     // with the card's ID
     await answerNow();
     const row = await env.DB.prepare("SELECT artist_name FROM unreviewed WHERE id=?").bind(parts[1]).first();
-    if (row) await sendOtherAlbums(env, uid, await archive(env), row.artist_name, parts[0] === "ux", parts[1]);
+    if (row) {
+      const view = parts[0] === "ue" ? "ep" : parts[0] === "ux" ? "extra" : "albums";
+      await sendOtherAlbums(env, uid, await archive(env), row.artist_name, view, parts[1]);
+    }
     else await tg(env, "sendMessage", { chat_id: uid, text: "Не нашёл этого артиста. Открой карточку альбома заново." });
-  } else if (parts[0] === "dx") {
+  } else if (parts[0] === "dx" || parts[0] === "de") {
     await answerNow();
     const arch = await archive(env);
     const a = arch.find((x) => x.id === parts[1]);
-    if (a) await sendOtherAlbums(env, uid, arch, a.artist_name, true);
-  } else if (parts[0] === "mx") {
+    if (a) await sendOtherAlbums(env, uid, arch, a.artist_name, parts[0] === "de" ? "ep" : "extra");
+  } else if (parts[0] === "mx" || parts[0] === "me") {
     await answerNow();
     const artist = /^(.+) — альбомы(?: \(показаны |:)/.exec(q.message?.text || "")?.[1];
-    const mbid = parts[1];
-    if (artist && /^[0-9a-f-]{36}$/.test(mbid || "")) {
-      await sendOtherAlbums(env, uid, await archive(env), artist, true, null, mbid);
+    const mbid = /^[0-9a-f-]{36}$/.test(parts[1] || "") ? parts[1] : null;
+    if (artist && (mbid || (parts[0] === "me" && parts[1] === "wiki"))) {
+      await sendOtherAlbums(env, uid, await archive(env), artist, parts[0] === "me" ? "ep" : "extra", null, mbid);
     }
   } else if (parts[0] === "mb") {
     await answerNow();
@@ -712,7 +715,7 @@ async function openCard(env, uid, open) {
   if (kind === "da") { // «💿 Альбомы артиста» pressed in the channel before the bot was started (the "da" callback)
     const arch = await archive(env);
     const a = arch.find((x) => x.id === id);
-    return a ? sendOtherAlbums(env, uid, arch, a.artist_name, false) : tg(env, "sendMessage", { chat_id: uid, text: "Не нашёл этого артиста." });
+    return a ? sendOtherAlbums(env, uid, arch, a.artist_name) : tg(env, "sendMessage", { chat_id: uid, text: "Не нашёл этого артиста." });
   }
   const a = (await archiveById(env, id)) || (await reviews(env)).find((x) => x.id === id);
   if (a) return sendAlbum(env, uid, a, "");
@@ -901,22 +904,23 @@ function siteLine(env, r) {
 // many albums it has (checked from Actions 2026-11-02: Taylor Swift "The Life of a Showgirl", Angine de Poitrine "Vol.
 // II", Ghost "Skeletá"), so it is only the second try. Fantano's "Self-Titled" is the artist's name there; a review of
 // "Nas & DJ Premier" is an album of "Nas" there, so any credited name counts, the full one first.
-async function deezerHit(artist, album) {
+async function deezerHit(artist, album, epOnly = false) {
   const want = selfTitled(artist, album);
   const names = creditedNames(artist);
   // the title alone last: Deezer finds nothing for "Destroyer Kaputt" but finds it by the title (lmn/links.py find_album)
   for (const q of [`${artist} ${want}`, `artist:"${names[names.length > 1 ? 1 : 0]}" album:"${want}"`, want]) {
     const r = await fetch(`https://api.deezer.com/search/album?q=${encodeURIComponent(q)}&limit=25`);
-    const hit = pickAlbum(r.ok ? (await r.json()).data : [], names, want);
+    const rows = r.ok ? (await r.json()).data || [] : [];
+    const hit = pickAlbum(epOnly ? rows.filter((x) => x.record_type === "ep") : rows, names, want);
     if (hit) return hit;
   }
   return null;
 }
 
 // The Deezer album, checked against the names (deezer.mjs pickAlbum): cover, track count, length and the tracklist.
-async function deezerAlbum(artist, album) {
+async function deezerAlbum(artist, album, epOnly = false) {
   try {
-    const hit = await deezerHit(artist, album);
+    const hit = await deezerHit(artist, album, epOnly);
     if (!hit) return null;
     const full = await fetch(`https://api.deezer.com/album/${hit.id}`).then((x) => (x.ok ? x.json() : {})).catch(() => ({}));
     const list = ((full.tracks && full.tracks.data) || []).map((t) => ({ title: t.title, sec: t.duration || null }));
@@ -980,21 +984,33 @@ async function deezerJson(path) {
 
 const UA = "LaziestMusicNerd/1.0 (https://github.com/danmnv/laziest-music-nerd)";
 
-async function mbJson(env, path, stage) {
+function retryAfterMillis(r) {
+  const value = r.headers.get("Retry-After");
+  const delay = /^\d+$/.test(value || "") ? Number(value) * 1000 : Date.parse(value) - Date.now();
+  return Number.isFinite(delay) ? Math.max(0, delay) : 0;
+}
+
+async function mbJson(env, path, stage, retry = false) {
+  const url = `https://musicbrainz.org/ws/2/${path}${path.includes("?") ? "&" : "?"}fmt=json`;
   try {
-    if (!await takeMusicBrainzSlot(env.DB)) {
-      console.warn("MusicBrainz discography", stage, "queue busy");
-      return null;
-    }
-    const r = await fetch(`https://musicbrainz.org/ws/2/${path}${path.includes("?") ? "&" : "?"}fmt=json`,
-      { headers: { "User-Agent": UA, Accept: "application/json" }, signal: AbortSignal.timeout(4500),
+    for (let attempt = 0; attempt < (retry ? 2 : 1); attempt++) {
+      if (!await takeMusicBrainzSlot(env.DB)) {
+        console.warn("MusicBrainz discography", stage, "queue busy");
+        return null;
+      }
+      const r = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" }, signal: AbortSignal.timeout(4500),
         cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 86400, "300-599": -1 } } });
-    if (!r.ok) console.warn("MusicBrainz", stage, r.status);
-    return r.ok ? await r.json() : null;
+      if (r.ok) return await r.json();
+      console.warn("MusicBrainz", stage, r.status);
+      if (r.status !== 429 && r.status !== 503) return null;
+      const delay = retryAfterMillis(r);
+      if (delay) await deferMusicBrainzSlot(env.DB, Date.now() + delay);
+      if (!delay || delay > 2000) return null;
+    }
   } catch (e) {
     console.warn("MusicBrainz", stage, e?.name);
-    return null;
   }
+  return null;
 }
 
 const KIND_RU = { Live: "концерт", Compilation: "сборник", Remix: "ремиксы", Soundtrack: "саундтрек", "DJ-mix": "диджей-микс",
@@ -1033,11 +1049,11 @@ async function loadMusicBrainzGroups(env, artistName, mbid) {
 }
 
 // The indexed search can work when the artist lookup or the browse endpoint is busy.
-async function searchMusicBrainzGroups(env, artistName, mbid) {
+async function searchMusicBrainzGroups(env, artistName, mbid, retry) {
   const key = fullName(artistName);
   const artist = mbid ? `arid:${mbid}` : `artistname:${mbPhrase(artistName)}`;
   const query = `${artist} AND (primarytype:album OR primarytype:ep) AND status:official`;
-  const d = await mbJson(env, `release-group?query=${encodeURIComponent(query)}&limit=100`, "release-group search");
+  const d = await mbJson(env, `release-group?query=${encodeURIComponent(query)}&limit=100`, "release-group search", retry);
   if (!key || !Array.isArray(d?.["release-groups"]) || (!mbid && d.count > d["release-groups"].length)) return null;
   const byArtist = new Map();
   for (const group of d["release-groups"]) {
@@ -1056,45 +1072,61 @@ async function searchMusicBrainzGroups(env, artistName, mbid) {
 // MusicBrainz release groups carry the first-release year and the secondary
 // types used to keep studio albums and EPs separate from extras.
 async function otherAlbums(env, arch, artistName, mbid) {
-  const catalog = await musicBrainzCatalog(env.DB, fullName(artistName), mbid, async (id, haveComplete) => {
+  const catalog = await musicBrainzCatalog(env.DB, fullName(artistName), mbid, async (id, snapshot) => {
     const found = await loadMusicBrainzGroups(env, artistName, id);
-    if (haveComplete || found?.groups.length || found?.complete) return found;
-    return searchMusicBrainzGroups(env, artistName, found?.mbid || id);
+    if (snapshot?.complete || found?.groups.length || found?.complete) return found;
+    return searchMusicBrainzGroups(env, artistName, found?.mbid || id, !snapshot);
   });
   if (!catalog) return null;
   const k = nameKey(artistName);
-  const reviewed = new Set(arch.filter((a) => artistKey(a) === k).map((a) => nameKey(untitled(a.album))));
+  const reviewed = new Set(arch.filter((a) => artistKey(a) === k && !a.track && !a.redo).map((a) => nameKey(untitled(a.album))));
   const seen = new Set();
-  const main = [], eps = [], extra = [];
-  const years = {}; // the release year of each reviewed album, for the artist's whole list
-  const list = catalog.groups.filter((x) => x.date)
-    .sort((a, b) => order(a.date, b.date)); // oldest first: a later live album or compilation with the same title loses
+  const byView = { albums: [], ep: [], extra: [] };
+  const orderOfView = { albums: 0, ep: 1, extra: 2 };
+  const years = Object.create(null);
+  const reviewViews = Object.create(null);
+  const list = catalog.groups.filter((x) => x.date && x.id).map((x) => ({
+    ...x, view: x.secondary?.length || !["Album", "EP"].includes(x.primary) ? "extra" :
+      x.primary === "EP" ? "ep" : "albums",
+  })).sort((a, b) => orderOfView[a.view] - orderOfView[b.view] || order(a.date, b.date));
   for (const x of list) {
+    if (seen.has(x.id)) continue;
+    seen.add(x.id);
     const key = nameKey(untitled(x.title));
-    if (key && reviewed.has(key) && !years[key]) years[key] = x.date.slice(0, 4);
-    if (!key || reviewed.has(key) || seen.has(key)) continue;
-    seen.add(key);
-    const second = x.secondary || [];
-    const item = { id: x.id, title: x.title, year: x.date.slice(0, 4),
-                   kind: second.length ? (KIND_RU[second[0]] || second[0].toLowerCase()) : x.primary === "EP" ? "EP" : "" };
-    (second.length ? extra : x.primary === "EP" ? eps : main).push(item);
+    const year = x.date.slice(0, 4);
+    // Use one release group for an archive review. A same-title EP, live album or separate album still has its own ID.
+    if (reviewed.has(key) && !(key in years)) {
+      years[key] = year;
+      reviewViews[key] = x.view;
+      continue;
+    }
+    const second = x.secondary?.[0];
+    const kind = second ? (KIND_RU[second] || second.toLowerCase()) : x.view === "ep" ? "EP" : "";
+    byView[x.view].push({ id: x.id, title: x.title, year, kind });
   }
-  return { main: main.reverse().concat(eps.reverse()), extra: extra.reverse(), years,
-    mbid: catalog.mbid, stale: catalog.stale, partial: !catalog.complete };
+  return { byView, years, reviewViews, mbid: catalog.mbid, stale: catalog.stale, partial: !catalog.complete };
 }
 
 async function wikipediaAlbums(arch, artist) {
   const rows = await wikiDiscography(artist);
   if (!rows.length) return null;
   const k = nameKey(artist);
-  const reviewed = new Set(arch.filter((a) => artistKey(a) === k && !a.track).map((a) => fullName(a.album)));
+  const reviewed = new Set(arch.filter((a) => artistKey(a) === k && !a.track && !a.redo).map((a) => fullName(a.album)));
   const years = Object.create(null);
-  const main = [];
-  for (const x of rows) {
-    if (reviewed.has(fullName(x.title))) years[nameKey(untitled(x.title))] ||= x.year;
-    else main.push(x);
+  const reviewViews = Object.create(null);
+  const byView = { albums: [], ep: [], extra: [] };
+  const lists = [rows.filter((x) => x.kind !== "EP"), rows.filter((x) => x.kind === "EP")];
+  for (const [i, albums] of lists.entries()) {
+    const view = i ? "ep" : "albums";
+    for (const x of albums) {
+      const key = nameKey(untitled(x.title));
+      if (reviewed.has(fullName(x.title)) && !(key in years)) {
+        years[key] = x.year;
+        reviewViews[key] = view;
+      } else byView[view].push(x);
+    }
   }
-  return { main, extra: [], years, wiki: true };
+  return { byView, years, reviewViews, wiki: true };
 }
 
 // Deezer labels some compilations and concert releases as albums. Offer its
@@ -1107,66 +1139,70 @@ async function deezerCatalogButton(artist) {
     ? { text: "Открыть каталог в Deezer", url: `https://www.deezer.com/artist/${exact[0].id}` } : null;
 }
 
-// «💿 Альбомы артиста»: the artist's albums, newest first, the reviewed ones with Fantano's score and the others
-// plain (owner, 2026-11-03: the artist first, not Fantano). extraOnly: live albums, compilations, remixes.
-// key: the card ID (unreviewed table) of an artist without reviews, for the «Ещё» button when there is no review to
-// anchor it to.
-async function sendOtherAlbums(env, uid, arch, artist, extraOnly, key = null, mbid = null) {
+// Each section keeps its reviewed cards and any releases from the catalogue.
+async function sendOtherAlbums(env, uid, arch, artist, view = "albums", key = null, mbid = null) {
   const k = nameKey(artist);
+  const main = view === "albums";
   const anchor = arch.find((a) => artistKey(a) === k);
   const [res, variants] = await Promise.all([
     otherAlbums(env, arch, artist, mbid).then(async (r) => {
-      if (extraOnly || r?.main.length || r?.extra.length || (r && Object.keys(r.years).length)) return r;
+      if (view === "extra") return r;
+      if (r?.byView[view].length || (r && Object.values(r.reviewViews).includes(view)) || (r && !r.partial)) return r;
       return (await wikipediaAlbums(arch, artist)) || r;
     }),
-    extraOnly ? {} : loadVariants(env.SITE_URL),
+    view === "extra" ? {} : loadVariants(env.SITE_URL),
   ]);
   const unavailable = "Дискография временно недоступна. Попробуй чуть позже.";
-  if (extraOnly) {
-    if (!res || (res.partial && !res.extra.length)) {
-      const link = await deezerCatalogButton(artist);
-      return tg(env, "sendMessage", { chat_id: uid, text: unavailable,
-        ...(link && { reply_markup: { inline_keyboard: [[link]] } }) });
-    }
-    if (!res.extra.length) return tg(env, "sendMessage", { chat_id: uid, text: `У ${artist} больше ничего нет.` });
-    return tg(env, "sendMessage", { chat_id: uid, text: `${artist} — концертные, сборники, ремиксы и прочее:`,
-      reply_markup: { inline_keyboard: res.extra.slice(0, 30).map((x) => [discButton(x)]) } });
-  }
-  // the reviews (not the earlier of two reviews of one album, not single songs), at the album's release year when the
-  // discography knows it, else the review's year
-  const reviewed = arch.filter((a) => artistKey(a) === k && !a.redo && !a.track).map((a) => {
-    const rel = res && res.years && (res.years[nameKey(untitled(a.album))] || res.years[nameKey(untitled(a.album).replace(/\s*[([]?\b(redux|revisited|re-?review)\b[)\]]?\s*$/i, ""))]);
-    return { a, year: rel || String(a.published).slice(0, 4), reviewYear: !rel };
+  const reviews = arch.filter((a) => artistKey(a) === k && !a.redo && !a.track).map((a) => {
+    const title = untitled(a.album);
+    const original = nameKey(title);
+    const base = nameKey(title.replace(/\s*[([]?\b(redux|revisited|re-?review)\b[)\]]?\s*$/i, ""));
+    const matched = res?.years[original] ? original : base;
+    const rel = res?.years[matched];
+    return { a, year: rel || String(a.published).slice(0, 4), reviewYear: !rel,
+      view: res?.reviewViews[matched] || (a.type === "ep" ? "ep" : "albums") };
   });
-  const other = (res?.main || []).map((x) => ({
+  const other = (res?.byView[view] || []).map((x) => ({
     x, year: x.year, edition: matchVariant(variantsOf(variants, artist, x.title), x.title, x.year),
-  })).filter(({ edition }) => !edition || !reviewed.some(({ a }) => a.id === edition[1].r));
-  const all = [...reviewed, ...other].sort((p, q) => order(String(q.year), String(p.year)));
-  const deezer = all.length && res ? null : await deezerCatalogButton(artist);
-  if (!all.length && !res?.extra.length && !deezer) {
-    return tg(env, "sendMessage", { chat_id: uid, text: res ? `Не нашёл дискографию ${artist}.` : unavailable });
+  })).filter(({ edition }) => !edition || !reviews.some(({ a }) => a.id === edition[1].r));
+  const all = [...reviews.filter((a) => a.view === view), ...other].sort((p, q) => order(String(q.year), String(p.year)));
+  const extras = (v) => (res?.byView[v].length || 0) + reviews.filter((a) => a.view === v).length;
+  const eps = main ? extras("ep") : 0;
+  const extra = main ? extras("extra") : 0;
+  const incomplete = !res || res.partial || (res.wiki && view !== "albums");
+  const deezer = (!res || (!all.length && !eps && !extra && incomplete)) ? await deezerCatalogButton(artist) : null;
+  if (!all.length && !eps && !extra) {
+    const empty = incomplete ? unavailable : main ? `Не нашёл дискографию ${artist}.` :
+      view === "ep" ? `Не нашёл EP у ${artist}.` : `У ${artist} больше ничего нет.`;
+    return tg(env, "sendMessage", { chat_id: uid, text: empty,
+      ...(deezer && { reply_markup: { inline_keyboard: [[deezer]] } }) });
   }
-  const shown = all.slice(0, 40);
+
+  const shown = all.slice(0, view === "extra" ? 30 : 40);
   const rows = shown.map(({ a, reviewYear, year, x, edition }) => {
     if (a) return [{ text: `${badge(a)} · ${short(a.album)} · ${reviewYear ? "обзор " : ""}${year}`.slice(0, 120), callback_data: `a:${a.id}` }];
     const button = discButton(x);
     if (edition) button.callback_data = `av:${edition[0]}`;
     return [button];
   });
-  if (res?.extra.length) {
-    const extra = anchor ? `dx:${anchor.id}` : key ? `ux:${key}` : `mx:${res.mbid}`;
-    rows.push([{ text: `Ещё: концертные, сборники, ремиксы (${res.extra.length})`, callback_data: extra }]);
+  if (eps) {
+    const open = anchor ? `de:${anchor.id}` : key ? `ue:${key}` : `me:${res?.mbid || "wiki"}`;
+    rows.push([{ text: `EP (${eps})`, callback_data: open }]);
+  }
+  if (extra) {
+    const open = anchor ? `dx:${anchor.id}` : key ? `ux:${key}` : `mx:${res.mbid}`;
+    rows.push([{ text: `Ещё: концертные, сборники, ремиксы (${extra})`, callback_data: open }]);
   }
   if (deezer) rows.push([deezer]);
-  const video = anchor ? await rankingVideo(env, anchor.artist_name) : null;
+  const video = main && anchor ? await rankingVideo(env, anchor.artist_name) : null;
   if (video) rows.push([video]);
   let note = "";
   if (res?.wiki) note = " Резервный список по Википедии.";
   if (res?.partial) note = " Показана доступная часть дискографии MusicBrainz.";
   if (res?.stale) note = " Последний полученный список MusicBrainz.";
-  if (!res) note = all.length ? ` Показаны обзоры Фантано. ${unavailable}` : ` ${unavailable}`;
-  // the score badges mark Fantano's reviews, as everywhere in the bot
-  const head = `${artist} — альбомы${all.length > shown.length ? ` (показаны ${shown.length} новых из ${all.length})` : ""}:` + note;
+  if (!res) note = ` Показаны обзоры Фантано. ${unavailable}`;
+  const label = main ? "альбомы" : view === "ep" ? "EP" : "концертные, сборники, ремиксы и прочее";
+  const head = `${artist} — ${label}${all.length > shown.length ? ` (показаны ${shown.length} новых из ${all.length})` : ""}:` + note;
   return tg(env, "sendMessage", { chat_id: uid, text: head, reply_markup: { inline_keyboard: rows } });
 }
 
@@ -1184,12 +1220,12 @@ async function sendMbAlbum(env, uid, id, msg) {
   if (!g || !g.title) {
     const x = fromListButton(msg, `mb:${id}`);
     if (!x) return tg(env, "sendMessage", { chat_id: uid, text: "MusicBrainz сейчас не отвечает, попробуй через минуту." });
-    const dz = await deezerAlbum(x.artist, x.title);
+    const dz = await deezerAlbum(x.artist, x.title, x.kind === "EP");
     return sendUnreviewed(env, uid, { ...x, key: id, genres: dz ? dz.genres : [], tracks: dz && dz.tracks, minutes: dz && dz.minutes,
       cover: dz && dz.cover, link: dz && dz.link });
   }
   const artist = ((g["artist-credit"] || [])[0] || {}).name || "";
-  const dz = await deezerAlbum(artist, g.title);
+  const dz = await deezerAlbum(artist, g.title, g["primary-type"] === "EP");
   const second = g["secondary-types"] || [];
   const kind = second.length ? (KIND_RU[second[0]] || second[0].toLowerCase()) : g["primary-type"] === "EP" ? "EP" : "";
   return sendUnreviewed(env, uid, {
@@ -1200,7 +1236,7 @@ async function sendMbAlbum(env, uid, id, msg) {
 
 // "Radiohead — альбомы без обзора Фантано:" and the button "💿 The Bends · 1995 · EP" -> {artist, title, year, kind}
 function fromListButton(msg, data) {
-  const m = /^(.+?) — (?:альбомы без обзора|альбомы[ :(]|концертные)/.exec((msg && msg.text) || "");
+  const m = /^(.+?) — (?:альбомы без обзора|альбомы[ :(]|EP[ :(]|концертные)/.exec((msg && msg.text) || "");
   const b = ((msg && msg.reply_markup && msg.reply_markup.inline_keyboard) || []).flat().find((x) => x.callback_data === data);
   if (!m || !b) return null;
   const [title, ...rest] = b.text.replace(/^💿 /, "").split(" · ");
@@ -1227,7 +1263,7 @@ async function sendWikiAlbum(env, uid, id, msg, data) {
     const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(identity)));
     id = "wk" + Array.from(digest.slice(0, 12), (b) => b.toString(16).padStart(2, "0")).join("");
   }
-  const dz = await deezerAlbum(x.artist, x.title);
+  const dz = await deezerAlbum(x.artist, x.title, x.kind === "EP");
   return sendUnreviewed(env, uid, { ...x, key: id, genres: dz?.genres || [],
     tracks: dz?.tracks, minutes: dz?.minutes, cover: dz?.cover, link: dz?.link });
 }
@@ -1253,11 +1289,12 @@ async function sendUnreviewed(env, uid, x) {
   const reviewed = editions.length
     ? arch.find((a) => !a.track && fullName(a.artist_name) === fullName(x.artist) && fullName(a.album) === fullName(x.title))
     : reviewedIn(arch, x.artist, x.title);
-  if (reviewed) return sendAlbum(env, uid, reviewed, "");
+  const sameTitleAlbum = x.kind === "EP" && reviewed && reviewed.type !== "ep";
+  if (reviewed && !sameTitleAlbum) return sendAlbum(env, uid, reviewed, "");
   const choices = x.year ? editions.filter(([, e]) => variantYear(e) === x.year) : editions;
   if (choices.length) return sendVariantResults(env, uid, choices);
   return sendCard(env, uid, await unreviewedCard(env, { ...x, liked: await isLiked(env, uid, x.key) }, arch,
-    { sharedTitle: editions.length > 0 }));
+    { sharedTitle: editions.length > 0 || Boolean(sameTitleAlbum) }));
 }
 
 async function openVariant(env, uid, id) {
@@ -1819,7 +1856,7 @@ async function search(env, uid, query) {
     const d = await deezerJson(`search/album?q=${encodeURIComponent(query.slice(0, 100))}&limit=6`);
     const results = d.data || [];
     const artist = results.find((x) => x.artist && fullName(x.artist.name) === fullName(query))?.artist.name;
-    if (artist) return sendOtherAlbums(env, uid, arch, artist, false);
+    if (artist) return sendOtherAlbums(env, uid, arch, artist);
     const hits = results.filter((x) => x.artist && x.record_type !== "single");
     if (hits.length) {
       return tg(env, "sendMessage", { chat_id: uid, text: `Обзора Фантано по запросу «${query.slice(0, 100)}» нет. Нашёл в Deezer:`,
