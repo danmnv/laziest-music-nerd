@@ -6,6 +6,7 @@ import { applyPress } from "./press.mjs";
 import { isDigestSunday } from "./digest.mjs";
 import { nameKey, followMatches } from "./follow.mjs";
 import { answerSearch, artistReviews, badge } from "./search.mjs";
+import { DECADE_PREFIX, episodeReview, tenReviews, classicReviews } from "./review-lists.mjs";
 import { criticsText } from "./critics.mjs";
 import { remapStatements } from "./dups.mjs";
 import { unpack, plain, artistKey, order, sharedTags } from "./archive.mjs";
@@ -300,7 +301,7 @@ async function onUpdate(u, env) {
     await tg(env, "sendMessage", { chat_id: uid, text: text.endsWith("on") ? "Твои отметки снова видны в канале (обновятся при следующем обзоре)." : "Отметки теперь только в личке." });
     return;
   }
-  if (text && !text.startsWith("/") && (await queueFrom(env, uid, text))) return; // the answer to «после какого альбома?»
+  if (text && text !== "10/10" && !text.startsWith("/") && (await queueFrom(env, uid, text))) return; // the answer to «после какого альбома?»
   if (text.startsWith("/search")) return search(env, uid, text.slice("/search".length).trim());
   if (text && !text.startsWith("/")) return search(env, uid, text); // anything else typed is a search
 }
@@ -538,6 +539,9 @@ async function onCallback(q, env, applied) {
     await tg(env, "sendMessage", { chat_id: uid, ...(parts[1] === "y"
       ? { text: "Готово: я больше ничего о тебе не храню. Если захочешь вернуться, нажми /start.", reply_markup: { remove_keyboard: true } }
       : { text: "Хорошо, всё осталось как было." }) });
+  } else if (parts[0] === "classics") {
+    await answerNow();
+    await sendReviewList(env, uid, "CLASSIC", [[null, classicReviews(await archive(env))]]);
   } else if (parts[0] === "a") {
     await answerNow();
     const a = await archiveById(env, parts[1]);
@@ -856,7 +860,7 @@ async function archive(env) {
 async function archiveById(env, id) {
   const arch = await archive(env);
   const want = (archiveCache && archiveCache.alias && archiveCache.alias[id]) || id;
-  return arch.find((x) => x.id === want);
+  return arch.find((x) => x.id === want) || episodeReview(want);
 }
 
 // Marks, likes, vibe votes, «already told» rows and «Наверстать» places saved under a double post's id go to its first
@@ -1395,7 +1399,7 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
     .sort((x, y) => order(String(x.published), String(y.published)));
   const nth = ofArtist.findIndex((x) => x.id === r.id) + 1;
   const year = rt?.release_year || full?.year || null;
-  const episodeEntry = r.id.startsWith("ten-");
+  const episodeEntry = r.id.startsWith(DECADE_PREFIX);
   const episodeUrl = rt?.series?.url || (episodeEntry ? r.url : null);
   let score = badge(r);
   if (episodeUrl) {
@@ -1733,8 +1737,47 @@ function sendVariantResults(env, uid, editions, reviews = []) {
     reply_markup: { inline_keyboard: [...variantButtons(editions), ...albumButtons(reviews, true)] } });
 }
 
+async function sendReviewList(env, uid, title, sections, reply_markup) {
+  const heading = `<b>${title}</b>`;
+  const chunks = [];
+  let text = heading, length = tgLen(heading);
+  for (const [label, albums] of sections) {
+    const section = label ? `\n\n<b>${label}</b>` : "\n";
+    let prefix = section;
+    for (const a of albums) {
+      const name = `${a.artist_name} — ${a.album}`;
+      const line = `\n${linkItems([[name, startLink(env, `a:${a.id}`)]])}`;
+      const lineLength = tgLen(line);
+      if (length + tgLen(prefix) + lineLength > MESSAGE_LIMIT) {
+        chunks.push(text);
+        text = heading;
+        length = tgLen(heading);
+        prefix = section;
+      }
+      text += prefix + line;
+      length += tgLen(prefix) + lineLength;
+      prefix = "";
+    }
+  }
+  chunks.push(text === heading ? text + "\n\nВ архиве пока нет таких альбомов." : text);
+  for (let i = 0; i < chunks.length; i++) {
+    await tg(env, "sendMessage", { chat_id: uid, parse_mode: "HTML", text: chunks[i],
+      link_preview_options: { is_disabled: true },
+      ...(i === chunks.length - 1 && reply_markup ? { reply_markup } : {}) });
+  }
+}
+
+async function sendTenReviews(env, uid) {
+  const { reviews, episodes } = tenReviews(await archive(env));
+  return sendReviewList(env, uid, "Альбомы на 10/10", [
+    ["Отдельные обзоры", reviews],
+    ...episodes.map(([decade, albums]) => [`${decade}-е`, albums]),
+  ], { inline_keyboard: [[{ text: "CLASSIC", callback_data: "classics" }]] });
+}
+
 // A search answers with a card, one artist's albums, a few albums, or a choice of artists first.
 async function search(env, uid, query) {
+  if (query === "10/10") return sendTenReviews(env, uid);
   const [arch, variants] = await Promise.all([archive(env), loadVariants(env.SITE_URL)]);
   const r = answerSearch(arch, query);
   const editions = searchVariants(variants, query);

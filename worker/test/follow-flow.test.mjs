@@ -365,6 +365,43 @@ test("with the site up, the card's last line is our site's page, named as ours (
   assert.match(c.caption, /<\/blockquote>\n<a href=[^\n]+\n🌐 <a href="https:\/\/site\/r\/[^"]+\.html">На нашем сайте<\/a>$/);
 });
 
+test("10/10 search lists separate reviews, then each decade, with a CLASSIC list at the end", async () => {
+  const { default: isolatedWorker } = await import("../src/index.js?ten-reviews");
+  archiveRows = [
+    ...ARCHIVE,
+    { id: "zappa", artist_name: "Frank Zappa", album: "Hot Rats", published: "2011-12-28", score: 10 },
+    { id: "ten-hot-rats", artist_name: "Frank Zappa", album: "Hot Rats", published: "2022-12-06", score: 10 },
+    { id: "hounds", artist_name: "Kate Bush", album: "Hounds of Love", published: "2014-01-01", classic: true },
+    { id: "ram", artist_name: "Paul & Linda McCartney", album: "Ram", published: "2026-01-09", classic: true, guest: true },
+    { id: "notgood", artist_name: "Various Artists", album: "Minions", published: "2022-07-05", classic: true, not_good: true },
+    { id: "single", artist_name: "Solo", album: "Only a Song", published: "2026-11-25", score: 10, track: true },
+  ];
+  await say(OWNER, "10/10", isolatedWorker);
+  const messages = calls.filter((c) => c.method === "sendMessage");
+  assert.equal(messages.length, 1);
+  const [list] = messages;
+  const sections = [...list.text.matchAll(/<b>(.*?)<\/b>/g)].map((m) => m[1]);
+  assert.deepEqual(sections, ["Альбомы на 10/10", "Отдельные обзоры", "1960-е", "1970-е", "1980-е", "1990-е", "2000-е"]);
+  const links = [...list.text.matchAll(/start=a_([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(links.slice(0, 4), ["k", "zappa", "ten-highway-61", "ten-black-saint"]);
+  assert.equal(links.length, 26);
+  assert.ok(links.includes("hounds"));
+  assert.ok(!links.includes("ten-hot-rats") && !links.includes("single"));
+  assert.deepEqual(list.reply_markup.inline_keyboard, [[{ text: "CLASSIC", callback_data: "classics" }]]);
+  assert.ok(!fetched.some((url) => /api\.deezer\.com|\/av\.json/.test(url)));
+
+  calls = [];
+  await tgUpdate({ callback_query: { id: "q", from: { id: OWNER }, data: "classics", message: list } }, isolatedWorker);
+  const classics = calls.find((c) => c.method === "sendMessage");
+  assert.match(classics.text, /^<b>CLASSIC<\/b>/);
+  assert.deepEqual([...classics.text.matchAll(/start=a_([^"]+)"/g)].map((m) => m[1]), ["ram", "hounds"]);
+  assert.match(classics.text, /Paul &amp; Linda McCartney — Ram/);
+
+  calls = [];
+  await say(OWNER, "/start a_ten-abbey-road", isolatedWorker);
+  assert.match(calls.find((c) => c.method === "sendMessage").text, /The Beatles — Abbey Road/);
+});
+
 test("a classic album links its episode from the score, followed by CLASSIC", async () => {
   const { default: isolatedWorker } = await import("../src/index.js?classic-score");
   const archive = [...ARCHIVE, { id: "hounds", url: "https://tnd/hounds", published: "2015-05-01",

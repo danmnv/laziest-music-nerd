@@ -2,7 +2,7 @@ name: Деплой Cloudflare Worker
 on:
   push:
     branches: [main]
-    paths: [worker/**, .github/workflows/deploy-worker.yml]
+    paths: [worker/**, lmn/decade_tens_manifest.json, .github/workflows/deploy-worker.yml]
   workflow_dispatch:
 
 concurrency: deploy-worker
