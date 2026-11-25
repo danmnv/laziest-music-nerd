@@ -1,0 +1,47 @@
+{
+  "prefix": "ten-",
+  "episodes": {
+    "erqGhrVB5Ao": [1960, "2022-12-06T23:32:50Z", [
+        ["hot-rats", "Frank Zappa", "Hot Rats", "jazz rock"],
+        ["highway-61", "Bob Dylan", "Highway 61 Revisited", "folk rock"],
+        ["black-saint", "Charles Mingus", "The Black Saint and the Sinner Lady", "avant-garde jazz"],
+        ["abbey-road", "The Beatles", "Abbey Road", "pop rock"],
+        ["sings-the-blues", "Nina Simone", "Nina Simone Sings the Blues", "soul blues"]
+    ]],
+    "csBo8Uj9kYY": [1970, "2022-10-07T02:04:51Z", [
+        ["bitches-brew", "Miles Davis", "Bitches Brew", "jazz fusion"],
+        ["london-calling", "The Clash", "London Calling", "punk rock"],
+        ["whats-going-on", "Marvin Gaye", "What's Going On", "soul"],
+        ["physical-graffiti", "Led Zeppelin", "Physical Graffiti", "hard rock"],
+        ["marquee-moon", "Television", "Marquee Moon", "art rock"]
+    ]],
+    "g4gMMIzwLO0": [1980, "2022-08-28T03:56:57Z", [
+        ["master-of-puppets", "Metallica", "Master of Puppets", "thrash metal"],
+        ["nation-of-millions", "Public Enemy", "It Takes a Nation of Millions to Hold Us Back", "hip hop"],
+        ["hounds-of-love", "Kate Bush", "Hounds of Love", "art pop"],
+        ["remain-in-light", "Talking Heads", "Remain in Light", "new wave"],
+        ["purple-rain", "Prince and The Revolution", "Purple Rain", "pop rock"]
+    ]],
+    "ab0XETmCUzM": [1990, "2022-08-03T05:35:14Z", [
+        ["miseducation", "Lauryn Hill", "The Miseducation of Lauryn Hill", "neo-soul"],
+        ["nevermind", "Nirvana", "Nevermind", "grunge"],
+        ["aeroplane", "Neutral Milk Hotel", "In the Aeroplane Over the Sea", "indie folk"],
+        ["36-chambers", "Wu-Tang Clan", "Enter the Wu-Tang (36 Chambers)", "hip hop"],
+        ["violator", "Depeche Mode", "Violator", "synthpop"]
+    ]],
+    "5rzBdM9CnRg": [2000, "2022-07-24T20:17:59Z", [
+        ["discovery", "Daft Punk", "Discovery", "french house"],
+        ["toxicity", "System of a Down", "Toxicity", "alternative metal"],
+        ["vespertine", "Björk", "Vespertine", "art pop"],
+        ["skinny-fists", "Godspeed You! Black Emperor", "Lift Yr. Skinny Fists Like Antennas to Heaven!", "post-rock"],
+        ["madvillainy", "Madvillain", "Madvillainy", "hip hop"]
+    ]]
+  },
+  "aliases": {
+    "black-saint": [["Mingus", "The Black Saint and the Sinner Lady"]],
+    "36-chambers": [["Wu-Tang Clan", "Enter the Wu-Tang: 36 Chambers"], ["Wu-Tang Clan", "36 Chambers"]],
+    "purple-rain": [["Prince", "Purple Rain"], ["Prince & The Revolution", "Purple Rain"]],
+    "skinny-fists": [["Godspeed You! Black Emperor", "Lift Your Skinny Fists Like Antennas to Heaven!"]],
+    "madvillainy": [["Madvillainy", "Madvillain"]]
+  }
+}
