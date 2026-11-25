@@ -184,6 +184,27 @@ beforeEach(() => {
       return new Response(JSON.stringify({ id: 20, title: "The Bends", artist: { name: "Radiohead" }, release_date: "1995-03-13", nb_tracks: 12,
         duration: 2928, record_type: "album", genres: { data: [{ name: "Alternative" }] }, cover_xl: "https://cdn/bends.jpg", link: "https://www.deezer.com/album/20" }));
     }
+    if (String(url).startsWith("https://en.wikipedia.org/w/api.php") && String(url).includes("action=parse")) {
+      const q = new URL(url).searchParams;
+      if (q.get("page") === "Pink Floyd") return Response.json({ parse: {
+        title: "Pink Floyd", revid: 42, sections: [{ line: "Discography", index: "10" }],
+      } });
+      if (q.get("oldid") === "42" && q.get("section") === "10") return Response.json({ parse: { wikitext: `
+== Discography ==
+'''Studio albums'''
+* ''[[The Dark Side of the Moon]]'' (1973)
+* ''[[Wish You Were Here (Pink Floyd album)|Wish You Were Here]]'' (1975)
+* ''[[The Division Bell]]'' (1994)
+* ''[[The Endless River]]'' (2014)
+'''Live albums'''
+* ''[[Live at Knebworth 1990]]'' (2021)
+'''Compilations'''
+* ''[[Wish You Were Here 50]]'' (2025)
+'''EPs'''
+* ''[[1965: Their First Recordings]]'' (2015)
+` } });
+      return Response.json({ error: { code: "missingtitle" } });
+    }
     if (String(url).startsWith("https://en.wikipedia.org/w/api.php") && String(url).includes("list=search")) {
       return new Response(JSON.stringify({ query: { search: [{ title: "Radiohead discography" }, { title: "The Bends" }] } }));
     }
@@ -538,6 +559,40 @@ test("an exact artist search with one review offers the official discography", a
     ["💿 A Foot in the Door · 2011 · сборник", "💿 Live at Knebworth 1990 · 2003 · концерт"]);
 });
 
+test("Pink Floyd still gets studio albums with first-release years when MusicBrainz returns 503", async () => {
+  const { default: isolatedWorker } = await import("../src/index.js?pink-floyd-outage");
+  archiveRows = [...ARCHIVE, FLOYD_REVIEW];
+  mbDown = true;
+  await say(OWNER, "/start da_endless", isolatedWorker);
+  const list = calls.find((c) => c.method === "sendMessage");
+  assert.match(list.text, /^Pink Floyd — альбомы: Резервный список/);
+  const albums = list.reply_markup.inline_keyboard.flat();
+  assert.deepEqual(albums.map((b) => b.text), [
+    "💿 1965: Their First Recordings · 2015 · EP", "🟡 5/10 · The Endless River · 2014",
+    "💿 The Division Bell · 1994", "💿 Wish You Were Here · 1975", "💿 The Dark Side of the Moon · 1973",
+  ]);
+  assert.ok(!fetched.some((u) => u.startsWith("https://api.deezer.com/")));
+  const tap = (data) => tgUpdate({ callback_query: { id: "q", from: { id: OWNER }, data, message: list } }, isolatedWorker);
+  calls = [];
+  await tap(albums[2].callback_data);
+  const card = calls.find((c) => c.method === "sendMessage");
+  assert.match(card.text, /^<b>Pink Floyd — The Division Bell<\/b> \(1994\)/);
+  const later = card.reply_markup.inline_keyboard.flat().find((b) => /^m:wk[0-9a-f]+:later$/.test(b.callback_data || ""));
+  assert.ok(later);
+  await tap(later.callback_data);
+  calls = [];
+  await say(OWNER, "/later", isolatedWorker);
+  const saved = calls.find((c) => c.method === "sendMessage").reply_markup.inline_keyboard[0][0];
+  assert.equal(saved.text, "⏳ Pink Floyd — The Division Bell");
+  assert.match(saved.callback_data, /^wk:wk[0-9a-f]+$/);
+  calls = [];
+  await tap(saved.callback_data);
+  assert.match(calls.find((c) => c.method === "sendMessage").text, /The Division Bell<\/b> \(1994\)/);
+  calls = [];
+  await say(OWNER, "/start " + saved.callback_data.replace(":", "_"), isolatedWorker);
+  assert.match(calls.find((c) => c.method === "sendMessage").text, /The Division Bell<\/b> \(1994\)/);
+});
+
 test("an artist found outside the archive opens the discography or shows that it is unavailable", async () => {
   await say(OWNER, "pink floyd");
   const list = calls.find((c) => c.method === "sendMessage");
@@ -552,9 +607,9 @@ test("an artist found outside the archive opens the discography or shows that it
   mbDown = true;
   calls = [];
   await say(OWNER, "pink floyd");
-  const unavailable = calls.find((c) => c.method === "sendMessage");
-  assert.match(unavailable.text, /Дискография временно недоступна/);
-  assert.equal(unavailable.reply_markup, undefined);
+  const backup = calls.find((c) => c.method === "sendMessage");
+  assert.match(backup.text, /Резервный список/);
+  assert.ok(backup.reply_markup.inline_keyboard.flat().some((b) => b.text === "💿 The Division Bell · 1994"));
 });
 
 test("an album without a review gets AOTY's genres, critics, tracklist and album links from the owner's table (2026-11-08)", async () => {

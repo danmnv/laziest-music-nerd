@@ -133,11 +133,51 @@ export function parse(text) {
   return { crit, sales };
 }
 
-// The article about this album, accepted only when its album infobox names the same album and artist; then its lines.
-async function wp(params) {
+async function wp(params, signal) {
   const r = await fetch(`${WP_API}?${new URLSearchParams({ format: "json", formatversion: "2", ...params })}`,
-    { headers: { "User-Agent": UA }, cf: { cacheTtl: 86400 } });
+    { headers: { "User-Agent": UA }, signal,
+      cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 86400, "300-599": -1 } } });
   return r.ok ? r.json() : {};
+}
+
+// A backup for MusicBrainz: read the artist's Discography section, then take only dated entries
+// explicitly listed as studio albums or EPs. The rest of the artist's article is not needed.
+export async function wikiDiscography(artist) {
+  try {
+    const signal = AbortSignal.timeout(6500);
+    const p = (await wp({ action: "parse", page: artist, redirects: "1", prop: "sections|revid" }, signal)).parse;
+    const name = p?.title?.replace(/\s*\([^()]*\)$/, "");
+    if (!name || !norm(artist) || (norm(p.title) !== norm(artist) && norm(name) !== norm(artist))) return [];
+    const section = p.sections?.find((x) => /^discography$/i.test(x.line));
+    if (!section || !p.revid) return [];
+    const d = await wp({ action: "parse", oldid: p.revid, section: section.index, prop: "wikitext" }, signal);
+    const text = d.parse?.wikitext;
+    if (typeof text !== "string") return [];
+
+    const albums = [];
+    const seen = new Set();
+    let kind = null;
+    for (const line of text.replace(/<!--[\s\S]*?-->|<ref\b[^>]*\/>|<ref\b[^>]*>[\s\S]*?<\/ref>/gi, "").split("\n")) {
+      const heading = /^\s*(?:={2,6}|''')\s*(.*?)\s*(?:={2,6}|''')\s*$/.exec(line);
+      if (heading) {
+        const label = clean(heading[1]);
+        kind = /^(?:(?:original|solo) )?studio albums?$/i.test(label) ? "" :
+          /^(?:extended plays?|EPs)$/i.test(label) ? "EP" : null;
+      }
+      if (kind === null) continue;
+      const row = /^\*\s*(?:'')?\[\[([^\]]+)\]\](?:'')?\s*\(((?:19|20)\d{2})\)\s*$/.exec(line);
+      if (!row) continue;
+      const title = row[1].split("|").at(-1).trim().replaceAll("&amp;", "&");
+      const year = row[2];
+      const key = `${title.toLowerCase()}|${year}`;
+      if (!title || seen.has(key)) continue;
+      seen.add(key);
+      albums.push({ title, year, kind, wiki: albums.length });
+    }
+    return albums;
+  } catch {
+    return [];
+  }
 }
 
 // The article about this album, accepted only when its album infobox names the same album and artist; then its lines.
