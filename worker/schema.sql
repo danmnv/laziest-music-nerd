@@ -68,6 +68,16 @@ CREATE TABLE IF NOT EXISTS follow_delivery (
   ready_at INTEGER NOT NULL,             -- ms: retry time, or observation deadline for an in-flight send
   PRIMARY KEY (user_id, review_id)
 );
+-- Successful public MusicBrainz data, fetched on demand. No per-user records.
+CREATE TABLE IF NOT EXISTS mb_discographies (
+  artist_key TEXT PRIMARY KEY,
+  mbid TEXT NOT NULL,
+  groups_json TEXT NOT NULL,
+  fetched_at INTEGER NOT NULL,
+  complete INTEGER NOT NULL,
+  retry_after INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_mb_discographies_fetched_at ON mb_discographies(fetched_at);
 CREATE TABLE IF NOT EXISTS unreviewed (   -- albums without Fantano's review that someone opened: names for marks and reminders
   id TEXT PRIMARY KEY,                   -- MusicBrainz group ID, "dz" + Deezer album ID, or "av" + AOTY ID
   artist_name TEXT NOT NULL,

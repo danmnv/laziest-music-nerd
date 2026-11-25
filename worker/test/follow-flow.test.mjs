@@ -55,6 +55,8 @@ const FLOYD_GROUPS = [
 ].map((group) => ({ ...group, "primary-type": "Album" }));
 let archiveRows;
 let mbDown = false;
+let mbPageDown = false;
+let mbTimes;
 let longBrief = null; // a brief too long for a photo's caption
 let rtMoods = null; // the archive brief's mood guess for Kid A, when a test needs another
 let rtAl = null; // the album as checked from Actions (data/albums.json), in Kid A's rt file
@@ -69,6 +71,8 @@ let sendToTelegram; // optional fake response for sends
 beforeEach(() => {
   sendToTelegram = null;
   mbDown = false;
+  mbPageDown = false;
+  mbTimes = [];
   archiveRows = ARCHIVE;
   longBrief = null;
   rtMoods = null;
@@ -120,7 +124,20 @@ beforeEach(() => {
       release_year: "1985", al: { cv: "https://cdn/hounds.jpg", y: "2011" },
     });
     if (String(url).startsWith("https://site/rt/")) return new Response("not found", { status: 404 });
-    if (String(url).startsWith("https://musicbrainz.org/") && mbDown) return new Response("busy", { status: 503 });
+    if (String(url).startsWith("https://musicbrainz.org/")) {
+      mbTimes.push(Date.now());
+      if (mbDown || (mbPageDown && String(url).includes("offset=100"))) return new Response("busy", { status: 503 });
+    }
+    if (String(url).startsWith("https://musicbrainz.org/ws/2/artist?") && decodeURIComponent(String(url)).includes('artist:"Bilge Rat"')) {
+      return new Response("busy", { status: 503 });
+    }
+    if (String(url).startsWith("https://musicbrainz.org/ws/2/release-group?query=") && decodeURIComponent(String(url)).includes('artistname:"Bilge Rat"')) {
+      const rg = (title, name, id) => ({ id: "2b1384fe-d43e-42e1-9464-818beb9002cc", title, "first-release-date": "2018",
+        "primary-type": "Album", "secondary-types": [], "artist-credit": [{ artist: { id, name } }] });
+      return Response.json({ count: 2, "release-groups": [
+        rg("Pal", "Bilge Rat", "2b1384fe-d43e-42e1-9464-818beb9002cc"), rg("Other artist", "Bilge Rat Tribute", "other"),
+      ] });
+    }
     if (String(url).startsWith("https://musicbrainz.org/ws/2/artist?") && decodeURIComponent(String(url)).includes('artist:"Pink Floyd"')) {
       return Response.json({ artists: [{ name: "Pink Floyd", id: FLOYD }] });
     }
@@ -140,11 +157,15 @@ beforeEach(() => {
         rg(PABLO, "Pablo Honey", "1993-02-22", "Album"),
         rg(TKOL, "TKOL RMX 1234567", "2011-09-16", "Album", ["Remix"]),
         rg(LUNG, "My Iron Lung", "1994-09-26", "EP"),
-        rg(UNDATED, "Bootleg", "", "Album")] }));
+        rg(UNDATED, "Bootleg", "", "Album"),
+        ...Array.from({ length: 93 }, (_, i) => rg(`undated-${i}`, "Undated", "", "Album"))] }));
     }
     if (String(url).startsWith(`https://musicbrainz.org/ws/2/release-group/${BENDS}?inc=artist-credits`)) {
       return new Response(JSON.stringify({ id: BENDS, title: "The Bends", "first-release-date": "1995-03-13", "primary-type": "Album", "secondary-types": [],
         "artist-credit": [{ name: "Radiohead" }] }));
+    }
+    if (String(url).startsWith("https://api.deezer.com/search/album?q=bilge%20rat&")) {
+      return Response.json({ data: [{ id: 71, title: "Pal", artist: { name: "Bilge Rat" }, record_type: "album" }] });
     }
     if (String(url).startsWith("https://api.deezer.com/search/album?q=pink%20floyd&")) {
       return Response.json({ data: [
@@ -528,10 +549,56 @@ test("artist discography keeps reviews and omits Deezer's unclassified albums du
   const other = calls.find((c) => c.method === "sendMessage");
   assert.match(other.text, /Radiohead.+Показаны обзоры Фантано\. Дискография временно недоступна/);
   assert.deepEqual(other.reply_markup.inline_keyboard.map((r) => r[0].callback_data || r[0].url),
-    ["a:k", "a:p", "https://youtu.be/uu8sC7YDOZg"]);
-  assert.ok(!fetched.some((url) => url.startsWith("https://api.deezer.com/")));
+    ["a:k", "a:p", "https://www.deezer.com/artist/399", "https://youtu.be/uu8sC7YDOZg"]);
+  assert.ok(!fetched.some((url) => /api\.deezer\.com\/artist\/\d+\/albums/.test(url)));
   calls = [];
   await press(OWNER, "dx:k"); // a button from an earlier, complete list
+  assert.match(calls.find((c) => c.method === "sendMessage").text, /Дискография временно недоступна/);
+});
+
+test("the indexed MusicBrainz search gives a new artist's albums during an artist lookup outage", async () => {
+  await say(OWNER, "bilge rat");
+  const message = calls.find((c) => c.method === "sendMessage");
+  assert.match(message.text, /Bilge Rat.+Показана доступная часть дискографии MusicBrainz/);
+  assert.deepEqual(message.reply_markup.inline_keyboard.flat().map((b) => b.text), ["💿 Pal · 2018"]);
+  assert.ok(!fetched.some((u) => u.startsWith("https://en.wikipedia.org/")));
+  assert.equal(db.prepare("SELECT complete FROM mb_discographies").get().complete, 0);
+  calls = [];
+  const requests = mbTimes.length;
+  await say(OWNER, "bilge rat");
+  assert.equal(mbTimes.length, requests);
+  assert.deepEqual(calls.find((c) => c.method === "sendMessage").reply_markup, message.reply_markup);
+});
+
+test("MusicBrainz pages are paced, and incomplete refreshes keep the previous complete list", async () => {
+  await press(OWNER, "da:k");
+  const first = calls.find((c) => c.method === "sendMessage");
+  const rows = first.reply_markup.inline_keyboard;
+  assert.ok(rows.flat().some((b) => b.text === "💿 Amnesiac · 2001"));
+  assert.equal(mbTimes.length, 2);
+  assert.ok(mbTimes[1] - mbTimes[0] >= 1000);
+  assert.equal(db.prepare("SELECT count(*) n FROM mb_discographies").get().n, 1);
+
+  calls = [];
+  await press(OWNER, "da:k");
+  assert.equal(mbTimes.length, 2, "a fresh cache entry skips the upstream API");
+  assert.deepEqual(calls.find((c) => c.method === "sendMessage").reply_markup.inline_keyboard, rows);
+
+  db.prepare("UPDATE mb_discographies SET fetched_at=?").run(Date.now() - 2 * 864e5);
+  mbPageDown = true;
+  calls = [];
+  await press(OWNER, "da:k");
+  const stale = calls.find((c) => c.method === "sendMessage");
+  assert.match(stale.text, /Последний полученный список MusicBrainz/);
+  assert.deepEqual(stale.reply_markup.inline_keyboard, rows, "the second-page failure does not lose Amnesiac");
+  assert.equal(mbTimes.length, 4);
+  await press(OWNER, "dx:k");
+  assert.equal(mbTimes.length, 4, "an immediate retry uses the same snapshot during refresh backoff");
+
+  db.prepare("UPDATE mb_discographies SET fetched_at=?").run(Date.now() - 15 * 864e5);
+  mbDown = true;
+  calls = [];
+  await press(OWNER, "da:k");
   assert.match(calls.find((c) => c.method === "sendMessage").text, /Дискография временно недоступна/);
 });
 
@@ -604,6 +671,7 @@ test("an artist found outside the archive opens the discography or shows that it
   calls = [];
   await tgUpdate({ callback_query: { id: "q", from: { id: OWNER }, data: buttons.at(-1).callback_data, message: list } });
   assert.match(calls.find((c) => c.method === "sendMessage").text, /^Pink Floyd — концертные/);
+  db.prepare("DELETE FROM mb_discographies").run(); // Wikipedia still works on the first unavailable lookup
   mbDown = true;
   calls = [];
   await say(OWNER, "pink floyd");
