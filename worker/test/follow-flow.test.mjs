@@ -45,6 +45,15 @@ function d1(sqlite) {
 }
 
 const [KIDA, BENDS, OKNOTOK, PABLO, TKOL, LUNG, UNDATED, AMNESIAC] = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => `0000000${n}-0000-4000-8000-000000000000`);
+const FLOYD = "83d91898-7763-47d7-b03b-b92132375c47";
+const FLOYD_REVIEW = { id: "endless", artist_name: "Pink Floyd", album: "The Endless River", published: "2014-11-14", score: 5 };
+const FLOYD_GROUPS = [
+  { id: "38b4c840-16ce-40fa-b7c0-a354b7c87178", title: "The Endless River", "first-release-date": "2014-11-07", "secondary-types": [] },
+  { id: "90878b63-f639-3c8b-aefb-190bdf3d1790", title: "The Division Bell", "first-release-date": "1994-03-28", "secondary-types": [] },
+  { id: "6a8f38c0-aad9-3615-bb6b-aa311f7c1cd3", title: "Live at Knebworth 1990", "first-release-date": "2003-05-29", "secondary-types": ["Live"] },
+  { id: "df62e59f-048f-43dc-8844-5ee6b1c57645", title: "A Foot in the Door", "first-release-date": "2011-11-07", "secondary-types": ["Compilation"] },
+].map((group) => ({ ...group, "primary-type": "Album" }));
+let archiveRows;
 let mbDown = false;
 let longBrief = null; // a brief too long for a photo's caption
 let rtMoods = null; // the archive brief's mood guess for Kid A, when a test needs another
@@ -60,6 +69,7 @@ let sendToTelegram; // optional fake response for sends
 beforeEach(() => {
   sendToTelegram = null;
   mbDown = false;
+  archiveRows = ARCHIVE;
   longBrief = null;
   rtMoods = null;
   rtAl = null;
@@ -90,8 +100,8 @@ beforeEach(() => {
     if (String(url).endsWith("reviews.json")) return new Response(JSON.stringify([{ id: "old1", artist_name: "Shame", artist: { mbid: "S" } }, { id: "rk", artist_name: "Radiohead", artist: { mbid: "R" } }]));
     // PACKED=1 runs every test here on the Worker's compact copy of the archive (archive.mjs), as in production;
     // without it the copy is missing and the Worker reads archive.json itself
-    if (String(url).endsWith("archive.min.json")) return PACKED ? new Response(JSON.stringify(pack(ARCHIVE))) : new Response("not found", { status: 404 });
-    if (String(url).endsWith("archive.json")) return new Response(JSON.stringify(ARCHIVE));
+    if (String(url).endsWith("archive.min.json")) return PACKED ? new Response(JSON.stringify(pack(archiveRows))) : new Response("not found", { status: 404 });
+    if (String(url).endsWith("archive.json")) return new Response(JSON.stringify(archiveRows));
     if (String(url) === "https://site/rt/k.json") {
       return new Response(JSON.stringify({ crit: ["Metacritic 91", "Pitchfork 10/10"], sales: ["US #1", "UK #1"], wp_url: "https://en.wikipedia.org/wiki/Kid_A", video_id: "kidavideo01", bc: "https://radiohead.bandcamp.com/album/kid-a",
         brief: longBrief || "Radiohead уходят в электронику.", blurb: "Not shown when there is a brief.", moods: rtMoods || ["для работы за столом", "не то"],
@@ -111,6 +121,12 @@ beforeEach(() => {
     });
     if (String(url).startsWith("https://site/rt/")) return new Response("not found", { status: 404 });
     if (String(url).startsWith("https://musicbrainz.org/") && mbDown) return new Response("busy", { status: 503 });
+    if (String(url).startsWith("https://musicbrainz.org/ws/2/artist?") && decodeURIComponent(String(url)).includes('artist:"Pink Floyd"')) {
+      return Response.json({ artists: [{ name: "Pink Floyd", id: FLOYD }] });
+    }
+    if (String(url).startsWith(`https://musicbrainz.org/ws/2/release-group?artist=${FLOYD}&`)) {
+      return Response.json({ "release-group-count": FLOYD_GROUPS.length, "release-groups": FLOYD_GROUPS });
+    }
     if (String(url).startsWith("https://musicbrainz.org/ws/2/release-group?artist=R&") && String(url).includes("offset=100")) {
       return new Response(JSON.stringify({ "release-group-count": 101, "release-groups": [
         { id: AMNESIAC, title: "Amnesiac", "first-release-date": "2001-06-04", "primary-type": "Album", "secondary-types": [] }] }));
@@ -129,6 +145,12 @@ beforeEach(() => {
     if (String(url).startsWith(`https://musicbrainz.org/ws/2/release-group/${BENDS}?inc=artist-credits`)) {
       return new Response(JSON.stringify({ id: BENDS, title: "The Bends", "first-release-date": "1995-03-13", "primary-type": "Album", "secondary-types": [],
         "artist-credit": [{ name: "Radiohead" }] }));
+    }
+    if (String(url).startsWith("https://api.deezer.com/search/album?q=pink%20floyd&")) {
+      return Response.json({ data: [
+        { id: 50, title: "Wish You Were Here 50", artist: { name: "Pink Floyd" }, record_type: "album" },
+        { id: 51, title: "Live at Knebworth 1990", artist: { name: "Pink Floyd" }, record_type: "album" },
+      ] });
     }
     if (String(url).startsWith("https://api.deezer.com/search/album") && String(url).includes("nothing")) return new Response(JSON.stringify({ data: [] }));
     if (String(url).startsWith("https://api.deezer.com/search/album") && String(url).toLowerCase().includes("bends")) {
@@ -479,19 +501,60 @@ test("an artist's albums without Fantano's review, and a card for one of them", 
   assert.match(calls.find((x) => x.method === "sendMessage").text, /^Radiohead — альбомы:/);
 });
 
-test("when MusicBrainz is down, the list comes from Deezer: albums only, the first edition's year", async () => {
+test("artist discography keeps reviews and omits Deezer's unclassified albums during a MusicBrainz outage", async () => {
   mbDown = true;
   await press(OWNER, "da:k");
   const other = calls.find((c) => c.method === "sendMessage");
-  assert.equal(other.text, "Radiohead — альбомы:");
-  // the later Bends edition and the single are left out; newest first; no extras button
-  assert.deepEqual(other.reply_markup.inline_keyboard.map((r) => [r[0].text, r[0].callback_data || r[0].url]),
-    [["💿 OK Computer OKNOTOK 1997 2017 · 2017", "dz:22"], ["🟢 8/10 · A Moon Shaped Pool · обзор 2016", "a:p"],
-     ["🟢 10/10 · Kid A · 2000", "a:k"], ["💿 The Bends · 1995", "dz:20"],
-     ["🎬 Radiohead: от худшего к лучшему (2017)", "https://youtu.be/uu8sC7YDOZg"]]);
+  assert.match(other.text, /Radiohead.+Показаны обзоры Фантано\. Дискография временно недоступна/);
+  assert.deepEqual(other.reply_markup.inline_keyboard.map((r) => r[0].callback_data || r[0].url),
+    ["a:k", "a:p", "https://youtu.be/uu8sC7YDOZg"]);
+  assert.ok(!fetched.some((url) => url.startsWith("https://api.deezer.com/")));
   calls = [];
-  await press(OWNER, "dz:20");
-  assert.match(calls.find((x) => x.method === "sendPhoto").caption, /^<b>Radiohead — The Bends<\/b> \(1995\)/);
+  await press(OWNER, "dx:k"); // a button from an earlier, complete list
+  assert.match(calls.find((c) => c.method === "sendMessage").text, /Дискография временно недоступна/);
+});
+
+test("an exact artist search with one review offers the official discography", async () => {
+  const { default: isolatedWorker } = await import("../src/index.js?pink-floyd");
+  archiveRows = [...ARCHIVE, FLOYD_REVIEW];
+  av = {
+    "1": { a: "Pink Floyd", t: "The Division Bell", d: "1994-03-28" },
+    "2": { a: "Pink Floyd", t: "Wish You Were Here 50", d: "2025-12-12" },
+  };
+  await say(OWNER, "pink floyd", isolatedWorker);
+  const reviews = calls.find((c) => c.method === "sendMessage");
+  assert.match(reviews.text, /^Pink Floyd — 1 обзор Фантано/);
+  assert.deepEqual(reviews.reply_markup.inline_keyboard.flat().map((b) => b.callback_data), ["a:endless", "da:endless"]);
+  calls = [];
+  await tgUpdate({ callback_query: { id: "q", from: { id: OWNER }, data: "da:endless" } }, isolatedWorker);
+  const list = calls.find((c) => c.method === "sendMessage");
+  assert.equal(list.text, "Pink Floyd — альбомы:");
+  assert.deepEqual(list.reply_markup.inline_keyboard.flat().map((b) => b.callback_data), ["a:endless", "av:1", "dx:endless"]);
+  assert.ok(fetched.some((url) => url.includes("release-group-status=website-default")));
+  calls = [];
+  await tgUpdate({ callback_query: { id: "q", from: { id: OWNER }, data: "dx:endless" } }, isolatedWorker);
+  const extra = calls.find((c) => c.method === "sendMessage");
+  assert.deepEqual(extra.reply_markup.inline_keyboard.flat().map((b) => b.text),
+    ["💿 A Foot in the Door · 2011 · сборник", "💿 Live at Knebworth 1990 · 2003 · концерт"]);
+});
+
+test("an artist found outside the archive opens the discography or shows that it is unavailable", async () => {
+  await say(OWNER, "pink floyd");
+  const list = calls.find((c) => c.method === "sendMessage");
+  assert.equal(list.text, "Pink Floyd — альбомы:");
+  const buttons = list.reply_markup.inline_keyboard.flat();
+  assert.deepEqual(buttons.map((b) => b.callback_data), [
+    `mb:${FLOYD_GROUPS[0].id}`, `mb:${FLOYD_GROUPS[1].id}`, `mx:${FLOYD}`,
+  ]);
+  calls = [];
+  await tgUpdate({ callback_query: { id: "q", from: { id: OWNER }, data: buttons.at(-1).callback_data, message: list } });
+  assert.match(calls.find((c) => c.method === "sendMessage").text, /^Pink Floyd — концертные/);
+  mbDown = true;
+  calls = [];
+  await say(OWNER, "pink floyd");
+  const unavailable = calls.find((c) => c.method === "sendMessage");
+  assert.match(unavailable.text, /Дискография временно недоступна/);
+  assert.equal(unavailable.reply_markup, undefined);
 });
 
 test("an album without a review gets AOTY's genres, critics, tracklist and album links from the owner's table (2026-11-08)", async () => {

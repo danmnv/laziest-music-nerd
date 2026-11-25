@@ -442,6 +442,13 @@ async function onCallback(q, env, applied) {
     const arch = await archive(env);
     const a = arch.find((x) => x.id === parts[1]);
     if (a) await sendOtherAlbums(env, uid, arch, a.artist_name, true);
+  } else if (parts[0] === "mx") {
+    await answerNow();
+    const artist = /^(.+) — альбомы(?: \(показаны |:)/.exec(q.message?.text || "")?.[1];
+    const mbid = parts[1];
+    if (artist && /^[0-9a-f-]{36}$/.test(mbid || "")) {
+      await sendOtherAlbums(env, uid, await archive(env), artist, true, null, mbid);
+    }
   } else if (parts[0] === "mb") {
     await answerNow();
     await sendMbAlbum(env, uid, parts[1], q.message);
@@ -954,7 +961,8 @@ const UA = "LaziestMusicNerd/1.0 (https://github.com/danmnv/laziest-music-nerd)"
 async function mbJson(path) {
   try {
     const r = await fetch(`https://musicbrainz.org/ws/2/${path}${path.includes("?") ? "&" : "?"}fmt=json`,
-      { headers: { "User-Agent": UA, Accept: "application/json" }, cf: { cacheTtl: 86400 } });
+      { headers: { "User-Agent": UA, Accept: "application/json" },
+        cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 86400, "300-599": -1 } } });
     return r.ok ? await r.json() : null;
   } catch (e) {
     return null;
@@ -964,30 +972,32 @@ async function mbJson(path) {
 const KIND_RU = { Live: "концерт", Compilation: "сборник", Remix: "ремиксы", Soundtrack: "саундтрек", "DJ-mix": "диджей-микс",
   Demo: "демо", "Mixtape/Street": "микстейп", Interview: "интервью", Spokenword: "речь", Audiobook: "аудиокнига" };
 
-// An artist's releases Fantano never reviewed, from MusicBrainz: release types and first-release years there are
-// reliable (Deezer mixes reissues, remixes and live albums in, and dates its own editions). main: studio albums,
-// newest first, then EPs; extra: live, compilations, remixes and the like. null when MusicBrainz can't be used.
-async function otherAlbums(env, arch, artistName) {
+// MusicBrainz provides release-group types and first-release years. Main holds studio albums and EPs,
+// extra holds concert albums, compilations and other secondary types.
+async function otherAlbums(env, arch, artistName, mbid) {
   const k = nameKey(artistName);
-  // the MusicBrainz ID from a card the bot posted is certain; otherwise the best search hit with the same name
-  const card = (await reviews(env)).find((r) => r.artist && r.artist.mbid && nameKey(r.artist_name) === k);
-  let mbid = card && card.artist.mbid;
+  const artist = fullName(artistName);
   if (!mbid) {
-    const s = await mbJson(`artist?query=${encodeURIComponent(`artist:"${artistName}"`)}&limit=5`);
-    const hit = s && (s.artists || []).find((x) => nameKey(x.name) === k);
-    mbid = hit && hit.id;
+    const card = (await reviews(env)).find((r) => r.artist?.mbid && fullName(r.artist_name) === artist);
+    mbid = card?.artist.mbid;
+  }
+  if (!mbid) {
+    const term = artistName.replace(/[\\"]/g, "\\$&");
+    const s = await mbJson(`artist?query=${encodeURIComponent(`artist:"${term}"`)}&limit=5`);
+    mbid = s?.artists?.find((x) => fullName(x.name) === artist)?.id;
   }
   if (!mbid) return null;
   // one page is 100 groups in MusicBrainz's own order, not by date: artists with many live albums need more pages
   const groups = [];
   for (let page = 0; page < 3; page++) {
-    const d = await mbJson(`release-group?artist=${mbid}&type=album|ep&limit=100&offset=${page * 100}`);
-    if (!d) {
+    const d = await mbJson(`release-group?artist=${mbid}&type=album|ep&release-group-status=website-default&limit=100&offset=${page * 100}`);
+    const rows = d?.["release-groups"];
+    if (!Array.isArray(rows)) {
       if (!page) return null;
       break;
     }
-    groups.push(...(d["release-groups"] || []));
-    if (groups.length >= (d["release-group-count"] || 0) || !(d["release-groups"] || []).length) break;
+    groups.push(...rows);
+    if (groups.length >= (d["release-group-count"] || 0) || rows.length === 0) break;
   }
   const reviewed = new Set(arch.filter((a) => artistKey(a) === k).map((a) => nameKey(untitled(a.album))));
   const seen = new Set();
@@ -1005,45 +1015,24 @@ async function otherAlbums(env, arch, artistName) {
                    kind: second.length ? (KIND_RU[second[0]] || second[0].toLowerCase()) : x["primary-type"] === "EP" ? "EP" : "" };
     (second.length ? extra : x["primary-type"] === "EP" ? eps : main).push(item);
   }
-  return { main: main.reverse().concat(eps.reverse()), extra: extra.reverse(), years }; // newest first
-}
-
-// The same from Deezer, when MusicBrainz doesn't answer: albums only, one per title.
-async function deezerOtherAlbums(arch, artistName) {
-  const k = nameKey(artistName);
-  const s = await deezerJson(`search/artist?q=${encodeURIComponent(artistName)}&limit=5`);
-  const art = (s.data || []).find((x) => nameKey(x.name) === k);
-  if (!art) return null;
-  const d = await deezerJson(`artist/${art.id}/albums?limit=100`);
-  const reviewed = new Set(arch.filter((a) => artistKey(a) === k).map((a) => nameKey(untitled(a.album))));
-  const seen = new Set();
-  const out = [];
-  const years = {};
-  const list = (d.data || []).filter((x) => x.record_type === "album")
-    .sort((a, b) => order(String(a.release_date), String(b.release_date))); // oldest first: the original edition wins
-  for (const x of list) {
-    const key = nameKey(untitled(x.title));
-    if (key && reviewed.has(key) && !years[key]) years[key] = String(x.release_date || "").slice(0, 4);
-    if (!key || reviewed.has(key) || seen.has(key)) continue;
-    seen.add(key);
-    out.push({ dz: x.id, title: x.title, year: String(x.release_date || "").slice(0, 4), kind: "" });
-  }
-  return { main: out.reverse(), extra: [], years };
+  return { main: main.reverse().concat(eps.reverse()), extra: extra.reverse(), years, mbid };
 }
 
 // «💿 Альбомы артиста»: the artist's albums, newest first, the reviewed ones with Fantano's score and the others
 // plain (owner, 2026-11-03: the artist first, not Fantano). extraOnly: live albums, compilations, remixes.
 // key: the card ID (unreviewed table) of an artist without reviews, for the «Ещё» button when there is no review to
 // anchor it to.
-async function sendOtherAlbums(env, uid, arch, artist, extraOnly, key = null) {
+async function sendOtherAlbums(env, uid, arch, artist, extraOnly, key = null, mbid = null) {
   const k = nameKey(artist);
   const anchor = arch.find((a) => artistKey(a) === k);
   const [res, variants] = await Promise.all([
-    otherAlbums(env, arch, artist).then((r) => r || (extraOnly ? null : deezerOtherAlbums(arch, artist))),
+    otherAlbums(env, arch, artist, mbid),
     extraOnly ? {} : loadVariants(env.SITE_URL),
   ]);
+  const unavailable = "Дискография временно недоступна. Попробуй чуть позже.";
   if (extraOnly) {
-    if (!res || !res.extra.length) return tg(env, "sendMessage", { chat_id: uid, text: `У ${artist} больше ничего нет.` });
+    if (!res) return tg(env, "sendMessage", { chat_id: uid, text: unavailable });
+    if (!res.extra.length) return tg(env, "sendMessage", { chat_id: uid, text: `У ${artist} больше ничего нет.` });
     return tg(env, "sendMessage", { chat_id: uid, text: `${artist} — концертные, сборники, ремиксы и прочее:`,
       reply_markup: { inline_keyboard: res.extra.slice(0, 30).map((x) => [discButton(x)]) } });
   }
@@ -1053,22 +1042,27 @@ async function sendOtherAlbums(env, uid, arch, artist, extraOnly, key = null) {
     const rel = res && res.years && (res.years[nameKey(untitled(a.album))] || res.years[nameKey(untitled(a.album).replace(/\s*[([]?\b(redux|revisited|re-?review)\b[)\]]?\s*$/i, ""))]);
     return { a, year: rel || String(a.published).slice(0, 4), reviewYear: !rel };
   });
-  const editions = variantsOf(variants, artist).filter(([, e]) => !reviewed.some(({ a }) => a.id === e.r));
-  const other = (res?.main || []).filter((x) => !matchVariant(variantsOf(variants, artist, x.title), x.title, x.year));
-  const all = [...reviewed, ...other.map((x) => ({ x, year: x.year || "" }))]
-    .sort((p, q) => order(String(q.year), String(p.year)));
-  if (!all.length && !editions.length) return tg(env, "sendMessage", { chat_id: uid, text: `Не нашёл дискографию ${artist}.` });
+  const other = (res?.main || []).map((x) => ({
+    x, year: x.year, edition: matchVariant(variantsOf(variants, artist, x.title), x.title, x.year),
+  })).filter(({ edition }) => !edition || !reviewed.some(({ a }) => a.id === edition[1].r));
+  const all = [...reviewed, ...other].sort((p, q) => order(String(q.year), String(p.year)));
+  if (!all.length && !res?.extra.length) {
+    return tg(env, "sendMessage", { chat_id: uid, text: res ? `Не нашёл дискографию ${artist}.` : unavailable });
+  }
   const shown = all.slice(0, 40);
-  const rows = shown.map((it) => [it.a
-    ? { text: `${badge(it.a)} · ${short(it.a.album)} · ${it.reviewYear ? "обзор " : ""}${it.year}`.slice(0, 120), callback_data: `a:${it.a.id}` }
-    : discButton(it.x)]);
-  rows.push(...variantButtons(editions));
-  if (res && res.extra.length && (anchor || key)) {
-    rows.push([{ text: `Ещё: концертные, сборники, ремиксы (${res.extra.length})`, callback_data: anchor ? `dx:${anchor.id}` : `ux:${key}` }]);
+  const rows = shown.map(({ a, reviewYear, year, x, edition }) => {
+    if (a) return [{ text: `${badge(a)} · ${short(a.album)} · ${reviewYear ? "обзор " : ""}${year}`.slice(0, 120), callback_data: `a:${a.id}` }];
+    const button = discButton(x);
+    if (edition) button.callback_data = `av:${edition[0]}`;
+    return [button];
+  });
+  if (res?.extra.length) {
+    const extra = anchor ? `dx:${anchor.id}` : key ? `ux:${key}` : `mx:${res.mbid}`;
+    rows.push([{ text: `Ещё: концертные, сборники, ремиксы (${res.extra.length})`, callback_data: extra }]);
   }
   const video = anchor ? await rankingVideo(env, anchor.artist_name) : null;
   if (video) rows.push([video]);
-  const note = !res ? " Остальную дискографию сейчас не получить: MusicBrainz и Deezer не ответили." : "";
+  const note = res ? "" : ` Показаны обзоры Фантано. ${unavailable}`;
   // the score badges mark Fantano's reviews, as everywhere in the bot
   const head = `${artist} — альбомы${all.length > shown.length ? ` (показаны ${shown.length} новых из ${all.length})` : ""}:` + note;
   return tg(env, "sendMessage", { chat_id: uid, text: head, reply_markup: { inline_keyboard: rows } });
@@ -1076,7 +1070,7 @@ async function sendOtherAlbums(env, uid, arch, artist, extraOnly, key = null) {
 
 function discButton(x) {
   return { text: `💿 ${short(x.title)}${x.year ? " · " + x.year : ""}${x.kind ? " · " + x.kind : ""}`.slice(0, 120),
-           callback_data: x.dz ? `dz:${x.dz}` : `mb:${x.id}` };
+           callback_data: `mb:${x.id}` };
 }
 
 // A release from MusicBrainz: its year and type from there, cover, length and links from Deezer.
@@ -1636,7 +1630,10 @@ async function search(env, uid, query) {
     if (editions.length) return sendVariantResults(env, uid, editions);
     // no review: maybe the album exists anyway; its card then shows what's known without Fantano
     const d = await deezerJson(`search/album?q=${encodeURIComponent(query.slice(0, 100))}&limit=6`);
-    const hits = (d.data || []).filter((x) => x.artist && x.record_type !== "single");
+    const results = d.data || [];
+    const artist = results.find((x) => x.artist && fullName(x.artist.name) === fullName(query))?.artist.name;
+    if (artist) return sendOtherAlbums(env, uid, arch, artist, false);
+    const hits = results.filter((x) => x.artist && x.record_type !== "single");
     if (hits.length) {
       return tg(env, "sendMessage", { chat_id: uid, text: `Обзора Фантано по запросу «${query.slice(0, 100)}» нет. Нашёл в Deezer:`,
         reply_markup: { inline_keyboard: hits.map((x) => [{ text: `💿 ${short(x.artist.name)} — ${short(x.title)}`.slice(0, 120), callback_data: `dz:${x.id}` }]) } });
@@ -1653,7 +1650,7 @@ async function search(env, uid, query) {
     if (!r.artist && other.length) return sendVariantResults(env, uid, other, r.items);
     if (r.artist) {
       const message = artistMessage(r.artist, r.total, r.items, r.others, await rankingVideo(env, r.artist));
-      message.reply_markup.inline_keyboard.push(...variantButtons(other));
+      if (fullName(r.artist) !== fullName(query)) message.reply_markup.inline_keyboard.push(...variantButtons(other));
       return tg(env, "sendMessage", { chat_id: uid, ...message });
     }
     return tg(env, "sendMessage", { chat_id: uid, text: `Нашёл ${r.total}:`, reply_markup: { inline_keyboard: albumButtons(r.items, true) } });

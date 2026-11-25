@@ -33,20 +33,21 @@ export function badge(a) {
 }
 
 // What to answer a search with:
-// - "none"; "card" for a single review;
+// - "none"; "card" for a single review matched by release or a partial artist name;
 // - "albums": one artist's reviews (the artist named exactly, or the only artist found), or a few hits of mixed artists;
 // - "artists": many hits across artists, so pick the artist first.
 export function answerSearch(archive, query, { maxAlbums = 40, fewHits = 8, maxArtists = 10 } = {}) {
   const { total, items } = searchArchive(archive, query, Infinity);
   if (!total) return { kind: "none" };
-  if (total === 1) return { kind: "card", item: items[0] };
+  const key = String(query || "").split(/\s+/).map(nameKey).join("");
+  if (total === 1 && artistKey(items[0]) !== key) return { kind: "card", item: items[0] };
   const groups = new Map();
   for (const a of items) {
     const k = artistKey(a);
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(a);
   }
-  const exact = groups.get(String(query || "").split(/\s+/).map(nameKey).join(""));
+  const exact = groups.get(key);
   if (exact || groups.size === 1) {
     const mine = exact || items;
     return { kind: "albums", artist: mine[0].artist_name, total: mine.length, items: mine.slice(0, maxAlbums), others: total - mine.length };
