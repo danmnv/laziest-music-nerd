@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import worker from "../src/index.js";
 import { pack } from "../src/archive.mjs";
+import { ce, EMOJI } from "../src/emoji.mjs";
 
 const PACKED = process.env.PACKED === "1";
 
@@ -381,25 +382,52 @@ test("10/10 search lists separate reviews, then each decade, with a CLASSIC list
   assert.equal(messages.length, 1);
   const [list] = messages;
   const sections = [...list.text.matchAll(/<b>(.*?)<\/b>/g)].map((m) => m[1]);
-  assert.deepEqual(sections, ["Альбомы на 10/10", "Отдельные обзоры", "1960-е", "1970-е", "1980-е", "1990-е", "2000-е"]);
+  assert.ok(list.text.startsWith(`${ce(env, "banger")} <b>10/10 у Фантано</b>\n<i>26 альбомов</i>`));
+  assert.deepEqual(sections, ["10/10 у Фантано", "Отдельные обзоры", "These Albums Are 10s"]);
+  assert.deepEqual([...list.text.matchAll(/<i>(\d{4}-е)<\/i>/g)].map((m) => m[1]),
+    ["1960-е", "1970-е", "1980-е", "1990-е", "2000-е"]);
   const links = [...list.text.matchAll(/start=a_([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(links.slice(0, 4), ["k", "zappa", "ten-highway-61", "ten-black-saint"]);
   assert.equal(links.length, 26);
   assert.ok(links.includes("hounds"));
   assert.ok(!links.includes("ten-hot-rats") && !links.includes("single"));
-  assert.deepEqual(list.reply_markup.inline_keyboard, [[{ text: "CLASSIC", callback_data: "classics" }]]);
+  assert.deepEqual(list.reply_markup.inline_keyboard, [[{
+    text: "CLASSIC", callback_data: "classics", icon_custom_emoji_id: EMOJI.adore[0],
+  }]]);
   assert.ok(!fetched.some((url) => /api\.deezer\.com|\/av\.json/.test(url)));
 
   calls = [];
   await tgUpdate({ callback_query: { id: "q", from: { id: OWNER }, data: "classics", message: list } }, isolatedWorker);
   const classics = calls.find((c) => c.method === "sendMessage");
-  assert.match(classics.text, /^<b>CLASSIC<\/b>/);
+  assert.ok(classics.text.startsWith(`${ce(env, "adore")} <b>Альбомы CLASSIC</b>\n<i>2 альбома · по году обзора</i>`));
+  assert.deepEqual([...classics.text.matchAll(/<b>(\d{4})<\/b>/g)].map((m) => m[1]), ["2026", "2014"]);
   assert.deepEqual([...classics.text.matchAll(/start=a_([^"]+)"/g)].map((m) => m[1]), ["ram", "hounds"]);
-  assert.match(classics.text, /Paul &amp; Linda McCartney — Ram/);
+  assert.match(classics.text, /Paul &amp; Linda McCartney — Ram<\/a> <i>· гостевой обзор<\/i>/);
 
   calls = [];
   await say(OWNER, "/start a_ten-abbey-road", isolatedWorker);
   assert.match(calls.find((c) => c.method === "sendMessage").text, /The Beatles — Abbey Road/);
+});
+
+test("the score list keeps working when the API refuses the pack or custom emoji are off", async () => {
+  sendToTelegram = (call) => {
+    const hasPack = call.text.includes("<tg-emoji") || call.reply_markup.inline_keyboard.flat().some((b) => b.icon_custom_emoji_id);
+    return Response.json(hasPack ? { ok: false, error_code: 400, description: "custom emoji refused" } :
+      { ok: true, result: { message_id: 42 } });
+  };
+  await say(OWNER, "10/10");
+  const messages = calls.filter((c) => c.method === "sendMessage");
+  assert.equal(messages.length, 2);
+  assert.ok(messages[0].text.startsWith(ce(env, "banger")));
+  assert.ok(messages[1].text.startsWith("🤘 <b>10/10 у Фантано</b>"));
+  assert.deepEqual(messages[1].reply_markup.inline_keyboard, [[{ text: "CLASSIC", callback_data: "classics" }]]);
+  env.CUSTOM_EMOJI = "0";
+  calls = [];
+  await say(OWNER, "10/10");
+  const plain = calls.filter((c) => c.method === "sendMessage");
+  assert.equal(plain.length, 1);
+  assert.equal(plain[0].text, messages[1].text);
+  assert.deepEqual(plain[0].reply_markup, messages[1].reply_markup);
 });
 
 test("a classic album links its episode from the score, followed by CLASSIC", async () => {

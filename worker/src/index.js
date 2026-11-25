@@ -18,7 +18,7 @@ import { searchArchive } from "./search.mjs";
 import { genresOf } from "./genres.mjs";
 import { albumTitleKey, albumTitleMatches, creditedNames, selfTitled, pickAlbum } from "./deezer.mjs";
 import { untitled, sortOut, quietHour, ruDate, RECHECK_HOURS } from "./releases.mjs";
-import { ce, plainEmoji } from "./emoji.mjs";
+import { EMOJI, ce, plainEmoji } from "./emoji.mjs";
 import { topAlbum, topCritics, loadVariants, searchVariants, variantsOf, matchVariant, variantYear, fullName } from "./top.mjs";
 import { silentFor, daysLeft, TOKEN_WARN_DAYS, ALERTS } from "./watchdog.mjs";
 
@@ -248,11 +248,21 @@ async function tg(env, method, params, signal) {
     signal,
   });
   const d = await r.json();
-  // A refused custom emoji (the owner's Premium lapsed, or Telegram changed the rule): send it again with ordinary ones
-  if (!d.ok && (!signal || (d.ok === false && d.error_code === 400)) &&
-      typeof params.text === "string" && params.text.includes("<tg-emoji")) {
-    if (!signal) console.log(method, "failed with custom emoji, retrying without:", d.description);
-    return tg(env, method, { ...params, text: plainEmoji(params.text) }, signal);
+  // A refused custom emoji (for example if the owner's Premium lapses): retry with the plain message and buttons.
+  if (!d.ok && (!signal || (d.ok === false && d.error_code === 400))) {
+    const customText = typeof params.text === "string" && params.text.includes("<tg-emoji");
+    const keyboard = params.reply_markup?.inline_keyboard;
+    const customIcon = keyboard?.some((row) => row.some((button) => button.icon_custom_emoji_id));
+    if (customText || customIcon) {
+      if (!signal) console.log(method, "failed with custom emoji, retrying without:", d.description);
+      const plain = { ...params };
+      if (customText) plain.text = plainEmoji(params.text);
+      if (customIcon) {
+        plain.reply_markup = { ...params.reply_markup,
+          inline_keyboard: keyboard.map((row) => row.map(({ icon_custom_emoji_id: _, ...button }) => button)) };
+      }
+      return tg(env, method, plain, signal);
+    }
   }
   if (!signal && !d.ok && !String(d.description || "").includes("message is not modified")) console.log(method, "failed:", d.description);
   return d;
@@ -541,7 +551,7 @@ async function onCallback(q, env, applied) {
       : { text: "Хорошо, всё осталось как было." }) });
   } else if (parts[0] === "classics") {
     await answerNow();
-    await sendReviewList(env, uid, "CLASSIC", [[null, classicReviews(await archive(env))]]);
+    await sendClassicReviews(env, uid);
   } else if (parts[0] === "a") {
     await answerNow();
     const a = await archiveById(env, parts[1]);
@@ -1703,6 +1713,7 @@ function plural(n, one, few, many) {
 }
 
 const reviewsWord = (n) => `${n} ${plural(n, "обзор", "обзора", "обзоров")}`;
+const albumsWord = (n) => `${n} ${plural(n, "альбом", "альбома", "альбомов")}`;
 const tracksWord = (n) => `${n} ${plural(n, "трек", "трека", "треков")}`;
 
 // One artist's reviews as buttons, newest first.
@@ -1737,16 +1748,20 @@ function sendVariantResults(env, uid, editions, reviews = []) {
     reply_markup: { inline_keyboard: [...variantButtons(editions), ...albumButtons(reviews, true)] } });
 }
 
-async function sendReviewList(env, uid, title, sections, reply_markup) {
-  const heading = `<b>${title}</b>`;
+function reviewListHeading(env, emoji, title, detail) {
+  return `${ce(env, emoji)} <b>${title}</b>\n<i>${detail}</i>`;
+}
+
+async function sendReviewList(env, uid, heading, sections, reply_markup) {
   const chunks = [];
   let text = heading, length = tgLen(heading);
   for (const [label, albums] of sections) {
-    const section = label ? `\n\n<b>${label}</b>` : "\n";
+    const section = `\n\n${label}`;
     let prefix = section;
     for (const a of albums) {
       const name = `${a.artist_name} — ${a.album}`;
-      const line = `\n${linkItems([[name, startLink(env, `a:${a.id}`)]])}`;
+      const guest = a.guest ? " <i>· гостевой обзор</i>" : "";
+      const line = `\n${linkItems([[name, startLink(env, `a:${a.id}`)]])}${guest}`;
       const lineLength = tgLen(line);
       if (length + tgLen(prefix) + lineLength > MESSAGE_LIMIT) {
         chunks.push(text);
@@ -1769,10 +1784,27 @@ async function sendReviewList(env, uid, title, sections, reply_markup) {
 
 async function sendTenReviews(env, uid) {
   const { reviews, episodes } = tenReviews(await archive(env));
-  return sendReviewList(env, uid, "Альбомы на 10/10", [
-    ["Отдельные обзоры", reviews],
-    ...episodes.map(([decade, albums]) => [`${decade}-е`, albums]),
-  ], { inline_keyboard: [[{ text: "CLASSIC", callback_data: "classics" }]] });
+  const groups = episodes.filter(([, albums]) => albums.length);
+  const total = groups.reduce((n, [, albums]) => n + albums.length, reviews.length);
+  const heading = reviewListHeading(env, "banger", "10/10 у Фантано", albumsWord(total));
+  const classic = { text: "CLASSIC", callback_data: "classics" };
+  if (env.CUSTOM_EMOJI !== "0") classic.icon_custom_emoji_id = EMOJI.adore[0];
+  return sendReviewList(env, uid, heading, [
+    ["<b>Отдельные обзоры</b>", reviews],
+    ...groups.map(([decade, albums], i) => [`${i ? "" : "<b>These Albums Are 10s</b>\n"}<i>${decade}-е</i>`, albums]),
+  ], { inline_keyboard: [[classic]] });
+}
+
+async function sendClassicReviews(env, uid) {
+  const albums = classicReviews(await archive(env));
+  const years = new Map();
+  for (const a of albums) {
+    const year = /^\d{4}/.exec(a.published || "")?.[0] || "Год обзора неизвестен";
+    if (!years.has(year)) years.set(year, []);
+    years.get(year).push(a);
+  }
+  const heading = reviewListHeading(env, "adore", "Альбомы CLASSIC", `${albumsWord(albums.length)} · по году обзора`);
+  return sendReviewList(env, uid, heading, [...years].map(([year, rows]) => [`<b>${year}</b>`, rows]));
 }
 
 // A search answers with a card, one artist's albums, a few albums, or a choice of artists first.
