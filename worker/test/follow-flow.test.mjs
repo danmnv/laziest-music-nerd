@@ -54,6 +54,11 @@ const FLOYD_GROUPS = [
   { id: "6a8f38c0-aad9-3615-bb6b-aa311f7c1cd3", title: "Live at Knebworth 1990", "first-release-date": "2003-05-29", "secondary-types": ["Live"] },
   { id: "df62e59f-048f-43dc-8844-5ee6b1c57645", title: "A Foot in the Door", "first-release-date": "2011-11-07", "secondary-types": ["Compilation"] },
 ].map((group) => ({ ...group, "primary-type": "Album" }));
+const LINKIN = "f59c5520-5f46-4d2c-b2c4-822eabf53419";
+const HYBRID_ALBUM = "b5b4bb4b-8ba5-3acf-88cb-4cae2699d8da";
+const HYBRID_EP = "ea2c867d-ee9f-4d84-bea1-53cfab453aed";
+const UNDERGROUND = "49abaf1e-b66c-3118-9cb6-cee53691b7df";
+const LINKIN_LIVE = "4db1d241-d2db-3033-9f73-88331f2faee1";
 let archiveRows;
 let mbDown = false;
 let mbPageDown = false;
@@ -149,6 +154,24 @@ beforeEach(() => {
     if (String(url).startsWith("https://musicbrainz.org/ws/2/artist?") && decodeURIComponent(String(url)).includes('artist:"Pink Floyd"')) {
       return Response.json({ artists: [{ name: "Pink Floyd", id: FLOYD }] });
     }
+    if (String(url).startsWith("https://musicbrainz.org/ws/2/artist?") && decodeURIComponent(String(url)).includes('artist:"Linkin Park"')) {
+      return Response.json({ artists: [{ name: "Linkin Park", id: LINKIN }] });
+    }
+    if (String(url).startsWith(`https://musicbrainz.org/ws/2/release-group?artist=${LINKIN}&`)) {
+      const rg = (id, title, date, type, secondary = []) =>
+        ({ id, title, "first-release-date": date, "primary-type": type, "secondary-types": secondary });
+      const groups = [
+        rg(HYBRID_EP, "Hybrid Theory", "1999", "EP"),
+        rg(HYBRID_ALBUM, "Hybrid Theory", "2000", "Album"),
+        rg(UNDERGROUND, "Underground V2.0", "2002", "EP"),
+        rg(LINKIN_LIVE, "Live in Texas", "2003", "Album", ["Live"]),
+      ];
+      return Response.json({ "release-group-count": groups.length, "release-groups": groups });
+    }
+    if (String(url).startsWith(`https://musicbrainz.org/ws/2/release-group/${HYBRID_EP}?`)) {
+      return Response.json({ title: "Hybrid Theory", "primary-type": "EP", "first-release-date": "1999",
+        "artist-credit": [{ name: "Linkin Park" }] });
+    }
     if (String(url).startsWith(`https://musicbrainz.org/ws/2/release-group?artist=${FLOYD}&`)) {
       return Response.json({ "release-group-count": FLOYD_GROUPS.length, "release-groups": FLOYD_GROUPS });
     }
@@ -171,6 +194,10 @@ beforeEach(() => {
     if (String(url).startsWith(`https://musicbrainz.org/ws/2/release-group/${BENDS}?inc=artist-credits`)) {
       return new Response(JSON.stringify({ id: BENDS, title: "The Bends", "first-release-date": "1995-03-13", "primary-type": "Album", "secondary-types": [],
         "artist-credit": [{ name: "Radiohead" }] }));
+    }
+    if (String(url).startsWith("https://api.deezer.com/search/album?") && decodeURIComponent(String(url)).includes("Hybrid Theory")) {
+      return Response.json({ data: [{ id: 79, title: "Hybrid Theory", artist: { name: "Linkin Park" },
+        record_type: "album", cover_xl: "https://cdn/studio-hybrid.jpg" }] });
     }
     if (String(url).startsWith("https://api.deezer.com/search/album?q=bilge%20rat&")) {
       return Response.json({ data: [{ id: 71, title: "Pal", artist: { name: "Bilge Rat" }, record_type: "album" }] });
@@ -612,8 +639,8 @@ test("an artist's albums without Fantano's review, and a card for one of them", 
     ["💿 Amnesiac · 2001", `mb:${AMNESIAC}`], // from the second page
     ["🟢 10/10 · Kid A · 2000", "a:k"], // MusicBrainz's year of the album, not the review's
     ["💿 The Bends · 1995", `mb:${BENDS}`],
-    ["💿 My Iron Lung · 1994 · EP", `mb:${LUNG}`],
     ["💿 Pablo Honey · 1993", `mb:${PABLO}`],
+    ["EP (1)", "de:k"],
     ["Ещё: концертные, сборники, ремиксы (2)", "dx:k"],
     ["🎬 Radiohead: от худшего к лучшему (2017)", "https://youtu.be/uu8sC7YDOZg"]]);
   calls = [];
@@ -623,6 +650,11 @@ test("an artist's albums without Fantano's review, and a card for one of them", 
   assert.deepEqual(extra.reply_markup.inline_keyboard.map((r) => [r[0].text, r[0].callback_data]), [
     ["💿 OK Computer OKNOTOK 1997 2017 · 2017 · сборник", `mb:${OKNOTOK}`],
     ["💿 TKOL RMX 1234567 · 2011 · ремиксы", `mb:${TKOL}`]]);
+  calls = [];
+  await press(OWNER, "de:k");
+  const ep = calls.find((c) => c.method === "sendMessage");
+  assert.equal(ep.text, "Radiohead — EP:");
+  assert.deepEqual(ep.reply_markup.inline_keyboard.flat(), [{ text: "💿 My Iron Lung · 1994 · EP", callback_data: `mb:${LUNG}` }]);
   calls = [];
   await press(OWNER, `mb:${BENDS}`);
   const c = calls.find((x) => x.method === "sendPhoto");
@@ -756,13 +788,18 @@ test("Pink Floyd still gets studio albums with first-release years when MusicBra
   assert.match(list.text, /^Pink Floyd — альбомы: Резервный список/);
   const albums = list.reply_markup.inline_keyboard.flat();
   assert.deepEqual(albums.map((b) => b.text), [
-    "💿 1965: Their First Recordings · 2015 · EP", "🟡 5/10 · The Endless River · 2014",
-    "💿 The Division Bell · 1994", "💿 Wish You Were Here · 1975", "💿 The Dark Side of the Moon · 1973",
+    "🟡 5/10 · The Endless River · 2014", "💿 The Division Bell · 1994", "💿 Wish You Were Here · 1975",
+    "💿 The Dark Side of the Moon · 1973", "EP (1)",
   ]);
   assert.ok(!fetched.some((u) => u.startsWith("https://api.deezer.com/")));
   const tap = (data) => tgUpdate({ callback_query: { id: "q", from: { id: OWNER }, data, message: list } }, isolatedWorker);
   calls = [];
-  await tap(albums[2].callback_data);
+  await tap(albums.at(-1).callback_data);
+  const eps = calls.find((c) => c.method === "sendMessage");
+  assert.match(eps.text, /^Pink Floyd — EP:/);
+  assert.equal(eps.reply_markup.inline_keyboard[0][0].text, "💿 1965: Their First Recordings · 2015 · EP");
+  calls = [];
+  await tap(albums[1].callback_data);
   const card = calls.find((c) => c.method === "sendMessage");
   assert.match(card.text, /^<b>Pink Floyd — The Division Bell<\/b> \(1994\)/);
   const later = card.reply_markup.inline_keyboard.flat().find((b) => /^m:wk[0-9a-f]+:later$/.test(b.callback_data || ""));
@@ -779,6 +816,35 @@ test("Pink Floyd still gets studio albums with first-release years when MusicBra
   calls = [];
   await say(OWNER, "/start " + saved.callback_data.replace(":", "_"), isolatedWorker);
   assert.match(calls.find((c) => c.method === "sendMessage").text, /The Division Bell<\/b> \(1994\)/);
+});
+
+test("Linkin Park keeps the same-title studio album, EP and concert releases in their own sections", async () => {
+  const { default: isolatedWorker } = await import("../src/index.js?linkin-park-sections");
+  archiveRows = [...ARCHIVE, { id: "hybrid", artist_name: "Linkin Park", album: "Hybrid Theory", published: "2020-10-24", score: 8 }];
+  await say(OWNER, "/start da_hybrid", isolatedWorker);
+  const main = calls.find((c) => c.method === "sendMessage");
+  assert.deepEqual(main.reply_markup.inline_keyboard.flat().map((b) => [b.text, b.callback_data]), [
+    ["🟢 8/10 · Hybrid Theory · 2000", "a:hybrid"], ["EP (2)", "de:hybrid"],
+    ["Ещё: концертные, сборники, ремиксы (1)", "dx:hybrid"],
+  ]);
+  const tap = (data) => tgUpdate({ callback_query: { id: "q", from: { id: OWNER }, data, message: main } }, isolatedWorker);
+  calls = [];
+  await tap("de:hybrid");
+  const ep = calls.find((c) => c.method === "sendMessage");
+  assert.deepEqual(ep.reply_markup.inline_keyboard.flat().map((b) => [b.text, b.callback_data]), [
+    ["💿 Underground V2.0 · 2002 · EP", `mb:${UNDERGROUND}`], ["💿 Hybrid Theory · 1999 · EP", `mb:${HYBRID_EP}`],
+  ]);
+  calls = [];
+  await tap("dx:hybrid");
+  const extra = calls.find((c) => c.method === "sendMessage");
+  assert.deepEqual(extra.reply_markup.inline_keyboard.flat(), [
+    { text: "💿 Live in Texas · 2003 · концерт", callback_data: `mb:${LINKIN_LIVE}` },
+  ]);
+  calls = [];
+  await tgUpdate({ callback_query: { id: "q", from: { id: OWNER }, data: `mb:${HYBRID_EP}`, message: ep } }, isolatedWorker);
+  assert.match(calls.find((c) => c.method === "sendMessage").text,
+    /^<b>Linkin Park — Hybrid Theory<\/b> \(1999\)\n⚪ Фантано не обозревал · EP/);
+  assert.ok(!fetched.some((u) => u.endsWith("/album/79")), "an EP does not get the studio album's artwork or tracks");
 });
 
 test("Madonna gets studio albums from the linked discography on a cold MusicBrainz failure", async () => {

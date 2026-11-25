@@ -140,12 +140,16 @@ async function wp(params, signal) {
   return r.ok ? r.json() : {};
 }
 
-const studioHeading = /^(?:(?:original|solo) )?studio albums?$/i;
+const canonicalStudio = /^(?:primary|main|core|standardi[sz]ed) studio albums?$/i;
+const studioHeading = /^(?:(?:original|solo|primary|main|core|standardi[sz]ed) )?studio albums?$/i;
 const discographyLines = (text) =>
   text.replace(/<!--[\s\S]*?-->|<ref\b[^>]*\/>|<ref\b[^>]*>[\s\S]*?<\/ref>/gi, "").split("\n");
-const albumTitle = (link) => link.split("|").at(-1).trim().replaceAll("&amp;", "&");
+const albumLink = (link) => {
+  const parts = link.split("|");
+  return { target: parts[0].trim(), title: parts.at(-1).trim().replaceAll("&amp;", "&") };
+};
 
-function discographyBullets(text) {
+function discographyBullets(text, allowed) {
   const albums = [];
   let kind = null;
   for (const line of discographyLines(text)) {
@@ -154,27 +158,31 @@ function discographyBullets(text) {
       const label = clean(heading[1]);
       kind = studioHeading.test(label) ? "" : /^(?:extended plays?|EPs)$/i.test(label) ? "EP" : null;
     }
-    if (kind === null) continue;
-    const row = /^\*\s*(?:'')?\[\[([^\]]+)\]\](?:'')?\s*\(((?:19|20)\d{2})\)\s*$/.exec(line);
-    if (row) albums.push({ title: albumTitle(row[1]), year: row[2], kind });
+    if (kind === null && !allowed) continue;
+    const row = /^\*\s*(?:'')?\[\[([^\]]+)\]\](?:'')?(?:\s*\([^()]*\))*\s*\(((?:19|20)\d{2})\)\s*$/.exec(line);
+    if (!row) continue;
+    const album = albumLink(row[1]);
+    if (kind !== null || allowed?.has(norm(album.target))) albums.push({ ...album, year: row[2], kind: kind || "" });
   }
   return albums;
 }
 
 function studioAlbumRows(text) {
   const albums = [];
-  let title;
+  let current;
   for (const line of discographyLines(text)) {
     const heading = /^\s*={2,6}\s*(.*?)\s*={2,6}\s*$/.exec(line);
     if (heading && !studioHeading.test(clean(heading[1]))) break;
-    if (/^\s*\|[-}]/.test(line)) title = undefined;
-    const album = /^\s*!\s*scope\s*=\s*["']?row["']?[^|]*\|.*?\[\[([^\]]+)\]\]/i.exec(line);
-    if (album) title = albumTitle(album[1]);
-    const date = /^\s*\*?\s*(?:released|release date):[^\n]*?\b((?:19|20)\d{2})\b/i.exec(line);
-    if (title && date) {
-      albums.push({ title, year: date[1], kind: "" });
-      title = undefined;
+    if (/^\s*\|[-}]/.test(line)) current = undefined;
+    const header = /^\s*!\s*scope\s*=\s*["']?row["']?[^|]*\|.*?\[\[([^\]]+)\]\]/i.exec(line);
+    const item = /^\*\s*(?:'')?\[\[([^\]]+)\]\](?:'')?/.exec(line);
+    if (header || item) {
+      const year = item && /\(((?:19|20)\d{2})\)\s*$/.exec(line)?.[1];
+      current = { ...albumLink((header || item)[1]), year, kind: "" };
+      albums.push(current);
     }
+    const date = /^\s*\*?\s*(?:released|release date):[^\n]*?\b((?:19|20)\d{2})\b/i.exec(line);
+    if (current && !current.year && date) current.year = date[1];
   }
   return albums;
 }
@@ -203,14 +211,18 @@ export async function wikiDiscography(artist) {
       if (!link) return [];
       const linked = (await wp({ action: "parse", page: link, redirects: "1", prop: "sections|revid" }, signal)).parse;
       if (!linked || !aliases.has(norm(linked.title))) return [];
-      const studio = await discographySection(linked, linked.sections?.find((x) => studioHeading.test(x.line)), signal);
-      albums = studioAlbumRows(studio);
+      const sections = linked.sections || [];
+      const studio = sections.find((x) => canonicalStudio.test(x.line)) || sections.find((x) => studioHeading.test(x.line));
+      const confirmed = studioAlbumRows(await discographySection(linked, studio, signal));
+      const withoutDate = new Set(confirmed.filter((a) => !a.year).map((a) => norm(a.target)));
+      // When the studio list omits dates, match the exact album links against the dated artist overview.
+      albums = [...confirmed.filter((a) => a.year), ...discographyBullets(text, withoutDate)];
     }
     const unique = new Map();
     for (const a of albums) {
-      if (a.title) unique.set(`${a.title.toLowerCase()}|${a.year}`, a);
+      if (a.title) unique.set(`${a.title.toLowerCase()}|${a.year}|${a.kind}`, a);
     }
-    return [...unique.values()].map((a, wiki) => ({ ...a, wiki }));
+    return [...unique.values()].map(({ title, year, kind }, wiki) => ({ title, year, kind, wiki }));
   } catch {
     return [];
   }
