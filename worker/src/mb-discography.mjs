@@ -18,6 +18,11 @@ export async function takeMusicBrainzSlot(db) {
   return false;
 }
 
+export async function deferMusicBrainzSlot(db, timestamp) {
+  await db.prepare("UPDATE settings SET value=? WHERE key='mb:discography-next' AND CAST(value AS INTEGER)<?")
+    .bind(String(timestamp), timestamp).run();
+}
+
 // Cache the complete browse result, or an official-only indexed result when
 // there is no complete browse result. Merge new reviews after reading the cache.
 export async function musicBrainzCatalog(db, key, mbid, load) {
@@ -47,7 +52,7 @@ export async function musicBrainzCatalog(db, key, mbid, load) {
     }
   }
 
-  const fresh = await load(mbid || cached?.mbid, Boolean(cached?.complete));
+  const fresh = await load(mbid || cached?.mbid, cached);
   const save = fresh?.groups.length && (fresh.complete || (fresh.indexed && !cached?.complete));
   if (!save) return cached ? { ...cached, stale: true } : fresh;
   if (key) {

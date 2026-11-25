@@ -57,6 +57,7 @@ const FLOYD_GROUPS = [
 let archiveRows;
 let mbDown = false;
 let mbPageDown = false;
+let mbRetrySeconds = null;
 let mbTimes;
 let longBrief = null; // a brief too long for a photo's caption
 let rtMoods = null; // the archive brief's mood guess for Kid A, when a test needs another
@@ -73,6 +74,7 @@ beforeEach(() => {
   sendToTelegram = null;
   mbDown = false;
   mbPageDown = false;
+  mbRetrySeconds = null;
   mbTimes = [];
   archiveRows = ARCHIVE;
   longBrief = null;
@@ -133,6 +135,11 @@ beforeEach(() => {
       return new Response("busy", { status: 503 });
     }
     if (String(url).startsWith("https://musicbrainz.org/ws/2/release-group?query=") && decodeURIComponent(String(url)).includes('artistname:"Bilge Rat"')) {
+      if (mbRetrySeconds != null) {
+        const headers = { "Retry-After": String(mbRetrySeconds) };
+        mbRetrySeconds = null;
+        return new Response("busy", { status: 503, headers });
+      }
       const rg = (title, name, id) => ({ id: "2b1384fe-d43e-42e1-9464-818beb9002cc", title, "first-release-date": "2018",
         "primary-type": "Album", "secondary-types": [], "artist-credit": [{ artist: { id, name } }] });
       return Response.json({ count: 2, "release-groups": [
@@ -208,6 +215,38 @@ beforeEach(() => {
     }
     if (String(url).startsWith("https://en.wikipedia.org/w/api.php") && String(url).includes("action=parse")) {
       const q = new URL(url).searchParams;
+      if (q.get("page") === "Madonna") return Response.json({ parse: {
+        title: "Madonna", revid: 81, sections: [{ line: "Discography", index: "20" }],
+      } });
+      if (q.get("oldid") === "81" && q.get("section") === "20") return Response.json({ parse: { wikitext: `
+== Discography ==
+{{Main|Madonna albums discography|Madonna singles discography}}
+* ''[[Ray of Light]]'' (1998)
+* ''[[Like a Virgin (album)|Like a Virgin]]'' (1984)
+` } });
+      if (q.get("page") === "Madonna albums discography") return Response.json({ parse: {
+        title: "Madonna albums discography", revid: 82, sections: [{ line: "Studio albums", index: "2" }, { line: "Live albums", index: "3" }],
+      } });
+      if (q.get("oldid") === "82" && q.get("section") === "2") return Response.json({ parse: { wikitext: `
+===Studio albums===
+{| class="wikitable"
+|-
+! scope="row"| ''[[Ray of Light]]''
+|
+* Released: February 22, 1998<ref>Published in 2024</ref>
+|-
+! scope="row"| ''[[Like a Virgin (album)|Like a Virgin]]''
+|
+* Released: November 12, {{start date|1984|11|12}}
+|}
+====Live albums====
+{| class="wikitable"
+|-
+! scope="row"| ''[[Live in Detroit]]''
+|
+* Released: 2024
+|}
+` } });
       if (q.get("page") === "Pink Floyd") return Response.json({ parse: {
         title: "Pink Floyd", revid: 42, sections: [{ line: "Discography", index: "10" }],
       } });
@@ -635,6 +674,23 @@ test("the indexed MusicBrainz search gives a new artist's albums during an artis
   assert.deepEqual(calls.find((c) => c.method === "sendMessage").reply_markup, message.reply_markup);
 });
 
+test("a cold indexed lookup retries once after the upstream Retry-After", async () => {
+  mbRetrySeconds = 1;
+  await say(OWNER, "bilge rat");
+  const list = calls.find((c) => c.method === "sendMessage");
+  assert.equal(list.reply_markup.inline_keyboard[0][0].text, "💿 Pal · 2018");
+  assert.equal(mbTimes.length, 3);
+  assert.ok(mbTimes[2] - mbTimes[1] >= 1000);
+});
+
+test("a long Retry-After moves the shared slot without another MusicBrainz call", async () => {
+  mbRetrySeconds = 60;
+  await say(OWNER, "bilge rat");
+  assert.equal(mbTimes.length, 2);
+  const next = db.prepare("SELECT value FROM settings WHERE key='mb:discography-next'").get().value;
+  assert.ok(Number(next) - Date.now() > 50000);
+});
+
 test("MusicBrainz pages are paced, and incomplete refreshes keep the previous complete list", async () => {
   await press(OWNER, "da:k");
   const first = calls.find((c) => c.method === "sendMessage");
@@ -723,6 +779,20 @@ test("Pink Floyd still gets studio albums with first-release years when MusicBra
   calls = [];
   await say(OWNER, "/start " + saved.callback_data.replace(":", "_"), isolatedWorker);
   assert.match(calls.find((c) => c.method === "sendMessage").text, /The Division Bell<\/b> \(1994\)/);
+});
+
+test("Madonna gets studio albums from the linked discography on a cold MusicBrainz failure", async () => {
+  const { default: isolatedWorker } = await import("../src/index.js?madonna-outage");
+  archiveRows = [...ARCHIVE, { id: "light", artist_name: "Madonna", album: "Ray of Light", published: "2026-01-16", classic: true }];
+  mbDown = true;
+  await say(OWNER, "/start da_light", isolatedWorker);
+  const list = calls.find((c) => c.method === "sendMessage");
+  assert.match(list.text, /^Madonna — альбомы: Резервный список/);
+  assert.deepEqual(list.reply_markup.inline_keyboard.flat().map((b) => b.text), [
+    "🟢 CLASSIC · Ray of Light · 1998", "💿 Like a Virgin · 1984",
+  ]);
+  assert.ok(fetched.some((u) => u.includes("oldid=82&section=2")));
+  assert.ok(!fetched.some((u) => u.includes("oldid=82&section=3")));
 });
 
 test("an artist found outside the archive opens the discography or shows that it is unavailable", async () => {

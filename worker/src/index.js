@@ -11,7 +11,7 @@ import { criticsText } from "./critics.mjs";
 import { remapStatements } from "./dups.mjs";
 import { unpack, plain, artistKey, order, sharedTags } from "./archive.mjs";
 import { wikiCritics, wikiDiscography } from "./wiki.mjs";
-import { DISCOGRAPHY_RETENTION, musicBrainzCatalog, takeMusicBrainzSlot } from "./mb-discography.mjs";
+import { DISCOGRAPHY_RETENTION, deferMusicBrainzSlot, musicBrainzCatalog, takeMusicBrainzSlot } from "./mb-discography.mjs";
 import { startLink, openFromStart } from "./links.mjs";
 import { PAGE, OLD_DAYS, QFROM_MINUTES, lastHeard, after, before, nextAfter, laterReviews, daysOld, line as queueLine } from "./queue.mjs";
 import { searchArchive } from "./search.mjs";
@@ -980,21 +980,33 @@ async function deezerJson(path) {
 
 const UA = "LaziestMusicNerd/1.0 (https://github.com/danmnv/laziest-music-nerd)";
 
-async function mbJson(env, path, stage) {
+function retryAfterMillis(r) {
+  const value = r.headers.get("Retry-After");
+  const delay = /^\d+$/.test(value || "") ? Number(value) * 1000 : Date.parse(value) - Date.now();
+  return Number.isFinite(delay) ? Math.max(0, delay) : 0;
+}
+
+async function mbJson(env, path, stage, retry = false) {
+  const url = `https://musicbrainz.org/ws/2/${path}${path.includes("?") ? "&" : "?"}fmt=json`;
   try {
-    if (!await takeMusicBrainzSlot(env.DB)) {
-      console.warn("MusicBrainz discography", stage, "queue busy");
-      return null;
-    }
-    const r = await fetch(`https://musicbrainz.org/ws/2/${path}${path.includes("?") ? "&" : "?"}fmt=json`,
-      { headers: { "User-Agent": UA, Accept: "application/json" }, signal: AbortSignal.timeout(4500),
+    for (let attempt = 0; attempt < (retry ? 2 : 1); attempt++) {
+      if (!await takeMusicBrainzSlot(env.DB)) {
+        console.warn("MusicBrainz discography", stage, "queue busy");
+        return null;
+      }
+      const r = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" }, signal: AbortSignal.timeout(4500),
         cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 86400, "300-599": -1 } } });
-    if (!r.ok) console.warn("MusicBrainz", stage, r.status);
-    return r.ok ? await r.json() : null;
+      if (r.ok) return await r.json();
+      console.warn("MusicBrainz", stage, r.status);
+      if (r.status !== 429 && r.status !== 503) return null;
+      const delay = retryAfterMillis(r);
+      if (delay) await deferMusicBrainzSlot(env.DB, Date.now() + delay);
+      if (!delay || delay > 2000) return null;
+    }
   } catch (e) {
     console.warn("MusicBrainz", stage, e?.name);
-    return null;
   }
+  return null;
 }
 
 const KIND_RU = { Live: "концерт", Compilation: "сборник", Remix: "ремиксы", Soundtrack: "саундтрек", "DJ-mix": "диджей-микс",
@@ -1033,11 +1045,11 @@ async function loadMusicBrainzGroups(env, artistName, mbid) {
 }
 
 // The indexed search can work when the artist lookup or the browse endpoint is busy.
-async function searchMusicBrainzGroups(env, artistName, mbid) {
+async function searchMusicBrainzGroups(env, artistName, mbid, retry) {
   const key = fullName(artistName);
   const artist = mbid ? `arid:${mbid}` : `artistname:${mbPhrase(artistName)}`;
   const query = `${artist} AND (primarytype:album OR primarytype:ep) AND status:official`;
-  const d = await mbJson(env, `release-group?query=${encodeURIComponent(query)}&limit=100`, "release-group search");
+  const d = await mbJson(env, `release-group?query=${encodeURIComponent(query)}&limit=100`, "release-group search", retry);
   if (!key || !Array.isArray(d?.["release-groups"]) || (!mbid && d.count > d["release-groups"].length)) return null;
   const byArtist = new Map();
   for (const group of d["release-groups"]) {
@@ -1056,10 +1068,10 @@ async function searchMusicBrainzGroups(env, artistName, mbid) {
 // MusicBrainz release groups carry the first-release year and the secondary
 // types used to keep studio albums and EPs separate from extras.
 async function otherAlbums(env, arch, artistName, mbid) {
-  const catalog = await musicBrainzCatalog(env.DB, fullName(artistName), mbid, async (id, haveComplete) => {
+  const catalog = await musicBrainzCatalog(env.DB, fullName(artistName), mbid, async (id, snapshot) => {
     const found = await loadMusicBrainzGroups(env, artistName, id);
-    if (haveComplete || found?.groups.length || found?.complete) return found;
-    return searchMusicBrainzGroups(env, artistName, found?.mbid || id);
+    if (snapshot?.complete || found?.groups.length || found?.complete) return found;
+    return searchMusicBrainzGroups(env, artistName, found?.mbid || id, !snapshot);
   });
   if (!catalog) return null;
   const k = nameKey(artistName);
