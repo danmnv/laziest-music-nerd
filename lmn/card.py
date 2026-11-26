@@ -5,7 +5,7 @@ import re
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 
-from . import gemini, tnd
+from . import gemini, links, tnd
 from .colors import EMOJI, color, label
 
 CAPTION_LIMIT = 1024
@@ -118,7 +118,7 @@ def nth_line(r):
 
 
 def _caption(r, ai, limit, drop=()):
-    name = f"{e(r['artist_name'])} — {e(r['album'])}"
+    name = f"{e(r['artist_name'])} — {e(links.self_titled(r['artist_name'], r['album']))}"
     # plain text, not a link to the site: a link's text can't be copied in Telegram (owner, 2026-11-02); the year as
     # on the bot's card
     lines = [f"<b>{name}</b>" + (f" ({r['year']})" if r.get("year") else "")]
@@ -344,8 +344,9 @@ STATUS = {"done": " ✓", "later": " ⏳", "nope": " ✗"}  # the same in worker
 
 
 def list_line(r, status=None):
+    title = links.self_titled(r["artist_name"], r["album"])
     parts = [f"{EMOJI[color(r.get('score'), r.get('not_good'), r.get('classic'))]} {label(r.get('score'), r.get('not_good'), r.get('classic'))}",
-             f'<a href="{list_url(r)}">{e(r["artist_name"])} — {e(r["album"])}</a>']
+             f'<a href="{list_url(r)}">{e(r["artist_name"])} — {e(title)}</a>']
     if tnd.genres(r):
         parts.append(e(tnd.genres(r)[0]))
     if r.get("type") in TYPE_RU:

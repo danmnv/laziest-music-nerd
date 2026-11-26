@@ -65,6 +65,8 @@ def missing(r):
         out.append("about")  # the site's longer brief: cards posted before 2026-11-02 lost it (enrich left it out)
     if not r.get("tracks") or not r.get("duration_min"):
         out.append("tracks")
+    if not r.get("track") and not any(url != r.get("thumb") for url in r.get("covers") or []):
+        out.append("cover")
     if not links.get("songlink"):
         out.append("songlink")
     if "bandcamp.com/search" in (links.get("bandcamp") or ""):
@@ -91,9 +93,9 @@ def fill(r, fresh):
     for k, v in (fresh.get("ai") or {}).items():
         if v and not ai.get(k):
             ai[k] = v
-    if fresh.get("tracks") and not r.get("tracks"):
-        # the album itself found later on Deezer or Apple (a single only before it, links.fits): its cover first; the channel post's
-        # picture is replaced at the next edit (check.edit_card)
+    only_thumb = not any(url != r.get("thumb") for url in r.get("covers") or [])
+    if only_thumb or (fresh.get("tracks") and not r.get("tracks")):
+        # A streaming cover found later takes priority and the channel photo is edited in place.
         new = [c for c in fresh.get("covers") or [] if "dzcdn.net" in c or "deezer" in c or "mzstatic.com" in c]
         if new and new[0] not in (r.get("covers") or [])[:1]:
             r["covers"] = new[:1] + [c for c in r.get("covers") or [] if c != new[0]]

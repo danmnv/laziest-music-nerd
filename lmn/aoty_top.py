@@ -147,10 +147,23 @@ def reviewed(archive, top):
     for a in archive:
         if a.get("track") or not a.get("artist_name") or not a.get("album"):
             continue
-        e = top.get(key(a["artist_name"], a["album"]))
-        title = links.album_title_key(a["album"])
-        if e and title and links.album_title_key(e.get("t")) == title:
-            out[a["id"]] = e
+        artist, title = a["artist_name"], a["album"]
+        for candidate in dict.fromkeys((title, links.self_titled(artist, title))):
+            e = top.get(key(artist, candidate))
+            if e and links.album_title_key(e.get("t")) == links.album_title_key(candidate):
+                out[a["id"]] = e
+                break
+    return out
+
+
+def with_tracklist(album, entry):
+    """Use the imported tracklist when the catalogue has no tracklist for this release."""
+    tracks = (entry or {}).get("tr")
+    if not tracks or (album or {}).get("t"):
+        return album
+    out = dict(album or {}, t=tracks)
+    if not out.get("min") and all(sec for _, sec in tracks):
+        out["min"] = round(sum(sec for _, sec in tracks) / 60)
     return out
 
 

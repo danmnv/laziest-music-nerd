@@ -4,7 +4,7 @@ import re
 import unittest
 from unittest import mock
 
-from lmn import card, enrich as enrich_mod, gemini, http, tnd
+from lmn import card, enrich as enrich_mod, gemini, http, musicbrainz, tnd
 
 
 def post(title, tags):
@@ -167,7 +167,28 @@ class EnrichSourceFailureTest(unittest.TestCase):
             r = enrich_mod.enrich(rev, "text", [], use_ai=False)
         self.assertEqual(mbf.call_args.args, ("Pain of Truth", "Pain of Truth"))
         self.assertEqual(dzf.call_args.args, ("Pain of Truth", "Pain of Truth"))
-        self.assertEqual(r["album"], "Self-Titled")  # the card keeps Fantano's wording
+        self.assertEqual(r["album"], "Self-Titled")
+        self.assertIn("<b>Pain of Truth — Pain of Truth</b>", card.caption(r))
+
+    def test_exact_apple_id_bypasses_a_same_title_search_miss(self):
+        rev = tnd.parse_post(post("Pain of Truth - Self-Titled", ["Album Reviews", "6/10"]))
+        page = "https://music.apple.com/us/album/pain-of-truth/6788077035"
+        tracks = [{"title": "Obliteration", "sec": 160}, {"title": "Done For", "sec": 171}]
+        rg = {"rg_id": "rg", "artist_id": "artist", "releases": ["release"]}
+        release = {"relations": [{"url": {"resource": "https://music.apple.com/us/album/pain-of-truth/6788077035?i=3"}},
+                                 {"url": {"resource": page}}], "media": [{"tracks": [
+                                     {"title": track["title"], "length": track["sec"] * 1000} for track in tracks]}]}
+        with mock.patch.object(enrich_mod.mb, "find_release_group", return_value=rg), \
+                mock.patch.object(musicbrainz, "_get", return_value=release), \
+                mock.patch.object(enrich_mod.mb, "artist_info", return_value={}), \
+                mock.patch.object(enrich_mod.links, "deezer_album", return_value=None), \
+                mock.patch.object(enrich_mod.links, "apple_album") as apple_search, \
+                mock.patch.object(enrich_mod.links, "apple_tracks", return_value={"tracks": tracks, "cover": "https://apple/cover"}) as lookup:
+            r = enrich_mod.enrich(rev, "", [], use_ai=False)
+        apple_search.assert_not_called()
+        lookup.assert_called_once_with(page, "Pain of Truth", "Pain of Truth")
+        self.assertEqual(r["tracks"], tracks)
+        self.assertEqual(r["covers"][0], "https://apple/cover")
 
     def test_bandcamp_pages_are_never_opened(self):
         # Bandcamp's Acceptable Use Policy forbids reading its pages with scripts (2026-11-02): the link stays, no request

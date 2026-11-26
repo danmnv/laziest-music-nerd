@@ -9,7 +9,7 @@ import unicodedata
 import urllib.parse
 from pathlib import Path
 
-from . import aoty, aoty_top, card, decade_tens, editions, gemini, ratings, specials, tnd
+from . import aoty, aoty_top, card, decade_tens, editions, enrich, gemini, links, ratings, specials, tnd
 from .colors import color, label
 from .musicbrainz import norm
 from .notes import is_miss
@@ -528,8 +528,9 @@ def build():
         series = series_by_id.get(a["id"])
         cached_album = albums.get(a["id"])
         album_data = deezer_found(cached_album) or (series or {}).get("album") or cached_album
-        album = deezer_found(album_data)
-        names = [(a["artist_name"], a["album"]), *((series or {}).get("catalog_names") or ())]
+        album = aoty_top.with_tracklist(deezer_found(album_data), top_hits.get(a["id"]) if not corrected else None)
+        title = links.self_titled(a["artist_name"], a["album"])
+        names = [(a["artist_name"], title), (a["artist_name"], a["album"]), *((series or {}).get("catalog_names") or ())]
         catalog_date = variant_dates.get(a["id"]) or next(
             (catalog_dates[k] for artist, title in names if (k := aoty_top.release_identity(artist, title)) in catalog_dates), None)
         year = release_year(a, album_data, nt, catalog_date)
@@ -547,16 +548,19 @@ def build():
             br = {**br, **{k: gemini.drop_score(br[k]) for k in ("brief", "about") if br.get(k)}}
         if (a.get("ai") or {}).get("brief"):
             a = {**a, "ai": {**a["ai"], **{k: gemini.drop_score(a["ai"][k]) for k in ("brief", "about") if a["ai"].get(k)}}}
-        html_ = (release_page(a, rt, artists.get((a.get("artist") or {}).get("mbid") or ""), li, nt, br, by_artist[slug(a["artist_name"])], series, year=year)
+        rendered = dict(a, album=title)
+        if a["id"] in enriched and not a.get("track"):
+            enrich.apply_album_data(rendered, album)
+        html_ = (release_page(rendered, rt, artists.get((a.get("artist") or {}).get("mbid") or ""), li, nt, br, by_artist[slug(a["artist_name"])], series, year=year)
                  if a["id"] in enriched
-                 else archive_page(a, by_artist[slug(a["artist_name"])], rt, li, nt, br, album, series, year=year))
+                 else archive_page(rendered, by_artist[slug(a["artist_name"])], rt, li, nt, br, album, series, year=year))
         (OUT / "r" / f"{a['id']}.html").write_text(html_)
         crit, sales = critics_parts(rt)
         nt = nt or {}
         bf = series["brief"] if series_brief else (a.get("ai") or {}).get("brief") or (br or {}).get("brief")
         bm = (br or {}).get("moods") if not (a.get("ai") or {}).get("moods") else None  # the bot's mood vote for archive cards
         who = (a.get("ai") or {}).get("who") or (br or {}).get("who")  # the bot's card has «Кто» too (owner, 2026-11-08)
-        al = card_album(a, album, year) if a["id"] not in enriched else None
+        al = card_album(a, album, year) if not a.get("track") else None
         if not al and a["id"] not in enriched and is_miss(album_data or albums.get(a["id"])):
             al = {"miss": 1}  # looked up and not found (or only a single, links.fits): the bot doesn't search Deezer live
         # the bot's critics line: the channel card's (card.critics_from: 3 outlets, Metacritic, AOTY), the same on both

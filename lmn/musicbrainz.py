@@ -85,22 +85,28 @@ def cover_url(rg_id):
 
 def release_details(release_ids):
     """Duration (minutes), tracklist and Bandcamp / smart-link URLs from the first release with full track lengths."""
-    out = {"duration_min": None, "bandcamp": None, "smartlink": None, "tracks": None}
+    out = {"duration_min": None, "bandcamp": None, "smartlink": None, "apple": None, "tracks": None}
     for rid in release_ids[:3]:
         try:
             d = _get(f"release/{rid}", inc="recordings+url-rels")
         except http.HttpError:
             continue
+        apple = None
         for rel in d.get("relations", []):
             u = (rel.get("url") or {}).get("resource", "")
+            if not apple and re.fullmatch(r"https://music\.apple\.com/[a-z]{2}/album/(?:[^/?]+/)?\d+(?:\?[^#]*)?", u):
+                apple = u.split("?")[0]
             if "bandcamp.com" in u and not out["bandcamp"]:
                 out["bandcamp"] = u
             if not out["smartlink"] and is_smartlink(u):
                 out["smartlink"] = u
         tracks = [t for m in d.get("media", []) for t in m.get("tracks", [])]
         if not out["duration_min"] and tracks and all(t.get("length") for t in tracks):
+            out["apple"] = apple  # the streaming ID for the edition that supplied the tracklist
             out["duration_min"] = round(sum(t["length"] for t in tracks) / 60000)
             out["tracks"] = [{"title": t.get("title") or (t.get("recording") or {}).get("title"), "sec": round(t["length"] / 1000)} for t in tracks]
+        elif not out["tracks"] and apple and not out["apple"]:
+            out["apple"] = apple
         if out["duration_min"] and out["bandcamp"]:
             break
     return out

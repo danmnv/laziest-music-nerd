@@ -76,6 +76,33 @@ class AlbumEditionTest(unittest.TestCase):
                     covers.add(rt["al"]["cv"])
             self.assertEqual(len(covers), len(examples))
 
+    def test_incomplete_saved_card_uses_the_imported_album_and_keeps_its_review(self):
+        a = {"id": "pot", "artist_name": "Pain of Truth", "album": "Self-Titled", "published": "2026-10-05T11:40:08Z",
+             "url": "https://example.com/review", "score": 6}
+        full = {**a, "thumb": "https://example.com/video.jpg", "covers": ["https://example.com/video.jpg"],
+                "links": {"bandcamp": "https://label.bandcamp.com/album/pain-of-truth"}}
+        title = "Pain of Truth"
+        imported = {"a": title, "t": title, "tr": [["Obliteration", 160], ["Done For", 171]], "d": "2026-09-25"}
+        top = {aoty_top.key(title, title): imported}
+        self.assertEqual(aoty_top.reviewed([a], top), {"pot": imported})
+        self.assertEqual(aoty_top.reviewed([{**a, "album": "Self-Titled (Gold)"}], top), {})
+        with tempfile.TemporaryDirectory() as tmp:
+            data, out = Path(tmp, "data"), Path(tmp, "site")
+            data.mkdir()
+            for name, value in (("archive", [a]), ("reviews", [full]), ("aoty_top", top),
+                                ("albums", {"pot": {"cv": "https://example.com/album.jpg"}})):
+                (data / f"{name}.json").write_text(json.dumps(value))
+            with patch.multiple(site, DATA=data, OUT=out):
+                site.build()
+            al = json.loads((out / "rt/pot.json").read_text())["al"]
+            page = (out / "r/pot.html").read_text()
+        self.assertEqual(al, {"cv": "https://example.com/album.jpg", "min": 6, "t": imported["tr"], "y": "2026"})
+        self.assertIn(" — Pain of Truth", page)
+        self.assertIn("Obliteration", page)
+        self.assertIn(full["links"]["bandcamp"], page)
+        self.assertIn(al["cv"], page)
+        self.assertNotIn(full["thumb"], page)
+
     def test_april_fools_videos_use_the_album_actually_discussed(self):
         nav, ye, portals, skit = ("67ec9e8ba176bb07ab370e71", "69cdd0bac4ab5e049cd37b65",
                                   "6684c6e049ea2a054e0b032f", "660b120d5808d110dcffb2af")

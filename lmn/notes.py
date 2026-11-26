@@ -136,18 +136,21 @@ def fallback(artist, album, known=None, named=None, apple=None):
     keep = {k: known[k] for k in FALLBACK if isinstance(known, dict) and is_miss(known) and known.get(k)}
     if keep.get("cv") and keep.get("t"):
         return {**keep, "fb": 1}
-    # Check the cached Apple link's album before using its tracklist or artwork.
-    am = links.apple_tracks(apple, artist, album) if apple else None
-    if am and links.fits(named, am.get("tracks")):
+    def add_apple(url):
+        am = links.apple_tracks(url, artist, album) if url else None
+        if not am or not links.fits(named, am.get("tracks")):
+            return
         if am.get("tracks") and not keep.get("t"):
             keep["t"] = [[t["title"], t["sec"] or 0] for t in am["tracks"]]
             if all(t["sec"] for t in am["tracks"]):
                 keep["min"] = round(sum(t["sec"] for t in am["tracks"]) / 60)
         if am.get("cover") and not keep.get("cv"):
             keep["cv"] = am["cover"]
-        if keep.get("cv") and keep.get("t"):
-            return {**keep, "fb": 1}
-    rg = musicbrainz.find_release_group(artist, album)
+
+    add_apple(apple)
+    if keep.get("cv") and keep.get("t"):
+        return {**keep, "fb": 1}
+    rg = musicbrainz.find_release_group(artist, links.self_titled(artist, album))
     if not rg:
         return {**keep, "fb": 1}
     keep["mb"] = rg["rg_id"]
@@ -162,9 +165,12 @@ def fallback(artist, album, known=None, named=None, apple=None):
                 keep["cv"] = (th.get("1200") or th.get("large") or front.get("image") or "").replace("http://", "https://") or None
         except Exception as e:  # 404: no art for it; 503: the archive is busy, asked again at the next miss
             print(f"  ! cover art {artist} - {album}: {e}", file=sys.stderr)
-    if not keep.get("t"):
+    if not (keep.get("cv") and keep.get("t")):
         d = musicbrainz.release_details(rg.get("releases") or [])
-        if d.get("tracks") and links.fits(named, d["tracks"]):
+        apple_url = d.get("apple")
+        if apple_url != apple:
+            add_apple(apple_url)
+        if not keep.get("t") and d.get("tracks") and links.fits(named, d["tracks"]):
             keep["t"] = [[t["title"] or "", t["sec"] or 0] for t in d["tracks"]]
             keep["min"] = d.get("duration_min")
     return {**{k: v for k, v in keep.items() if v}, "fb": 1}
