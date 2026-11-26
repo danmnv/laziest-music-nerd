@@ -163,3 +163,34 @@ test("reviews.json: 304 while unchanged, the new file as soon as it changes", as
   assert.deepEqual(unchanged, []);
   mock.timers.reset();
 });
+
+test("a saved card fills missing tracks and replaces a video thumbnail from verified catalogue data", async () => {
+  const thumb = "https://cover.example/video.jpg";
+  const cover = "https://cover.example/album.jpg";
+  const a = { ...review("pot", "Self-Titled (Gold)"), artist_name: "Band" };
+  const card = { ...a, thumb, covers: [thumb], links: {
+    apple: "https://music.apple.com/us/album/123",
+    youtube_album: "https://www.youtube.com/playlist?list=original",
+  } };
+  files = {
+    "reviews.json": { body: JSON.stringify([card]) },
+    "archive.min.json": { body: JSON.stringify(pack([a])) },
+    "pot.json": { body: JSON.stringify({ al: { cv: cover, min: 6, t: [["Track one", 160], ["Track two", 170]] } }) },
+  };
+
+  await search("/start a_pot");
+  const message = sent.find((msg) => msg.photo || msg.link_preview_options?.url);
+  assert.equal(message?.photo || message?.link_preview_options?.url, cover);
+  const caption = message?.caption || message?.text;
+  assert.match(caption, /Band — Band \(Gold\)/);
+  assert.match(caption, /Track one/);
+  assert.match(caption, /Track two/);
+  assert.ok(caption.includes(card.links.youtube_album));
+  assert.ok(caption.includes(card.links.apple));
+  assert.ok(!asked.some((name) => name.includes("q=")));
+
+  await search("/start t_pot");
+  const text = sent.find((msg) => msg.text?.includes("Track one"))?.text;
+  assert.match(text, /Band — Band \(Gold\)/);
+  assert.match(text, /Track two/);
+});

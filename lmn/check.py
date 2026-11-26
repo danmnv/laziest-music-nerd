@@ -12,9 +12,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import card, decade_tens, http, refresh, tnd, watch, youtube
+from . import aoty_top, card, decade_tens, http, refresh, tnd, watch, youtube
 from .colors import EMOJI, color
-from .enrich import archive_entry, enrich
+from .enrich import apply_album_data, archive_entry, enrich
 from .telegram import Telegram
 
 DATA = Path(os.environ.get("DATA_DIR", "data"))
@@ -106,7 +106,7 @@ def refresh_cards(reviews, posts, archive, tg, channel, started):
         # a post sent with an older layout keeps it: the data is still filled in (for the site and the bot), the post
         # isn't edited (owner, 2026-11-08: «уже опубликованные в канале не надо переписывать»)
         same_layout = r.get("card_v") == card.CARD_V
-        stale = bool(r.get("tg_channel_msg")) and same_layout and refresh.shown(r, wl) != r.get("tg_shown")
+        stale = bool(r.get("tg_channel_msg")) and same_layout and (r.get("new_cover") or refresh.shown(r, wl) != r.get("tg_shown"))
         if not (need or stale):  # complete and posted as it is: nothing to do, nothing to write
             continue
         if looked >= refresh.MAX_PER_RUN or time.monotonic() - started > TIME_BUDGET_SEC:
@@ -121,7 +121,7 @@ def refresh_cards(reviews, posts, archive, tg, channel, started):
                 print(f"refresh {r['id']}: enrich failed ({type(ex).__name__}: {str(ex)[:200]})")
         if (r.get("ai") or {}).get("brief") or stage == refresh.LAST:
             r.pop("brief_pending", None)  # written, or the last try: the card stops promising it
-        if r.get("tg_channel_msg") and same_layout and refresh.shown(r, wl) != r.get("tg_shown"):
+        if r.get("tg_channel_msg") and same_layout and (r.get("new_cover") or refresh.shown(r, wl) != r.get("tg_shown")):
             if not tg:
                 print("---- edit ----\n" + card.caption(r))
             else:
@@ -313,6 +313,8 @@ def main():
         new = new[-int(os.environ["DRY_LIMIT"]):]
     print(f"{len(new)} new review(s), {sum(i['card'] for i in new)} with a card{' (seeding)' if seeding else ''}")
     done, cards, failed = 0, 0, None
+    album_cache = load("albums.json", {}) if new else {}
+    imported = aoty_top.reviewed([item["rev"] for item in new], load("aoty_top.json", {})) if new else {}
     ratings = load("ratings.json", {})
     quiet = quiet_now()
     for item in new:
@@ -335,6 +337,8 @@ def main():
         except Exception as ex:  # a broken source must not stop the card
             print(f"enrich failed for {rev['id']} ({type(ex).__name__}: {str(ex)[:200]}), posting a bare card")
             r = bare(rev)
+        if not r.get("track"):
+            apply_album_data(r, aoty_top.with_tracklist(album_cache.get(r["id"]), imported.get(r["id"])))
         if item["card"]:
             cards += 1
             refresh.add_critics(r, ratings)

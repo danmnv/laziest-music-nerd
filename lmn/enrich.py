@@ -34,9 +34,7 @@ def enrich(rev, plaintext, archive, use_ai=True):
         r["artist_name"], r["album"] = ai["artist"], ai.get("album")
     if not r.get("artist_name"):
         r["artist_name"], r["album"] = r["title"], ""
-    artist, album = r["artist_name"], r["album"] or ""
-    if mb.norm(album) == "selftitled":  # Fantano's name for an album titled after the artist (seen: Pain of Truth)
-        album = artist
+    artist, album = r["artist_name"], links.self_titled(r["artist_name"], r["album"]) or ""
 
     rg = _try("musicbrainz search", lambda: mb.find_release_group(artist, album)) if album else None
     r["artist"] = {}
@@ -47,12 +45,14 @@ def enrich(rev, plaintext, archive, use_ai=True):
     if found.get("release_page"):  # the artist's or label's own page with every service beats album.link
         r["links"]["songlink"] = found["release_page"]
     rg_cover = bool(rg)
+    apple_for_edition = None
     if rg:
         r["mb_release_group"] = rg["rg_id"]
-        det = _try("musicbrainz release", lambda: mb.release_details(rg["releases"]), {})
+        det = _try("musicbrainz release", lambda: mb.release_details(rg["releases"]), {}) or {}
         if links.fits(named_tracks(r), det.get("tracks")):
             r["duration_min"] = det.get("duration_min")
             r["tracks"] = det.get("tracks")
+            apple_for_edition = det.get("apple")
         else:  # MusicBrainz found a single of that name: not its cover either
             print(f"musicbrainz: {rg['rg_id']} has {len(det['tracks'])} tracks, not the album Fantano reviewed: no cover from it")
             rg_cover = False
@@ -79,14 +79,14 @@ def enrich(rev, plaintext, archive, use_ai=True):
     # scripts (read 2026-11-02; the owner). An album missing from MusicBrainz and Deezer waits until one of them has it.
     r["links"].setdefault("bandcamp", links.bandcamp_search(artist, album))
     r["links"]["ytmusic"] = links.ytmusic_search(artist, album)
-    apple = _try("apple music", lambda: links.apple_album(artist, album)) if album else None
+    needs_apple = not (dz and dz.get("cover") and r.get("tracks"))
+    am = checked_apple(apple_for_edition, artist, album, named_tracks(r)) if needs_apple else None
+    # The release ID also finds albums that iTunes omits from a text search.
+    apple = apple_for_edition if am else _try("apple music", lambda: links.apple_album(artist, album)) if album else None
     if apple:
         r["links"]["apple"] = apple
-    # Apple's tracklist and cover when Deezer and MusicBrainz have no album (yet): Apple lists it even before release
-    am = _try("apple tracks", lambda: links.apple_tracks(apple, artist, album)) if apple and not (dz and r.get("tracks")) else None
-    if am and not links.fits(named_tracks(r), am.get("tracks")):
-        print(f"apple: {apple} has {len(am['tracks'])} tracks without Fantano's favourites: left out")
-        am = None
+    if needs_apple and not am and apple != apple_for_edition:
+        am = checked_apple(apple, artist, album, named_tracks(r))
     if am and am.get("tracks") and not r.get("tracks"):
         r["tracks"] = am["tracks"]
         if all(t["sec"] for t in am["tracks"]):
@@ -100,6 +100,26 @@ def enrich(rev, plaintext, archive, use_ai=True):
     ] if c]
     r["previous"], r["previous_unsure"] = _try("previous reviews", lambda: previous_reviews(r, archive), ([], 0))
     return r
+
+
+def checked_apple(url, artist, album, named):
+    if url:
+        data = _try("apple tracks", lambda: links.apple_tracks(url, artist, album))
+        if data and links.fits(named, data.get("tracks")):
+            return data
+    return None
+
+
+def apply_album_data(review, album):
+    """Fill missing card fields from the album catalogue, preserving tracks and artwork we already have."""
+    album = album or {}
+    covers = review.get("covers") or []
+    if album.get("cv") and not any(url != review.get("thumb") for url in covers):
+        review["covers"] = [album["cv"], *[url for url in covers if url != album["cv"]]]
+    if album.get("t") and not review.get("tracks"):
+        review["tracks"] = [{"title": title, "sec": sec or None} for title, sec in album["t"]]
+    if album.get("min") and not review.get("duration_min"):
+        review["duration_min"] = album["min"]
 
 
 def video_notes(r):

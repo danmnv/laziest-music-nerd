@@ -63,8 +63,18 @@ class FillTest(unittest.TestCase):
         refresh.fill(r, {"links": {"bandcamp": "https://bandcamp.com/search?q=a"}})
         self.assertEqual(r["links"]["bandcamp"], "https://real.bandcamp.com/album/a")
 
+    def test_a_new_album_cover_updates_a_card_that_already_has_tracks(self):
+        thumb, cover = "https://video.test/preview.jpg", "https://is1-ssl.mzstatic.com/album.jpg"
+        r = {"tg_channel_msg": 1, "thumb": thumb, "covers": [thumb], "tracks": [{"title": "Kept", "sec": 60}]}
+        self.assertIn("cover", refresh.missing(r))
+        refresh.fill(r, {"covers": [cover], "tracks": [{"title": "Ignored", "sec": 61}]})
+        self.assertEqual(r["covers"][0], cover)
+        self.assertEqual(r["tracks"], [{"title": "Kept", "sec": 60}])
+        self.assertEqual(r["new_cover"], 1)
+
     def test_what_is_missing(self):
-        full = {"ai": {"brief": "b", "about": "a"}, "tracks": [1], "duration_min": 3, "links": {"songlink": "s", "bandcamp": "https://a.bandcamp.com"}}
+        full = {"ai": {"brief": "b", "about": "a"}, "tracks": [1], "duration_min": 3,
+                "covers": ["https://cover.test/album.jpg"], "links": {"songlink": "s", "bandcamp": "https://a.bandcamp.com"}}
         self.assertEqual(refresh.missing(dict(full, tg_channel_msg=5)), [])
         self.assertEqual(refresh.missing(dict(full, ai={}, tg_channel_msg=5)), ["brief"])
         self.assertEqual(refresh.missing(dict(full, ai={})), [], "no Gemini for reviews without a card")

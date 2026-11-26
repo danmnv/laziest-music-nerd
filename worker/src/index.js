@@ -1428,17 +1428,15 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   const al = rt && rt.al;
   // a card the bot posted: what Actions found, never a live search (it found a 2-track single for Wolves in the Throne
   // Room «Estuary», 2026-11-10; lmn/links.py fits leaves such a single out); al.miss: Actions found no album either
-  const dz = full ? null
-    : al ? { cover: al.cv || null, tracks: al.t ? al.t.length : null, list: (al.t || []).map(([title, sec]) => ({ title, sec: sec || null })),
-             minutes: al.min || null }
-    : await deezerAlbum(r.artist_name, r.album);
+  const dz = full || al ? null : await deezerAlbum(r.artist_name, r.album);
   // a card the bot posted has it (lmn/links.py), an archive album from Actions (lmn/apple.py, in rt); the live search
   // last: Apple often refuses the Worker (429, its address is shared with other Cloudflare sites)
   const apple = links.apple || rt?.apple || await appleAlbum(r.artist_name, r.album);
-  const cover = (full && full.covers && full.covers[0]) || (dz && dz.cover);
-  const tracks = (full && full.tracks && full.tracks.length) || (dz && dz.tracks);
-  const list = (full && full.tracks && full.tracks.length ? full.tracks : dz && dz.list) || [];
-  const minutes = (full && full.duration_min) || (dz && dz.minutes);
+  const savedCovers = full?.covers || [];
+  const cover = savedCovers.find((url) => url !== full?.thumb) || al?.cv || dz?.cover || savedCovers[0];
+  const list = full?.tracks?.length ? full.tracks : al?.t?.length ? catalogueTracks(al) : dz?.list || [];
+  const tracks = full?.tracks?.length || al?.t?.length || dz?.tracks;
+  const minutes = full?.duration_min || al?.min || dz?.minutes;
   // The site resolves the album's year independently of the edition providing the cover and tracks.
   const reviewYear = String(r.published).slice(0, 4);
   const rk = nameKey(r.artist_name);
@@ -1483,7 +1481,8 @@ async function sendAlbum(env, uid, a, intro, opts = {}) {
   const other = first || redo;
   const againWords = other ? `${first ? "Первый обзор" : "Позже переоценил"} (${other.y})` : "";
   const again = other ? `\n🔁 ${rt && rt.again_vid ? `<a href="https://youtu.be/${esc(rt.again_vid)}">${againWords}</a>` : againWords}: ${badge(other)}` : "";
-  const head = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(r.album)}</b>${year ? ` (${year})` : ""}\n${score}${facts ? " · " + esc(facts) : ""}${again}`;
+  const title = selfTitled(r.artist_name, r.album);
+  const head = (intro ? intro + "\n\n" : "") + `<b>${esc(r.artist_name)} — ${esc(title)}</b>${year ? ` (${year})` : ""}\n${score}${facts ? " · " + esc(facts) : ""}${again}`;
   const q = encodeURIComponent(`${r.artist_name} ${r.album}`);
   const vid = r.video_id || (rt && rt.video_id); // most archive reviews have it only in rt (lmn/notes.py: the video's page)
   const linkLine = linkItems([
@@ -1550,6 +1549,10 @@ function trackLines(list, fav) {
   });
 }
 
+function catalogueTracks(album) {
+  return (album.t || []).map(([title, sec]) => ({ title, sec: sec || null }));
+}
+
 // The whole tracklist of a review, for a card whose tracklist didn't fit (its «… ещё N» opens /start t_<id>): the title,
 // score, genres, date, length and every track, nothing else (owner, 2026-11-08: «я смогу из такой карточки как минимум в
 // канал сам треклист вписывать полный»). The tracks as plain lines, easy to copy.
@@ -1559,7 +1562,7 @@ async function sendTracklist(env, uid, id) {
   const full = (await reviews(env)).find((x) => x.id === id);
   const rt = await criticsOf(env, id);
   const al = (rt && rt.al) || {};
-  let list = full && full.tracks && full.tracks.length ? full.tracks : (al.t || []).map(([title, sec]) => ({ title, sec: sec || null }));
+  let list = full?.tracks?.length ? full.tracks : catalogueTracks(al);
   let minutes = (full && full.duration_min) || al.min;
   if (!list.length) {
     const dz = await deezerAlbum(a.artist_name, a.album);
@@ -1571,7 +1574,8 @@ async function sendTracklist(env, uid, id) {
     list.length ? tracksWord(list.length) : ""].filter(Boolean).join(" · ");
   const lines = trackLines(list, fav);
   const legend = lines.some((l) => l.endsWith("★")) ? "\n<i>★ — любимые у Фантано</i>" : "";
-  const text = `<b>${esc(a.artist_name)} — ${esc(a.album)}</b>\n${esc(facts)}\n\n` + (lines.length ? lines.join("\n") + legend : "Треклист не нашёлся.");
+  const title = selfTitled(a.artist_name, a.album);
+  const text = `<b>${esc(a.artist_name)} — ${esc(title)}</b>\n${esc(facts)}\n\n` + (lines.length ? lines.join("\n") + legend : "Треклист не нашёлся.");
   return tg(env, "sendMessage", { chat_id: uid, text: text.length > MESSAGE_LIMIT ? text.slice(0, MESSAGE_LIMIT) : text,
     parse_mode: "HTML", link_preview_options: { is_disabled: true } });
 }
@@ -1740,7 +1744,7 @@ async function criticsOf(env, id) {
 
 function albumButtons(items, withArtist) {
   return items.map((a) => [{
-    text: `${badge(a)} · ${withArtist ? short(a.artist_name) + " — " : ""}${short(a.album)} · обзор ${String(a.published).slice(0, 4)}${a.guest ? " · гость" : ""}`.slice(0, 120),
+    text: `${badge(a)} · ${withArtist ? short(a.artist_name) + " — " : ""}${short(selfTitled(a.artist_name, a.album))} · обзор ${String(a.published).slice(0, 4)}${a.guest ? " · гость" : ""}`.slice(0, 120),
     callback_data: `a:${a.id}`,
   }]);
 }
